@@ -1,0 +1,100 @@
+# CMFA (ClashMetaForAndroid) 手机配置模板
+# 使用前：把 REPLACE_WITH_AUTH_KEY 换成你的 Tailscale auth key（单次使用）
+# 导入方式：CMFA → 配置 → + → 导入本文件
+mode: rule
+log-level: info
+ipv6: false
+unified-delay: true
+tcp-concurrent: true
+find-process-mode: "off"
+geodata-mode: false
+geo-auto-update: false
+geox-url:
+  mmdb: "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.metadb"
+  asn: "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/GeoLite2-ASN.mmdb"
+  geoip: "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.dat"
+  geosite: "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geosite.dat"
+profile:
+  store-selected: true
+  store-fake-ip: true
+dns:
+  enable: true
+  listen: 127.0.0.1:1055
+  ipv6: false
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  use-hosts: true
+  use-system-hosts: true
+  respect-rules: false
+  default-nameserver:
+    - 223.5.5.5
+    - 119.29.29.29
+  proxy-server-nameserver:
+    - 223.5.5.5
+    - 119.29.29.29
+  nameserver:
+    - https://doh.pub/dns-query
+    - https://dns.alidns.com/dns-query
+  fallback:
+    - https://1.1.1.1/dns-query#PROXY
+    - https://8.8.8.8/dns-query#PROXY
+  fallback-filter:
+    geoip: true
+    geoip-code: CN
+    geosite:
+      - gfw
+    ipcidr:
+      - 240.0.0.0/4
+  fake-ip-filter:
+    - "+.lan"
+    - "+.local"
+    - "+.localhost"
+    - "+.home.arpa"
+    - "+.ts.net"
+    - "dns.msftncsi.com"
+    - "www.msftncsi.com"
+    - "www.msftconnecttest.com"
+    - "captive.apple.com"
+    - "connectivitycheck.gstatic.com"
+    - "detectportal.firefox.com"
+    - "nmcheck.gnome.org"
+    - "network-test.debian.org"
+    - "+.pool.ntp.org"
+    - "time.apple.com"
+    - "time.asia.apple.com"
+    - "time.windows.com"
+    - "ntp.aliyun.com"
+    - "ntp.tencent.com"
+    - "stun.l.google.com"
+    - "stun.qq.com"
+proxies:
+  - name: "Tailscale"
+    type: tailscale
+    hostname: phone-mihomo
+    auth-key: "REPLACE_WITH_AUTH_KEY"
+    state-dir: "./ts-state"
+    udp: true
+  - name: "Japan-MacMini"
+    type: socks5
+    server: 100.105.59.31
+    port: 7891
+    udp: true
+    dialer-proxy: "Tailscale"
+proxy-groups:
+  - name: "PROXY"
+    type: select
+    proxies:
+      - "Japan-MacMini"
+      - "DIRECT"
+rules:
+  - IP-CIDR,100.64.0.0/10,Tailscale,no-resolve
+  - GEOIP,private,DIRECT
+  - DOMAIN-SUFFIX,bilibili.com,DIRECT
+  - DOMAIN-SUFFIX,bilivideo.com,DIRECT
+  - DOMAIN-SUFFIX,hdslb.com,DIRECT
+  - DOMAIN-SUFFIX,qq.com,DIRECT
+  - DOMAIN-SUFFIX,tencent.com,DIRECT
+  - DOMAIN-SUFFIX,wechat.com,DIRECT
+  - GEOSITE,cn,DIRECT
+  - GEOIP,CN,DIRECT
+  - MATCH,PROXY

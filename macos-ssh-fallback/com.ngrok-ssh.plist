@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.ngrok-ssh</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>while true; do /Users/kobayashi/bin/ngrok start ssh-fallback --config /Users/kobayashi/.config/ngrok/ngrok.yml --log stdout >> /Users/kobayashi/.config/ngrok/agent.log 2>&1; sleep 5; done</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/kobayashi/.config/ngrok/launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/kobayashi/.config/ngrok/launchd.err.log</string>
+</dict>
+</plist>
