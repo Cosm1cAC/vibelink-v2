@@ -74,10 +74,10 @@ function Test-SocksDeep {
 
 function Invoke-MacRelayCheck {
     try {
-        $remote = 'netstat -an | grep -q "\.7891" && echo RELAY_UP || { launchctl kickstart -k gui/$(id -u)/com.socks-relay >/dev/null 2>&1 || launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.socks-relay.plist >/dev/null 2>&1; launchctl kickstart -k gui/$(id -u)/com.socks-relay >/dev/null 2>&1; sleep 2; netstat -an | grep -q "\.7891" && echo RELAY_KICKED || echo RELAY_FAIL; }'
+        $remote = 'msgs=""; netstat -an | grep -q "\.7891" || { launchctl kickstart -k gui/$(id -u)/com.socks-relay >/dev/null 2>&1 || launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.socks-relay.plist >/dev/null 2>&1; launchctl kickstart -k gui/$(id -u)/com.socks-relay >/dev/null 2>&1; msgs="$msgs relay"; }; launchctl list | grep -q com.ssh-fallback || { launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.ssh-fallback.plist >/dev/null 2>&1; launchctl kickstart -k gui/$(id -u)/com.ssh-fallback >/dev/null 2>&1; msgs="$msgs ssh-fallback"; }; launchctl list | grep -q com.ngrok-ssh || { launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.ngrok-ssh.plist >/dev/null 2>&1; launchctl kickstart -k gui/$(id -u)/com.ngrok-ssh >/dev/null 2>&1; msgs="$msgs ngrok"; }; curl -s --max-time 5 http://127.0.0.1:4040/api/tunnels | grep -q "tcp" || { launchctl kickstart -k gui/$(id -u)/com.ngrok-ssh >/dev/null 2>&1; msgs="$msgs ngrok-tunnel"; }; echo "RELCHECK:${msgs:-ok}"'
         $out = & ssh -o BatchMode=yes -o ConnectTimeout=15 -o IdentitiesOnly=yes -i $KeyPath $SshTarget $remote 2>&1 | Out-String
         $text = $out.Trim()
-        if ($text -notmatch 'RELAY_UP') {
+        if ($text -notmatch 'RELCHECK:ok') {
             Write-Log ('Mac relay check: {0}' -f ($text -replace '\s+', ' '))
         }
     } catch {
