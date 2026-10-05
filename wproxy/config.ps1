@@ -1,0 +1,8 @@
+$WproxyDir = $PSScriptRoot
+$MixedPort = 7897
+$ApiPort = 9097
+$ApiSecret = '9f2c7a41e8b3d6504c1f8a2e6d9b0473'
+$ApiBase = "http://127.0.0.1:$ApiPort"
+$TaskName = 'WProxy'
+$MihomoExe = Join-Path $WproxyDir 'mihomo.exe'
+$PwshExe = Join-Path $PSHOME 'pwsh.exe'

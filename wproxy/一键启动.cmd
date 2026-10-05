@@ -1,0 +1,10 @@
+@echo off
+title wproxy - start
+where pwsh >nul 2>nul
+if errorlevel 1 (
+  echo [ERROR] PowerShell 7 not found. Install: winget install Microsoft.PowerShell
+  pause
+  exit /b 1
+)
+pwsh -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0start.ps1" %*
+pause

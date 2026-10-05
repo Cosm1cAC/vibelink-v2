@@ -1,0 +1,117 @@
+mixed-port: 7897
+allow-lan: false
+bind-address: 127.0.0.1
+mode: rule
+log-level: info
+ipv6: false
+unified-delay: true
+tcp-concurrent: true
+find-process-mode: "off"
+external-controller: 127.0.0.1:9097
+secret: "9f2c7a41e8b3d6504c1f8a2e6d9b0473"
+external-ui: ui
+geodata-mode: false
+geo-auto-update: false
+geox-url:
+  mmdb: "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.metadb"
+  asn: "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/GeoLite2-ASN.mmdb"
+  geoip: "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.dat"
+  geosite: "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geosite.dat"
+profile:
+  store-selected: true
+  store-fake-ip: true
+dns:
+  enable: true
+  listen: 127.0.0.1:1055
+  ipv6: false
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  use-hosts: true
+  use-system-hosts: true
+  respect-rules: false
+  default-nameserver:
+    - 223.5.5.5
+    - 119.29.29.29
+  proxy-server-nameserver:
+    - 223.5.5.5
+    - 119.29.29.29
+  nameserver:
+    - https://doh.pub/dns-query
+    - https://dns.alidns.com/dns-query
+  fallback:
+    - https://1.1.1.1/dns-query#PROXY
+    - https://8.8.8.8/dns-query#PROXY
+  fallback-filter:
+    geoip: true
+    geoip-code: CN
+    geosite:
+      - gfw
+    ipcidr:
+      - 240.0.0.0/4
+  fake-ip-filter:
+    - "+.lan"
+    - "+.local"
+    - "+.localhost"
+    - "+.home.arpa"
+    - "+.ts.net"
+    - "dns.msftncsi.com"
+    - "www.msftncsi.com"
+    - "www.msftconnecttest.com"
+    - "captive.apple.com"
+    - "connectivitycheck.gstatic.com"
+    - "detectportal.firefox.com"
+    - "nmcheck.gnome.org"
+    - "network-test.debian.org"
+    - "+.pool.ntp.org"
+    - "time.apple.com"
+    - "time.asia.apple.com"
+    - "time.windows.com"
+    - "ntp.aliyun.com"
+    - "ntp.tencent.com"
+    - "stun.l.google.com"
+    - "stun.qq.com"
+proxies:
+  - name: "Japan-MacMini"
+    type: socks5
+    server: 100.105.59.31
+    port: 7891
+    udp: true
+    interface-name: "Tailscale"
+  - name: "Japan-MacMini-SSH"
+    type: socks5
+    server: 127.0.0.1
+    port: 1080
+    udp: false
+proxy-groups:
+  - name: "PROXY"
+    type: select
+    proxies:
+      - "Japan-MacMini"
+      - "Japan-MacMini-SSH"
+      - "DIRECT"
+rules:
+  - IP-CIDR,100.64.0.0/10,DIRECT,no-resolve
+  - GEOIP,private,DIRECT
+  - DOMAIN-SUFFIX,bilibili.com,DIRECT
+  - DOMAIN-SUFFIX,bilivideo.com,DIRECT
+  - DOMAIN-SUFFIX,hdslb.com,DIRECT
+  - DOMAIN-SUFFIX,qq.com,DIRECT
+  - DOMAIN-SUFFIX,tencent.com,DIRECT
+  - DOMAIN-SUFFIX,wechat.com,DIRECT
+  - GEOSITE,cn,DIRECT
+  - GEOIP,CN,DIRECT
+  - MATCH,PROXY
+tun:
+  enable: false
+  stack: mixed
+  device: wproxy
+  auto-route: true
+  auto-detect-interface: true
+  dns-hijack:
+    - "any:53"
+  route-exclude-address:
+    - 100.64.0.0/10
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+  strict-route: false
