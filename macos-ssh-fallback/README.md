@@ -30,6 +30,9 @@ Windows/手机 --ssh--> 0.tcp.jp.ngrok.io:PORT --(ngrok 云)--> Mac ngrok agent(
   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.ssh-fallback.plist
   launchctl kickstart -k gui/$(id -u)/com.ssh-fallback
   ```
+- **保活闭环**：Windows 看门狗（`macos-socks-proxy/ssh-proxy.ps1`，计划任务 `MacSocksProxy`）约每分钟经 SSH 检查一次：
+  `7891` 掉线 → kickstart `com.socks-relay`；`com.ssh-fallback` / `com.ngrok-ssh` 未加载（如 Mac 重启后）→ bootstrap+kickstart；
+  ngrok 隧道异常 → 重启 agent。Mac 本机 launchd 的怪癖由此兜底。
 
 ## 为什么不用系统 sshd（端口映射 22）
 
