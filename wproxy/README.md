@@ -64,6 +64,10 @@ WebUI（`http://127.0.0.1:9097/ui/#/settings`）右下角集成 Mac 后台监控
 - 实现：`ui-patch/mac-monitor.js`（Shadow DOM 隔离样式，fetch 轮询 2s）+ `ui-patch/apply-ui-patch.ps1`（注入 index.html、替换 sw.js 为自毁版以清掉 zashboard PWA 缓存）
 - 显示范围：默认仅 `#/settings` 页显示；改 `ui-patch/mac-monitor.js` 顶部 `CFG.showWhen = 'always'` 可全局显示
 
+## 界面语言（简体中文）
+
+`ui-patch/lang-zh-cn.js` 在应用初始化前把 zashboard 语言一次性设为简体中文（写入 `localStorage['config/language'] = 'zh-CN'`，带标记位，仅首次强制；之后可在 设置 → 通用 → 语言 自由更改，不会被再次覆盖）。由 `apply-ui-patch.ps1` 与监控面板一并注入。
+
 ## 验证记录（2026-10-06 实测）
 
 - ✅ 出口：TCP/UDP 均日本 `130.62.209.98`；UDP ASSOCIATE 测试通过
