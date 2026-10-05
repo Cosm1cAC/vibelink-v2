@@ -1,7 +1,7 @@
 # wproxy
 
-自建代理控制台：**开源 mihomo 内核 + 自研控制脚本 + 开源 WebUI（zashboard）**，用于替代 CuteCloud。
-与 CuteCloud 并行运行、互不冲突，验证满意后可卸载 CuteCloud。
+自建代理控制台：**开源 mihomo 内核 + 自研控制脚本 + 开源 WebUI（zashboard）**。
+2026-10-06 已完成对 CuteCloud 的替代：系统代理接管至 127.0.0.1:7897，原 CuteCloud 已卸载（服务与残留全部清除）。
 
 ## 目录结构
 
@@ -48,12 +48,11 @@ pwsh -ExecutionPolicy Bypass -File .\wproxy.ps1 -Action status
 .\wproxy.ps1 -Action uninstall                       # 卸载
 ```
 
-## 与 CuteCloud 切换
+## 从 CuteCloud 迁移（已完成，2026-10-06）
 
-- 两套端口互不冲突（本方案 7897/9097/1055；CuteCloud 7890/9090/1053），可同时运行
-- **切到本方案**：`.\wproxy.ps1 -Action mode -Value sysproxy`（或 `tun`）
-- **切回 CuteCloud**：`.\wproxy.ps1 -Action mode -Value off`，然后在 CuteCloud 界面重新打开它的系统代理
-- TUN 与 CuteCloud 虚拟网卡不要同时开
+- 系统代理已切换至本方案（`mode -Value sysproxy` → 127.0.0.1:7897），验证出口 = 日本 Mac 后卸载了 CuteCloud
+- 卸载内容：3 个官方卸载器静默执行、`CuteCloudHelperService` 服务删除、`C:\Program Files\CuteCloud` 与用户数据残留（`%APPDATA%\cutecloud`、`%LOCALAPPDATA%\CuteCloud`、`cutecloud-updater`）全部清除
+- 如需回退：重新安装 CuteCloud 并开启其系统代理（不推荐；TUN/虚拟网卡勿与本方案同时开）
 
 ## 验证记录（2026-10-06 实测）
 
@@ -62,6 +61,7 @@ pwsh -ExecutionPolicy Bypass -File .\wproxy.ps1 -Action status
 - ✅ TUN：全局模式谷歌直连 200（与 Tailscale 共存、SSH 不受影响、分流正确）
 - ✅ WebUI：http://127.0.0.1:9097/ui/ 正常
 - ✅ 保活：看门狗互斥运行；stop 通过 `stop.request` 机制由提权看门狗执行（普通权限可停）
+- ✅ 2026-10-06：系统代理接管验证（ProxyEnable=1 → 127.0.0.1:7897，系统级出口 `130.62.209.98`）；CuteCloud 卸载后出口不变
 
 ## 已知注意点
 

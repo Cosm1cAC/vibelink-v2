@@ -1,7 +1,7 @@
 # macos-udp-proxy
 
 Mac 端 **支持 UDP** 的 SOCKS5 代理方案（TCP + UDP 全支持）。
-Windows 上的 CuteCloud/Clash 经 Tailscale 直连 Mac 的代理端口，实现完整的网络出口代理。
+Windows 上的 mihomo（wproxy 项目）经 Tailscale 直连 Mac 的代理端口，实现完整的网络出口代理。
 
 > 背景：原 SSH 隧道方案（macos-socks-proxy 项目）受限于 OpenSSH，只能代理 TCP。
 > 本方案替代它承载日常代理流量；SSH 隧道保留为备用节点（仅 TCP）。
@@ -13,7 +13,7 @@ Windows 上的 CuteCloud/Clash 经 Tailscale 直连 Mac 的代理端口，实现
 | Mac | `~/bin/socks-relay.py` | SOCKS5 服务（TCP CONNECT + UDP ASSOCIATE），Python 3.9 标准库实现 |
 | Mac | `~/Library/LaunchAgents/com.socks-relay.plist` | 开机自启 + while 守护循环（python 崩溃 2 秒内自愈） |
 | Mac | `~/.config/socks-relay/*.log` | 运行日志 |
-| Windows | Clash 节点 `Japan-MacMini` | `socks5 100.105.59.31:7891, udp: true` |
+| Windows | mihomo 节点 `Japan-MacMini` | `socks5 100.105.59.31:7891, udp: true` |
 
 监听地址：`100.105.59.31:7891`（仅 Tailscale 地址，不全网暴露）。
 
@@ -61,14 +61,14 @@ rules:
 
 - 想强制某站走代理：在 GEOSITE 之前加 `- DOMAIN-SUFFIX,example.com,PROXY`
 - 想强制某站直连：加 `- DOMAIN-SUFFIX,example.com,DIRECT`（放最前面）
-- 改完在 CuteCloud「配置」页点一下配置卡片重新应用
-- 验证：CuteCloud「连接」页可查看每条连接命中 DIRECT 还是 Japan-MacMini
+- 改完用 `wproxy.ps1 -Action reload` 热重载（秒生效）
+- 验证：wproxy WebUI（`wproxy.ps1 -Action ui`）可查看每条连接命中 DIRECT 还是 Japan-MacMini
 
 ## 验证（Windows）
 
 ```powershell
 # TCP：应返回日本出口 IP 130.62.209.98
 curl.exe --socks5-hostname 100.105.59.31:7891 https://api.ipify.org
-# UDP：在 CuteCloud 里选中 Japan-MacMini 后跑需要 UDP 的应用（游戏/QUIC 视频等）验证
+# UDP：切到 TUN 模式（wproxy.ps1 -Action mode -Value tun）后跑需要 UDP 的应用（游戏/QUIC 视频等）验证
 ```
 
