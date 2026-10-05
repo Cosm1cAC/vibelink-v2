@@ -38,5 +38,8 @@ Write-Host '下载分流规则数据库 ...'
 Invoke-WebRequest -Uri 'https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geosite.dat' -OutFile (Join-Path $root 'geosite.dat') -TimeoutSec 900
 Invoke-WebRequest -Uri 'https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.metadb' -OutFile (Join-Path $root 'geoip.metadb') -TimeoutSec 900
 
+Write-Host '应用 UI 补丁（Mac 监控面板）...'
+& (Join-Path $root 'ui-patch\apply-ui-patch.ps1')
+
 Remove-Item $tmp -Recurse -Force
 Write-Host '[OK] 全部资源已就位，可以双击 一键启动.cmd' -ForegroundColor Green
