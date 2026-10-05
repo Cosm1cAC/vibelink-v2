@@ -12,6 +12,7 @@
 | `config.yaml` | 全部配置：节点 / 规则 / DNS / TUN（明文，可审计、可被 agent 直接修改） |
 | `geosite.dat` / `geoip.metadb` | 分流规则数据库（MetaCubeX meta-rules-dat） |
 | `ui/` | zashboard 开源面板（Zephyruso/zashboard） |
+| `ui-patch/` | zashboard 补丁：Mac 监控面板（`apply-ui-patch.ps1` 幂等注入，`download-assets.ps1` 自动应用） |
 | `config.ps1` | 端口与 API 密钥 |
 | `mihomo-run.ps1` | 看门狗（保活+停止请求处理），由计划任务以最高权限运行 |
 | `wproxy.ps1` | 控制台 CLI（安装/启停/状态/热重载/模式切换/选节点/测延迟） |
@@ -54,6 +55,15 @@ pwsh -ExecutionPolicy Bypass -File .\wproxy.ps1 -Action status
 - 卸载内容：3 个官方卸载器静默执行、`CuteCloudHelperService` 服务删除、`C:\Program Files\CuteCloud` 与用户数据残留（`%APPDATA%\cutecloud`、`%LOCALAPPDATA%\CuteCloud`、`cutecloud-updater`）全部清除
 - 如需回退：重新安装 CuteCloud 并开启其系统代理（不推荐；TUN/虚拟网卡勿与本方案同时开）
 
+## Mac 监控面板（2026-10-06）
+
+WebUI（`http://127.0.0.1:9097/ui/#/settings`）右下角集成 Mac 后台监控面板：
+
+- 指标：CPU / GPU / 内存 / 硬盘 / 实时带宽（物理网卡汇总，↓↑ 分开）/ 链路 RTT / Mac 出口延迟（1.1.1.1、8.8.8.8、223.5.5.5）/ 负载 / 开机时长；带迷你曲线
+- 数据源：`macos-metrics` 项目的用户态指标代理（`http://100.105.59.31:18992/metrics`，仅 Tailscale 网段，CORS 已开）
+- 实现：`ui-patch/mac-monitor.js`（Shadow DOM 隔离样式，fetch 轮询 2s）+ `ui-patch/apply-ui-patch.ps1`（注入 index.html、替换 sw.js 为自毁版以清掉 zashboard PWA 缓存）
+- 显示范围：默认仅 `#/settings` 页显示；改 `ui-patch/mac-monitor.js` 顶部 `CFG.showWhen = 'always'` 可全局显示
+
 ## 验证记录（2026-10-06 实测）
 
 - ✅ 出口：TCP/UDP 均日本 `130.62.209.98`；UDP ASSOCIATE 测试通过
@@ -62,6 +72,7 @@ pwsh -ExecutionPolicy Bypass -File .\wproxy.ps1 -Action status
 - ✅ WebUI：http://127.0.0.1:9097/ui/ 正常
 - ✅ 保活：看门狗互斥运行；stop 通过 `stop.request` 机制由提权看门狗执行（普通权限可停）
 - ✅ 2026-10-06：系统代理接管验证（ProxyEnable=1 → 127.0.0.1:7897，系统级出口 `130.62.209.98`）；CuteCloud 卸载后出口不变
+- ✅ 2026-10-06：Mac 监控面板——agent JSON 从 Windows 实测可取（cpu/gpu/mem/disk/net/latency 全字段）；mihomo `/ui/` 已含补丁，`/ui/mac-monitor.js` 200
 
 ## 已知注意点
 
@@ -82,3 +93,4 @@ wintun 0.14.1                     07C256185D6EE3652E09FA55C0B673E2624B565E02C4B9
 
 - 节点侧：Mac 上的 socks-relay（100.105.59.31:7891，TCP+UDP，见 macos-udp-proxy 项目）
 - 备用节点：SSH 隧道（127.0.0.1:1080，仅 TCP，见 macos-socks-proxy 项目）
+- 监控面板：Mac 上的 macos-metrics 指标代理（100.105.59.31:18992，见 macos-metrics 项目）

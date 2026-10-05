@@ -11,6 +11,7 @@
 | `macos-socks-proxy/` | Windows | 备用线路：SSH SOCKS5 隧道（仅 TCP）+ 保活看门狗 |
 | `android-phone/` | 安卓手机 | CMFA（mihomo 内核内置 Tailscale 出站）单 App 接入，规则同 wproxy |
 | `macos-ssh-fallback/` | Mac + Windows | 应急 SSH 通道：用户态纯密钥 SSH + ngrok 出站隧道，**不依赖 Tailscale** |
+| `macos-metrics/` | Mac | 监控数据源：用户态指标代理（CPU/GPU/内存/硬盘/带宽/延迟），供 wproxy WebUI 面板 |
 
 ## 链路
 
@@ -23,6 +24,9 @@ Windows 应用
 
 应急通道（不依赖 Tailscale）:
 Windows/手机 ──ssh──> ngrok TCP ──> Mac 用户态 SSH (127.0.0.1:12222, 仅密钥)
+
+监控:
+wproxy WebUI 设置页 ──fetch──> Mac macos-metrics (100.105.59.31:18992, CPU/GPU/内存/硬盘/带宽/延迟)
 ```
 
 ## 快速开始
