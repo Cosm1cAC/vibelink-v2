@@ -17,7 +17,7 @@
 ## 安装
 
 ```powershell
-cd C:\Users\22771\Desktop\项目\macos-socks-proxy
+cd C:\Users\22771\Desktop\项目\proxy-stack\macos-socks-proxy
 pwsh -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
