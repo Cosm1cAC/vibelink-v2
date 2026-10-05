@@ -20,7 +20,7 @@
 ## 快速开始
 
 ```powershell
-cd C:\Users\22771\Desktop\项目\wproxy
+cd C:\Users\22771\Desktop\项目\proxy-stack\wproxy
 
 # 安装（注册自启计划任务，会弹一次 UAC，仅此一次）
 pwsh -ExecutionPolicy Bypass -File .\wproxy.ps1 -Action install
