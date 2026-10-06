@@ -184,7 +184,7 @@ function Test-TcpMs {
 }
 
 function Test-SocksMs {
-    param([string]$ProxyHost, [int]$ProxyPort, [string]$DstHost, [int]$DstPort, [int]$TimeoutMs = 3000)
+    param([string]$ProxyHost, [int]$ProxyPort, [string]$DstHost, [int]$DstPort, [int]$TimeoutMs = 6000)
     $c = New-Object System.Net.Sockets.TcpClient
     try {
         $iar = $c.BeginConnect($ProxyHost, $ProxyPort, $null, $null)
@@ -207,6 +207,12 @@ function Test-SocksMs {
         $s.Write($arr, 0, $arr.Length)
         $resp = New-Object byte[] 10
         if ($s.Read($resp, 0, 10) -lt 2 -or $resp[1] -ne 0) { return $null }
+        # mihomo 对 SOCKS 建连是"先回执后连接"：必须发一次真实请求，才能测到全链路
+        $get = "GET /generate_204 HTTP/1.1`r`nHost: ${DstHost}`r`nConnection: close`r`n`r`n"
+        $gb = [Text.Encoding]::ASCII.GetBytes($get)
+        $s.Write($gb, 0, $gb.Length)
+        $b1 = New-Object byte[] 64
+        if ($s.Read($b1, 0, $b1.Length) -le 0) { return $null }
         $sw.Stop()
         return [Math]::Round($sw.Elapsed.TotalMilliseconds, 1)
     } catch { return $null } finally { $c.Close() }
@@ -214,11 +220,11 @@ function Test-SocksMs {
 
 function Update-Latency {
     $lat = [ordered]@{}
-    $lat['直连223.5.5.5'] = Test-TcpMs -TargetHost '223.5.5.5' -TargetPort 443
-    $lat['直连8.8.8.8'] = Test-TcpMs -TargetHost '8.8.8.8' -TargetPort 443
+    $lat['直连223.5.5.5'] = Test-TcpMs -TargetHost '223.5.5.5' -TargetPort 443 -TimeoutMs 1200
+    $lat['直连8.8.8.8'] = Test-TcpMs -TargetHost '8.8.8.8' -TargetPort 443 -TimeoutMs 1200
     $proxyUp = Test-TcpMs -TargetHost '127.0.0.1' -TargetPort 7897 -TimeoutMs 500
     if ($proxyUp) {
-        $lat['代理出口'] = Test-SocksMs -ProxyHost '127.0.0.1' -ProxyPort 7897 -DstHost 'www.gstatic.com' -DstPort 443
+        $lat['代理出口'] = Test-SocksMs -ProxyHost '127.0.0.1' -ProxyPort 7897 -DstHost 'www.gstatic.com' -DstPort 80 -TimeoutMs 6000
     }
     $script:Latency = $lat
 }

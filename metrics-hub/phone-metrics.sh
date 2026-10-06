@@ -147,9 +147,10 @@ while true; do
   fi
 
   if [ $((now - lat_t)) -ge 15 ]; then
-    l1=$(tcp_ms 223.5.5.5 443)
-    l2=$(tcp_ms 1.1.1.1 443)
-    lat_cache="\"直连223.5.5.5\":${l1:-null},\"直连1.1.1.1\":${l2:-null}"
+    # 用 curl 测首字节：经 VPN 的目标若用 /dev/tcp 只能测到本地 TUN 接收，不是真实链路
+    l1=$(curl -s -o /dev/null -m 8 -w '%{time_starttransfer}' http://www.baidu.com/ 2>/dev/null | awk '{printf "%.0f", $1*1000}')
+    l2=$(curl -s -o /dev/null -m 8 -w '%{time_starttransfer}' http://cp.cloudflare.com/generate_204 2>/dev/null | awk '{printf "%.0f", $1*1000}')
+    lat_cache="\"直连百度\":${l1:-null},\"代理Cloudflare\":${l2:-null}"
     lat_t=$now
   fi
 
