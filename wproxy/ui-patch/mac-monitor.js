@@ -18,10 +18,12 @@
   var NAV_KEY = 'wproxy-monitor';
 
   var MONITOR_ICON =
-    '<svg class="nav-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<svg class="nav-item-icon" width="18" height="18" style="width:18px;height:18px;flex:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
     '<rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 20.5h8M12 17.5v3"/><path d="M6.5 12.5l2.7-3.2 2.4 3.8 2-1.9 3.9.6"/></svg>';
   var MONITOR_ICON_TAB =
-    MONITOR_ICON.replace('nav-item-icon', 'tab-bar-icon');
+    MONITOR_ICON
+      .replace('nav-item-icon', 'tab-bar-icon')
+      .replace('width="18" height="18" style="width:18px;height:18px;flex:none"', 'width="21" height="21" style="width:1.3rem;height:1.3rem;flex:none"');
 
   var PLATFORM_LABEL = { macos: 'Mac', windows: 'Windows', android: 'Android' };
 
@@ -257,7 +259,7 @@
     var m = dev.metrics || {};
     var online = dev.online !== false;
     refs.root.classList.toggle('off', !online);
-    refs.root.querySelector('.cname').textContent = dev.name || dev.id;
+    refs.root.querySelector('.cname').textContent = String(dev.name || dev.id).replace(/\.local$/i, '');
     refs.root.querySelector('.cplat').textContent = PLATFORM_LABEL[dev.platform] || dev.platform || '';
     var age = dev.last_seen ? Math.max(0, Math.round(ts - dev.last_seen)) : null;
     refs.root.querySelector('.cage').textContent = online ? (age === null ? '' : age + 's 前') : '离线';

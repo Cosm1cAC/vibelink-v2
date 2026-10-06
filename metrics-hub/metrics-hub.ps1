@@ -1,4 +1,4 @@
-# metrics-hub.ps1 -- 多设备监控采集中心 / 上报代理（Windows，无需管理员）
+﻿# metrics-hub.ps1 -- 多设备监控采集中心 / 上报代理（Windows，无需管理员）
 #
 # 用法:
 #   Hub（主 Windows，采集本机 + 收其它设备 push + 主动拉 Mac）:
