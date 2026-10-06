@@ -19,6 +19,7 @@
   var hist = { cpu: [], gpu: [], mem: [], net: [] };
   var host = null, root = null, els = {};
   var collapsed = localStorage.getItem('macMonitorCollapsed') === '1';
+  var memOpen = localStorage.getItem('macMonitorMemOpen') === '1';
   var linkRtt = null, online = null, timer = null, inflight = false;
 
   var CSS = [
@@ -46,6 +47,10 @@
     '.body { padding:2px 10px 9px; display:grid; gap:6px; }',
     '.row { display:grid; grid-template-columns: 34px 1fr; gap:6px; align-items:center; }',
     '.row .k { color:var(--dim); }',
+    '.row.clickable { cursor:pointer; border-radius:6px; }',
+    '.row.clickable:hover { background:var(--track); }',
+    '.detail { display:grid; gap:2px; padding:0 0 2px; }',
+    '.detail .line { display:flex; justify-content:space-between; color:var(--dim); }',
     '.metric { display:flex; align-items:center; gap:6px; min-width:0; }',
     '.val { min-width:52px; text-align:right; font-variant-numeric: tabular-nums; }',
     '.bar { flex:1; height:5px; border-radius:3px; background:var(--track); overflow:hidden; min-width:36px; }',
@@ -69,7 +74,14 @@
     '  <div class="body">',
     '    <div class="row"><span class="k">CPU</span><div class="metric"><span class="val" id="mm-cpu"></span><div class="bar"><i id="mm-cpu-bar" style="background:#4c8dff"></i></div><canvas class="spark" id="mm-cpu-sp" width="112" height="32"></canvas></div></div>',
     '    <div class="row"><span class="k">GPU</span><div class="metric"><span class="val" id="mm-gpu"></span><div class="bar"><i id="mm-gpu-bar" style="background:#a970ff"></i></div><canvas class="spark" id="mm-gpu-sp" width="112" height="32"></canvas></div></div>',
-    '    <div class="row"><span class="k">内存</span><div class="metric"><span class="val" id="mm-mem"></span><div class="bar"><i id="mm-mem-bar" style="background:#2fbf71"></i></div><canvas class="spark" id="mm-mem-sp" width="112" height="32"></canvas></div></div>',
+    '    <div class="row clickable" id="mm-mem-row" title="点击查看内存明细"><span class="k">内存</span><div class="metric"><span class="val" id="mm-mem"></span><div class="bar"><i id="mm-mem-bar" style="background:#2fbf71"></i></div><canvas class="spark" id="mm-mem-sp" width="112" height="32"></canvas></div></div>',
+    '    <div class="detail" id="mm-mem-detail" style="display:none">',
+    '      <div class="line"><span>App</span><span id="mm-mem-app">--</span></div>',
+    '      <div class="line"><span>Wired</span><span id="mm-mem-wired">--</span></div>',
+    '      <div class="line"><span>压缩内存</span><span id="mm-mem-comp">--</span></div>',
+    '      <div class="line"><span>文件缓存</span><span id="mm-mem-cached">--</span></div>',
+    '      <div class="line"><span>Swap</span><span id="mm-mem-swap">--</span></div>',
+    '    </div>',
     '    <div class="row"><span class="k">硬盘</span><div class="metric"><span class="val" id="mm-disk"></span><div class="bar"><i id="mm-disk-bar" style="background:#e8a33d"></i></div></div></div>',
     '    <div class="row"><span class="k">带宽</span><div class="metric"><span class="val" id="mm-net"></span><div class="bar" style="visibility:hidden"></div><canvas class="spark" id="mm-net-sp" width="112" height="32"></canvas></div></div>',
     '    <div class="lat">',
@@ -149,6 +161,11 @@
     els.mem.textContent = mem.total ? fmtBytes(mem.used) + '/' + fmtBytes(mem.total) : '--';
     barPct(els.memBar, memPct);
     spark(els.memSp, hist.mem, '#2fbf71');
+    els.memApp.textContent = fmtBytes(mem.app);
+    els.memWired.textContent = fmtBytes(mem.wired);
+    els.memComp.textContent = fmtBytes(mem.compressed);
+    els.memCached.textContent = fmtBytes(mem.cached);
+    els.memSwap.textContent = fmtBytes(mem.swap_used === null || mem.swap_used === undefined ? null : mem.swap_used);
 
     var disk = m.disk || {};
     els.disk.textContent = disk.total ? fmtBytes(disk.used) + '/' + fmtBytes(disk.total) : '--';
@@ -186,6 +203,12 @@
   function updateVisibility() {
     if (!host) return;
     host.style.display = routeVisible() ? 'block' : 'none';
+  }
+
+  function toggleMem() {
+    memOpen = !memOpen;
+    localStorage.setItem('macMonitorMemOpen', memOpen ? '1' : '0');
+    els.memDetail.style.display = memOpen ? 'grid' : 'none';
   }
 
   function toggle() {
@@ -227,6 +250,10 @@
       cpu: root.getElementById('mm-cpu'), cpuBar: root.getElementById('mm-cpu-bar'), cpuSp: root.getElementById('mm-cpu-sp'),
       gpu: root.getElementById('mm-gpu'), gpuBar: root.getElementById('mm-gpu-bar'), gpuSp: root.getElementById('mm-gpu-sp'),
       mem: root.getElementById('mm-mem'), memBar: root.getElementById('mm-mem-bar'), memSp: root.getElementById('mm-mem-sp'),
+      memRow: root.getElementById('mm-mem-row'), memDetail: root.getElementById('mm-mem-detail'),
+      memApp: root.getElementById('mm-mem-app'), memWired: root.getElementById('mm-mem-wired'),
+      memComp: root.getElementById('mm-mem-comp'), memCached: root.getElementById('mm-mem-cached'),
+      memSwap: root.getElementById('mm-mem-swap'),
       disk: root.getElementById('mm-disk'), diskBar: root.getElementById('mm-disk-bar'),
       net: root.getElementById('mm-net'), netSp: root.getElementById('mm-net-sp'),
       link: root.getElementById('mm-link'),
@@ -234,6 +261,8 @@
       load: root.getElementById('mm-load')
     };
     els.head.addEventListener('click', toggle);
+    els.memRow.addEventListener('click', toggleMem);
+    els.memDetail.style.display = memOpen ? 'grid' : 'none';
     updateVisibility();
   }
 

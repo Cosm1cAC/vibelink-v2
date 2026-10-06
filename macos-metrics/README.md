@@ -8,7 +8,7 @@ Mac 后台监控数据源：**无 sudo、stdlib-only 的 Python 指标代理**�
 | --- | --- | --- |
 | CPU | `ps -Ao time=` 累计 CPU 时间差分 / (dt × 核数) | macOS 无 `kern.cp_time`，此路线不需要 root |
 | GPU | `ioreg -r -d 1 -c IOAccelerator -l` 解析 `Device Utilization %` | Apple Silicon（AGXAccelerator）可用；同时给出 Tiler/Renderer/显存占用 |
-| 内存 | `vm_stat` 页统计 + `sysctl hw.memsize` + `vm.swapusage` | used ≈ active + wired + compressor |
+| 内存 | `vm_stat` 页统计 + `sysctl hw.memsize` + `vm.swapusage` | **Activity Monitor 口径**：used = App(匿名−可清除) + Wired + Compressed；另给出文件缓存与 Swap；面板点击「内存」行可展开明细 |
 | 硬盘 | `df -k /System/Volumes/Data` | Data 卷才是真实占用（系统卷是只读封存卷） |
 | 带宽 | `netstat -ib` 计数器每秒差分 | 汇总只算物理网卡（en*），避免 Tailscale 虚拟网卡重复计数 |
 | 延迟 | TCP connect 计时（1.1.1.1 / 8.8.8.8 / 223.5.5.5 :443） | ICMP ping 需要 root，TCP connect 等价可用 |

@@ -119,12 +119,13 @@ def _mem_loop():
             m = re.match(r'\s*"?([A-Za-z][^":]*?)"?:\s+(\d+)\.', line)
             if m:
                 vals[m.group(1).strip()] = int(m.group(2))
-        active = vals.get("Pages active", 0)
+        anon = vals.get("Anonymous pages", 0)
+        fileb = vals.get("File-backed pages", 0)
+        purg = vals.get("Pages purgeable", 0)
         wired = vals.get("Pages wired down", 0)
         comp = vals.get("Pages occupied by compressor", 0)
         free = vals.get("Pages free", 0)
-        inactive = vals.get("Pages inactive", 0)
-        speculative = vals.get("Pages speculative", 0)
+        app = max(0, anon - purg)
         swap_used = None
         smo = re.search(r"used = ([\d.]+)([MG])", _run(["sysctl", "-n", "vm.swapusage"]))
         if smo:
@@ -133,9 +134,12 @@ def _mem_loop():
         with _lock:
             _state["mem"] = {
                 "total": total or None,
-                "used": (active + wired + comp) * ps,
-                "free": (free + inactive + speculative) * ps,
+                "used": (app + wired + comp) * ps,  # Activity Monitor 口径
+                "app": app * ps,
+                "wired": wired * ps,
                 "compressed": comp * ps,
+                "cached": (fileb + purg) * ps,
+                "free": free * ps,
                 "swap_used": swap_used,
             }
         time.sleep(2.0)
