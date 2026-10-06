@@ -1,6 +1,6 @@
 # proxy-stack
 
-成都（Windows）→ 大阪（Mac）代理栈：三个子项目收纳于同一目录，分别部署在 Windows / Mac 两端，做的是同一件事——把网络出口放到日本。全部开源、可审计、agent 可全自动管理。
+成都（Windows）→ 大阪（Mac）代理栈：多个子项目收纳于同一目录，围绕「成都 Windows ⇄ 大阪 Mac」这套基础设施：网络出口、应急通道、监控、多机 opencode 互访。全部开源、可审计、agent 可全自动管理。
 
 ## 结构
 
@@ -13,6 +13,8 @@
 | `macos-ssh-fallback/` | Mac + Windows | 应急 SSH 通道：用户态纯密钥 SSH + ngrok 出站隧道，**不依赖 Tailscale** |
 | `macos-metrics/` | Mac | 监控数据源：用户态指标代理（CPU/GPU/内存/硬盘/带宽/延迟） |
 | `metrics-hub/` | Windows 主机 + 第二台 Windows + 安卓 | 多设备监控 Hub：聚合本机/Windows/手机/Mac，供 WebUI 面板 |
+| `opencode-mesh/` | Windows + Mac | 多机 opencode 互访：每机常驻 headless `serve` + 徽标代理（页面左下角显示直连/中继），Web UI 的 Servers 功能聚合各机会话（Tailscale + basic auth + CORS） |
+| `yto-portal-auth/` | Windows | yto2022 门户自动重认证守护：断线检测 + 自动登录（Panabit/LFradius），保 PC 在线 |
 
 ## 链路
 
@@ -30,6 +32,9 @@ Windows/手机 ──ssh──> ngrok TCP ──> Mac 用户态 SSH (127.0.0.1:1
 wproxy WebUI「监控」tab ──> Windows metrics-hub (127.0.0.1:18993) ──┬─ 自采集（本机 Windows）
                                                                    ├─ push：第二台 Windows / 安卓 Termux
                                                                    └─ pull：Mac macos-metrics (100.105.59.31:18992)
+
+opencode 多机互访:
+任一设备浏览器 ──Tailscale──> 各机 opencode serve (4096, basic auth)，UI 内 Add server 聚合
 ```
 
 ## 快速开始
@@ -47,5 +52,5 @@ Mac（新机器）：按 `macos-udp-proxy/README.md` 部署。
 
 - 全开源组件（mihomo / zashboard / wintun）+ 自研脚本；二进制来自官方源并有哈希校验
 - 私有仓库，含内网 Tailscale IP 与本地 API 密钥（仅监听 127.0.0.1）
-- 敏感凭据不入库：Tailscale auth key、ngrok authtoken 仅存在于设备本地配置
+- 敏感凭据不入库：Tailscale auth key、ngrok authtoken、opencode 服务密码与 provider 凭据仅存在于设备本地配置
 - 应急通道 `macos-ssh-fallback/`：用户态 SSH 仅密钥认证（无密码通道），ngrok 地址每次重启变化，入口不固定
