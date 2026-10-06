@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#16181c">
+<title>设备监控</title>
+<style>
+:root { color-scheme: dark; }
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+body {
+  margin: 0; background: #16181c; color: #e8eaed;
+  font: 14px/1.45 -apple-system, "PingFang SC", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+  padding: 14px 12px calc(16px + env(safe-area-inset-bottom));
+}
+header { display: flex; align-items: baseline; gap: 8px; margin: 0 2px 12px; }
+h1 { font-size: 17px; margin: 0; letter-spacing: .01em; }
+#status { font-size: 12px; color: #9aa0a6; display: flex; align-items: center; gap: 6px; margin-left: auto; }
+#status .dot { width: 8px; height: 8px; border-radius: 50%; background: #34c759; }
+#status.off .dot { background: #ff453a; }
+.cards { display: grid; gap: 12px; }
+.card { background: #1e2126; border: 1px solid #2a2e35; border-radius: 14px; padding: 12px 14px 10px; }
+.card.off { opacity: .55; }
+.chead { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; min-width: 0; }
+.chead .dot { width: 9px; height: 9px; border-radius: 50%; background: #34c759; flex: none; }
+.card.off .chead .dot { background: #ff453a; }
+.chead .name { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chead .plat { font-size: 11px; padding: 1px 8px; border-radius: 999px; background: #2a2e35; color: #b6bcc6; flex: none; }
+.chead .age { margin-left: auto; font-size: 11px; color: #8a9099; flex: none; }
+.rows { display: grid; gap: 7px; }
+.row { display: grid; grid-template-columns: 2.5rem 1fr; gap: 8px; align-items: center; }
+.row .k { font-size: 12px; color: #9aa0a6; }
+.metric { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.val { min-width: 5.4rem; text-align: right; font-size: 12.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bar { flex: 1; height: 6px; border-radius: 3px; background: #2a2e35; overflow: hidden; min-width: 2rem; }
+.bar i { display: block; height: 100%; width: 0; border-radius: 3px; transition: width .3s ease; }
+.spark { width: 56px; height: 18px; flex: none; opacity: .9; }
+.line { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: #9aa0a6; }
+.line span:last-child { font-variant-numeric: tabular-nums; }
+.extra { margin-top: 2px; }
+footer { margin-top: 14px; font-size: 11px; color: #6f757d; text-align: right; }
+@media (min-width: 700px) { .cards { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); } }
+</style>
+</head>
+<body>
+<header>
+  <h1>设备监控</h1>
+  <div id="status"><span class="dot"></span><span id="stext">连接中…</span></div>
+</header>
+<div class="cards" id="cards"></div>
+<footer id="foot"></footer>
+<script>
+(function () {
+  'use strict';
+  var REFRESH = 2000, MAXPTS = 60;
+  var PLAT = { macos: 'Mac', windows: 'Windows', android: 'Android' };
+  var cards = {}, hist = {}, lastData = null, lastRtt = null, hubOk = null, inflight = false;
+  var els = { cards: document.getElementById('cards'), status: document.getElementById('status'), stext: document.getElementById('stext'), foot: document.getElementById('foot') };
+
+  function fmtBytes(n) {
+    if (n === null || n === undefined || isNaN(n)) return '--';
+    var u = ['B', 'K', 'M', 'G', 'T'], i = 0; n = Number(n);
+    while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+    return (i === 0 || n >= 100 ? n.toFixed(0) : n.toFixed(1)) + u[i];
+  }
+  function fmtRate(b) { return fmtBytes(b) + '/s'; }
+  function fmtPct(v) { return (v === null || v === undefined) ? '--' : v + '%'; }
+  function fmtUp(s) { return (!s ? '--' : (s >= 86400 ? (s / 86400).toFixed(1) + 'd' : (s / 3600).toFixed(1) + 'h')); }
+  function esc(s) { return String(s === null || s === undefined ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  function bar(el, v) { el.style.width = Math.max(0, Math.min(100, v || 0)) + '%'; }
+  function h(id) { if (!hist[id]) hist[id] = { cpu: [], gpu: [], mem: [], net: [] }; return hist[id]; }
+  function push(a, v) { a.push(Math.max(0, v || 0)); if (a.length > MAXPTS) a.shift(); }
+  function spark(cv, data, color) {
+    var ctx = cv.getContext('2d'), w = cv.width, hh = cv.height;
+    ctx.clearRect(0, 0, w, hh);
+    if (data.length < 2) return;
+    var max = 1; for (var i = 0; i < data.length; i++) if (data[i] > max) max = data[i];
+    ctx.beginPath();
+    for (var j = 0; j < data.length; j++) {
+      var x = j * (w - 1) / (MAXPTS - 1);
+      var y = hh - 3 - (Math.max(0, data[j]) / max) * (hh - 6);
+      if (j === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.stroke();
+    ctx.lineTo((data.length - 1) * (w - 1) / (MAXPTS - 1), hh); ctx.lineTo(0, hh); ctx.closePath();
+    ctx.fillStyle = color + '22'; ctx.fill();
+  }
+
+  var TPL = [
+    '<div class="chead"><span class="dot"></span><span class="name"></span><span class="plat"></span><span class="age"></span></div>',
+    '<div class="rows">',
+    '<div class="row"><span class="k">CPU</span><div class="metric"><span class="val" data-f="cpu"></span><div class="bar"><i data-f="cpu-bar" style="background:#4c8dff"></i></div><canvas class="spark" data-f="cpu-sp" width="112" height="36"></canvas></div></div>',
+    '<div class="row"><span class="k">GPU</span><div class="metric"><span class="val" data-f="gpu"></span><div class="bar"><i data-f="gpu-bar" style="background:#a970ff"></i></div><canvas class="spark" data-f="gpu-sp" width="112" height="36"></canvas></div></div>',
+    '<div class="row"><span class="k">内存</span><div class="metric"><span class="val" data-f="mem"></span><div class="bar"><i data-f="mem-bar" style="background:#2fbf71"></i></div><canvas class="spark" data-f="mem-sp" width="112" height="36"></canvas></div></div>',
+    '<div class="row"><span class="k">硬盘</span><div class="metric"><span class="val" data-f="disk"></span><div class="bar"><i data-f="disk-bar" style="background:#e8a33d"></i></div></div></div>',
+    '<div class="row"><span class="k">带宽</span><div class="metric"><span class="val" data-f="net"></span><div class="bar" style="visibility:hidden"></div><canvas class="spark" data-f="net-sp" width="112" height="36"></canvas></div></div>',
+    '<div data-f="lat"></div>',
+    '<div class="line extra"><span data-f="extra"></span><span></span></div>',
+    '</div>'
+  ].join('');
+
+  function card(id) {
+    if (cards[id]) return cards[id];
+    var root = document.createElement('div');
+    root.className = 'card';
+    root.innerHTML = TPL;
+    els.cards.appendChild(root);
+    var refs = { root: root }, nodes = root.querySelectorAll('[data-f]');
+    for (var i = 0; i < nodes.length; i++) refs[nodes[i].getAttribute('data-f')] = nodes[i];
+    cards[id] = refs;
+    return refs;
+  }
+
+  function update(refs, dev, ts) {
+    var m = dev.metrics || {}, online = dev.online !== false;
+    refs.root.classList.toggle('off', !online);
+    refs.root.querySelector('.name').textContent = String(dev.name || dev.id).replace(/\.local$/i, '');
+    refs.root.querySelector('.plat').textContent = PLAT[dev.platform] || dev.platform || '';
+    var age = dev.last_seen ? Math.max(0, Math.round(ts - dev.last_seen)) : null;
+    refs.root.querySelector('.age').textContent = online ? (age === null ? '' : age + 's 前') : '离线';
+
+    var hh = h(dev.id);
+    push(hh.cpu, m.cpu_pct);
+    refs.cpu.textContent = fmtPct(m.cpu_pct); bar(refs['cpu-bar'], m.cpu_pct); spark(refs['cpu-sp'], hh.cpu, '#4c8dff');
+    var gpu = m.gpu ? m.gpu.util_pct : null;
+    push(hh.gpu, gpu);
+    refs.gpu.textContent = fmtPct(gpu); bar(refs['gpu-bar'], gpu); spark(refs['gpu-sp'], hh.gpu, '#a970ff');
+    var mem = m.mem || {}, mp = mem.total ? Math.round(mem.used / mem.total * 1000) / 10 : null;
+    push(hh.mem, mp);
+    refs.mem.textContent = mem.total ? fmtBytes(mem.used) + ' / ' + fmtBytes(mem.total) : '--';
+    bar(refs['mem-bar'], mp); spark(refs['mem-sp'], hh.mem, '#2fbf71');
+    var disk = m.disk || {};
+    refs.disk.textContent = disk.total ? fmtBytes(disk.used) + ' / ' + fmtBytes(disk.total) + (disk.used_pct != null ? ' · ' + disk.used_pct + '%' : '') : '--';
+    bar(refs['disk-bar'], disk.used_pct);
+    var net = m.net || {}, rx = net.rx_bps || 0, tx = net.tx_bps || 0;
+    push(hh.net, (rx + tx) / 1024);
+    refs.net.textContent = '↓' + fmtRate(rx) + ' ↑' + fmtRate(tx); spark(refs['net-sp'], hh.net, '#3ac9d6');
+    var lat = m.latency || {}, html = '';
+    Object.keys(lat).forEach(function (k) {
+      var v = lat[k];
+      html += '<div class="line"><span>' + esc(k) + '</span><span>' + (v == null ? '--' : v + ' ms') + '</span></div>';
+    });
+    refs.lat.innerHTML = html;
+    var ex = [];
+    if (m.load && m.load.length) ex.push('负载 ' + m.load.map(function (v) { return v.toFixed(2); }).join(' '));
+    else if (m.queue != null) ex.push('队列 ' + m.queue);
+    if (m.battery != null) ex.push('电量 ' + m.battery + '%' + (/Charg|Full/i.test(m.charging || '') ? ' ⚡' : ''));
+    if (m.uptime_s) ex.push('运行 ' + fmtUp(m.uptime_s));
+    refs.extra.textContent = ex.join(' · ');
+  }
+
+  function render(d) {
+    var list = d.devices || [], seen = {};
+    list.forEach(function (dev) { seen[dev.id] = true; update(card(dev.id), dev, d.ts || 0); });
+    Object.keys(cards).forEach(function (id) { if (!seen[id]) { cards[id].root.remove(); delete cards[id]; } });
+    var on = list.filter(function (x) { return x.online !== false; }).length;
+    els.status.classList.toggle('off', !hubOk);
+    els.stext.textContent = hubOk ? on + ' / ' + list.length + ' 台在线' : 'Hub 离线';
+    els.foot.textContent = 'metrics-hub · 刷新 ' + REFRESH / 1000 + 's · ' +
+      (lastRtt == null ? '' : lastRtt + 'ms') + (d.ts ? ' · ' + new Date(d.ts * 1000).toLocaleTimeString() : '');
+  }
+
+  function poll() {
+    if (inflight) return;
+    inflight = true;
+    var t0 = performance.now();
+    fetch('./devices?_=' + Date.now(), { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        lastRtt = Math.max(1, Math.round(performance.now() - t0));
+        hubOk = true; lastData = d; render(d);
+      })
+      .catch(function () {
+        hubOk = false; lastRtt = null;
+        els.status.classList.add('off');
+        els.stext.textContent = 'Hub 离线';
+      })
+      .finally(function () { inflight = false; });
+  }
+
+  poll();
+  setInterval(poll, REFRESH);
+})();
+</script>
+</body>
+</html>

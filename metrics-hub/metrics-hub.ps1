@@ -409,6 +409,13 @@ function Handle-Request {
     $path = ($Req.path -split '\?')[0]
     if ($Req.method -eq 'OPTIONS') { Write-Response $Stream 204 'text/plain' ([byte[]]@()); return 204 }
     if ($path -eq '/healthz') { Write-Response $Stream 200 'text/plain; charset=utf-8' ([Text.Encoding]::UTF8.GetBytes('ok')); return 200 }
+    if (($path -eq '/' -or $path -eq '/m') -and $Req.method -eq 'GET') {
+        $file = Join-Path $PSScriptRoot 'mobile.html'
+        if (Test-Path -LiteralPath $file) {
+            $bytes = [IO.File]::ReadAllBytes($file)
+            Write-Response $Stream 200 'text/html; charset=utf-8' $bytes; return 200
+        }
+    }
     if ($path -eq '/devices' -and $Req.method -eq 'GET') {
         $json = (Build-Devices) | ConvertTo-Json -Depth 8 -Compress
         Write-Response $Stream 200 'application/json; charset=utf-8' ([Text.Encoding]::UTF8.GetBytes($json)); return 200
@@ -442,6 +449,7 @@ function Handle-Request {
             '/static/metrics-hub.ps1'  = (Join-Path $PSScriptRoot 'metrics-hub.ps1')
             '/static/install-agent.ps1' = (Join-Path $PSScriptRoot 'install-agent.ps1')
             '/static/phone-metrics.sh' = (Join-Path $PSScriptRoot 'phone-metrics.sh')
+            '/static/mobile.html'      = (Join-Path $PSScriptRoot 'mobile.html')
         }
         if ($map.ContainsKey($path) -and (Test-Path -LiteralPath $map[$path])) {
             $bytes = [IO.File]::ReadAllBytes($map[$path])
