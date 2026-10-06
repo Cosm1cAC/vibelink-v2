@@ -76,10 +76,17 @@ Android 10+ 对应用隐藏 `/proc/stat`、`/proc/net/dev`、`/proc/uptime`，�
 负载（/proc/loadavg，可读时）、电量（/sys/class/power_supply；装 Termux:API 后自动改用 termux-battery-status）。
 CPU 若被系统禁止则显示 `--`。运行日志：`~/phone-metrics.log`（仅出错时写诊断）。
 
+## 手机查看监控
+
+浏览器直接打开 **`http://100.74.71.80:18993/`**（Hub 内置手机版监控页，深色自适应，2s 刷新；仅 tailnet 可达，无需任何额外配置）。建议「添加到主屏幕」当 App 用。
+
+> 完整的 zashboard（127.0.0.1:9097）只监听 Windows 本机且需要后端密钥，手机如需使用需额外开放监听+防火墙+在手机上配置密钥，一般不必。
+
 ## 端点
 
 | 路径 | 说明 |
 | --- | --- |
+| `GET /` 或 `/m` | 手机版监控页（mobile.html） |
 | `GET /devices` | 聚合全部设备（监控页用） |
 | `GET /metrics` | Hub 本机指标（调试） |
 | `POST /ingest` | Agent 上报（JSON） |
