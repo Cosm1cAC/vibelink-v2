@@ -27,6 +27,8 @@ else
 fi
 NC="$(nproc 2>/dev/null || echo 4)"
 
+echo "$(date '+%F %T') phone-metrics started id=$ID hub=$HUB" >&2
+
 prev_total=0; prev_idle=0
 prev_rx=0; prev_tx=0; prev_t=0
 lat_cache=""; lat_t=0
@@ -80,8 +82,8 @@ while true; do
   mem_avail=$(awk '/MemAvailable/{print $2*1024}' /proc/meminfo)
   mem_used=$((mem_total - mem_avail))
 
-  disk_total=$(df -k /data 2>/dev/null | awk 'NR==2{print $2*1024}')
-  disk_used=$(df -k /data 2>/dev/null | awk 'NR==2{print $3*1024}')
+  disk_total=$(df -kP /data 2>/dev/null | awk 'NR==2{print $2*1024}')
+  disk_used=$(df -kP /data 2>/dev/null | awk 'NR==2{print $3*1024}')
   [ -z "$disk_total" ] && disk_total=0
   [ -z "$disk_used" ] && disk_used=0
   uptime_s=$(awk '{print int($1)}' /proc/uptime)
@@ -109,10 +111,13 @@ while true; do
   disk_pct=$(awk -v u="$disk_used" -v t="$disk_total" 'BEGIN{ if(t>0) printf "%.1f", u*100/t; else print "null" }')
 
   json=$(cat <<EOF
-{"id":"$ID","name":"$MODEL","platform":"android","metrics":{"host":"$MODEL","model":"Android","platform":"android","boot_time":null,"uptime_s":$uptime_s,"ncpu":$NC,"cpu_pct":${cpu:-null},"queue":null,"gpu":null,"mem":{"total":$mem_total,"used":$mem_used},"disk":{"mount":"/data","total":$disk_total,"used":$disk_used,"used_pct":$disk_pct},"net":{"rx_bps":$rx_bps,"tx_bps":$tx_bps},"latency":{$lat_cache},"battery":${batt:-null},"charging":"$bstat"}}
+{"id":"$ID","name":"$MODEL","platform":"android","metrics":{"host":"$MODEL","model":"Android","platform":"android","boot_time":null,"uptime_s":${uptime_s:-0},"ncpu":${NC:-4},"cpu_pct":${cpu:-null},"queue":null,"gpu":null,"mem":{"total":${mem_total:-0},"used":${mem_used:-0}},"disk":{"mount":"/data","total":${disk_total:-0},"used":${disk_used:-0},"used_pct":${disk_pct:-null}},"net":{"rx_bps":${rx_bps:-0},"tx_bps":${tx_bps:-0}},"latency":{$lat_cache},"battery":${batt:-null},"charging":"$bstat"}}
 EOF
 )
-  curl -s -m 6 -X POST -H 'Content-Type: application/json' --data-binary "$json" "$HUB/ingest" >/dev/null 2>&1
+  resp=$(curl -s -m 6 -o "$HOME/.phone-metrics.resp" -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data-binary "$json" "$HUB/ingest")
+  if [ "$resp" != "200" ]; then
+    echo "$(date '+%F %T') post=$resp resp=$(head -c 200 "$HOME/.phone-metrics.resp" 2>/dev/null) json=$(printf '%s' "$json" | head -c 400)" >&2
+  fi
 
   sleep "$INTERVAL"
 done
