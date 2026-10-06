@@ -41,6 +41,8 @@ Windows 看门狗（`macos-socks-proxy/ssh-proxy.ps1`，计划任务 `MacSocksPr
 指标面板由 `wproxy/ui-patch/` 注入 zashboard（补丁幂等，`download-assets.ps1` 会自动应用）：
 `http://127.0.0.1:9097/ui/#/settings` 右下角显示面板。
 
+面板数据由 Windows 侧 `metrics-hub` 聚合（每 3s 拉取本代理的 `/metrics`）；本代理的 `http://100.105.59.31:18992/metrics` 仍可独立访问（调试用）。
+
 ## 验证记录（2026-10-06）
 
 - ✅ `curl http://100.105.59.31:18992/metrics` 返回完整 JSON：cpu=3.5%、gpu=3%、mem=10.8G/16G、disk=28.2%、net rx/tx、latency 1.1.1.1=14.8ms / 8.8.8.8=16.1ms / 223.5.5.5=23.6ms

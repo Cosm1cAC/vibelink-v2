@@ -1,0 +1,505 @@
+# metrics-hub.ps1 -- 多设备监控采集中心 / 上报代理（Windows，无需管理员）
+#
+# 用法:
+#   Hub（主 Windows，采集本机 + 收其它设备 push + 主动拉 Mac）:
+#     powershell -File metrics-hub.ps1 -Mode hub
+#   Agent（第二台 Windows，采集本机并 push 到 Hub）:
+#     powershell -File metrics-hub.ps1 -Mode agent -Hub http://100.74.71.80:18993
+#
+# 端点:
+#   GET  /devices   聚合所有设备（监控页用）
+#   GET  /metrics   本机指标（调试）
+#   POST /ingest    Agent 上报
+#   GET  /static/…  分发安装脚本（install-agent.ps1 / phone-metrics.sh / metrics-hub.ps1）
+#
+# 依赖: Windows PowerShell 5.1+，无需管理员权限（监听端口需防火墙放行 tailnet 网段）。
+
+[CmdletBinding()]
+param(
+    [ValidateSet('hub', 'agent')]
+    [string]$Mode = 'hub',
+    [string]$Hub = 'http://100.74.71.80:18993',
+    [int]$Port = 18993,
+    [string]$Id = '',
+    [string]$Name = '',
+    [int]$IntervalSec = 3
+)
+
+$ErrorActionPreference = 'Continue'
+
+# ---------------------------------------------------------------- utilities
+
+function Get-Prop {
+    param($Obj, [string]$Key, [double]$Default = 0)
+    if ($null -eq $Obj) { return $Default }
+    $p = $Obj.PSObject.Properties[$Key]
+    if ($p -and $null -ne $p.Value) { return [double]$p.Value }
+    return $Default
+}
+
+function Get-Epoch {
+    return [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+}
+
+# ---------------------------------------------------------------- collectors
+
+$script:PrevCpu = $null
+$script:PrevNet = $null
+$script:Ncpu = [int]$env:NUMBER_OF_PROCESSORS
+$script:HostName = $env:COMPUTERNAME
+$script:Model = 'Windows'
+$script:BootTime = $null
+$script:Latency = [ordered]@{}
+
+function Initialize-Static {
+    $os = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
+    $cs = Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue
+    $cpu = Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($cpu -and $cpu.Name -and $cpu.Name -notmatch '^Genuine Intel\(R\) 0000') { $script:Model = $cpu.Name.Trim() }
+    elseif ($cs -and $cs.Model) { $script:Model = $cs.Model }
+    if ($cs -and $cs.NumberOfLogicalProcessors) { $script:Ncpu = [int]$cs.NumberOfLogicalProcessors }
+    if ($os -and $os.LastBootUpTime) {
+        $script:BootTime = ([DateTimeOffset]$os.LastBootUpTime).ToUnixTimeSeconds()
+    }
+}
+
+function Get-CpuPct {
+    $s = Get-CimInstance Win32_PerfRawData_PerfOS_Processor -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -eq '_Total' } | Select-Object -First 1
+    if (-not $s) { return $null }
+    $busy = [double]$s.PercentProcessorTime
+    $t = [double]$s.Timestamp_Sys100NS
+    $pct = $null
+    if ($script:PrevCpu) {
+        $dt = $t - $script:PrevCpu.t
+        if ($dt -gt 0) {
+            $pct = (($busy - $script:PrevCpu.busy) / ($dt * $script:Ncpu)) * 100.0
+            if ($pct -lt 0) { $pct = 0 }
+            if ($pct -gt 100) { $pct = 100 }
+            $pct = [Math]::Round($pct, 1)
+        }
+    }
+    $script:PrevCpu = @{ busy = $busy; t = $t }
+    return $pct
+}
+
+function Get-GpuPct {
+    $eng = Get-CimInstance Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine -ErrorAction SilentlyContinue
+    if (-not $eng) { return $null }
+    $vals = @($eng | Where-Object { $_.Name -match 'engtype_3D' } | ForEach-Object { [int]$_.UtilizationPercentage })
+    if ($vals.Count -eq 0) { $vals = @($eng | ForEach-Object { [int]$_.UtilizationPercentage }) }
+    if ($vals.Count -eq 0) { return $null }
+    return [int]($vals | Measure-Object -Maximum).Maximum
+}
+
+function Get-MemInfo {
+    $os = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
+    if (-not $os) { return @{} }
+    $total = [double]$os.TotalVisibleMemorySize * 1KB
+    $avail = [double]$os.FreePhysicalMemory * 1KB
+    $cached = $null
+    $pm = Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory -ErrorAction SilentlyContinue
+    if ($pm) {
+        $cached = (Get-Prop $pm 'StandbyCacheNormalPriorityBytes') + (Get-Prop $pm 'StandbyCacheReserveBytes') +
+                  (Get-Prop $pm 'StandbyCacheCoreBytes') + (Get-Prop $pm 'ModifiedPageListBytes')
+    }
+    $swap = $null
+    $pf = Get-CimInstance Win32_PageFileUsage -ErrorAction SilentlyContinue
+    if ($pf) { $swap = [double]($pf | Measure-Object -Property CurrentUsage -Sum).Sum * 1MB }
+    return @{
+        total      = $total
+        used       = $total - $avail
+        available  = $avail
+        cached     = $cached
+        swap_used  = $swap
+    }
+}
+
+function Get-DiskInfo {
+    $d = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'" -ErrorAction SilentlyContinue
+    if (-not $d -or -not $d.Size) { return @{} }
+    $total = [double]$d.Size
+    $free = [double]$d.FreeSpace
+    return @{
+        mount    = 'C:'
+        total    = $total
+        used     = $total - $free
+        free     = $free
+        used_pct = [Math]::Round((($total - $free) / $total) * 100, 1)
+    }
+}
+
+function Get-NetInfo {
+    $adapters = @(Get-NetAdapter -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq 'Up' })
+    $stats = @(Get-NetAdapterStatistics -ErrorAction SilentlyContinue)
+    $map = @{}
+    foreach ($a in $adapters) {
+        $st = $stats | Where-Object { $_.Name -eq $a.Name } | Select-Object -First 1
+        if ($st) {
+            $phys = ($a.Name -notmatch 'Tailscale|vEthernet|Loopback|Bluetooth')
+            $map[$a.Name] = @{ rx = [double]$st.ReceivedBytes; tx = [double]$st.SentBytes; phys = $phys }
+        }
+    }
+    $now = [DateTime]::UtcNow
+    $rx = 0.0; $tx = 0.0; $ifaces = @{}
+    if ($script:PrevNet) {
+        $dt = ($now - $script:PrevNet.t).TotalSeconds
+        if ($dt -gt 0.2) {
+            foreach ($k in $map.Keys) {
+                if ($script:PrevNet.map.ContainsKey($k)) {
+                    $rr = [Math]::Max(0, ($map[$k].rx - $script:PrevNet.map[$k].rx) / $dt)
+                    $tt = [Math]::Max(0, ($map[$k].tx - $script:PrevNet.map[$k].tx) / $dt)
+                    $ifaces[$k] = @{ rx_bps = [int]$rr; tx_bps = [int]$tt }
+                    if ($map[$k].phys) { $rx += $rr; $tx += $tt }
+                }
+            }
+        }
+    }
+    $script:PrevNet = @{ t = $now; map = $map }
+    return @{ rx_bps = [int]$rx; tx_bps = [int]$tx; interfaces = $ifaces }
+}
+
+function Test-TcpMs {
+    param([string]$TargetHost, [int]$TargetPort, [int]$TimeoutMs = 1500)
+    $c = New-Object System.Net.Sockets.TcpClient
+    try {
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        $iar = $c.BeginConnect($TargetHost, $TargetPort, $null, $null)
+        if (-not $iar.AsyncWaitHandle.WaitOne($TimeoutMs)) { return $null }
+        $c.EndConnect($iar)
+        $sw.Stop()
+        return [Math]::Round($sw.Elapsed.TotalMilliseconds, 1)
+    } catch { return $null } finally { $c.Close() }
+}
+
+function Test-SocksMs {
+    param([string]$ProxyHost, [int]$ProxyPort, [string]$DstHost, [int]$DstPort, [int]$TimeoutMs = 3000)
+    $c = New-Object System.Net.Sockets.TcpClient
+    try {
+        $iar = $c.BeginConnect($ProxyHost, $ProxyPort, $null, $null)
+        if (-not $iar.AsyncWaitHandle.WaitOne($TimeoutMs)) { return $null }
+        $c.EndConnect($iar)
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        $s = $c.GetStream()
+        $s.ReadTimeout = $TimeoutMs
+        $s.WriteTimeout = $TimeoutMs
+        $s.Write([byte[]]@(5, 1, 0), 0, 3)
+        $r = New-Object byte[] 2
+        if ($s.Read($r, 0, 2) -ne 2 -or $r[0] -ne 5 -or $r[1] -ne 0) { return $null }
+        $hb = [Text.Encoding]::ASCII.GetBytes($DstHost)
+        $req = New-Object 'System.Collections.Generic.List[byte]'
+        foreach ($b in @(5, 1, 0, 3, $hb.Length)) { $req.Add([byte]$b) }
+        foreach ($b in $hb) { $req.Add($b) }
+        $req.Add([byte]($DstPort -shr 8))
+        $req.Add([byte]($DstPort -band 255))
+        $arr = $req.ToArray()
+        $s.Write($arr, 0, $arr.Length)
+        $resp = New-Object byte[] 10
+        if ($s.Read($resp, 0, 10) -lt 2 -or $resp[1] -ne 0) { return $null }
+        $sw.Stop()
+        return [Math]::Round($sw.Elapsed.TotalMilliseconds, 1)
+    } catch { return $null } finally { $c.Close() }
+}
+
+function Update-Latency {
+    $lat = [ordered]@{}
+    $lat['直连223.5.5.5'] = Test-TcpMs -TargetHost '223.5.5.5' -TargetPort 443
+    $lat['直连8.8.8.8'] = Test-TcpMs -TargetHost '8.8.8.8' -TargetPort 443
+    $proxyUp = Test-TcpMs -TargetHost '127.0.0.1' -TargetPort 7897 -TimeoutMs 500
+    if ($proxyUp) {
+        $lat['代理出口'] = Test-SocksMs -ProxyHost '127.0.0.1' -ProxyPort 7897 -DstHost 'www.gstatic.com' -DstPort 443
+    }
+    $script:Latency = $lat
+}
+
+function Get-Snapshot {
+    $queue = $null
+    $sys = Get-CimInstance Win32_PerfFormattedData_PerfOS_System -ErrorAction SilentlyContinue
+    if ($sys -and $sys.PSObject.Properties['ProcessorQueueLength']) { $queue = [int]$sys.ProcessorQueueLength }
+    return [ordered]@{
+        host      = $script:HostName
+        model     = $script:Model
+        platform  = 'windows'
+        boot_time = $script:BootTime
+        uptime_s  = $(if ($script:BootTime) { [int]((Get-Epoch) - $script:BootTime) } else { $null })
+        ncpu      = $script:Ncpu
+        cpu_pct   = (Get-CpuPct)
+        queue     = $queue
+        gpu       = @{ util_pct = (Get-GpuPct) }
+        mem       = (Get-MemInfo)
+        disk      = (Get-DiskInfo)
+        net       = (Get-NetInfo)
+    }
+}
+
+# ---------------------------------------------------------------- raw http
+
+function Get-RawHttp {
+    param([string]$Url, [int]$TimeoutMs = 1500)
+    if ($Url -notmatch '^http://([^/:]+)(?::(\d+))?(/.*)?$') { return $null }
+    $h = $Matches[1]
+    $p = 80
+    if ($Matches[2]) { $p = [int]$Matches[2] }
+    $path = '/'
+    if ($Matches[3]) { $path = $Matches[3] }
+    $c = New-Object System.Net.Sockets.TcpClient
+    try {
+        $iar = $c.BeginConnect($h, $p, $null, $null)
+        if (-not $iar.AsyncWaitHandle.WaitOne($TimeoutMs)) { return $null }
+        $c.EndConnect($iar)
+        $c.ReceiveTimeout = $TimeoutMs
+        $s = $c.GetStream()
+        $req = "GET $path HTTP/1.1`r`nHost: ${h}:${p}`r`nConnection: close`r`n`r`n"
+        $rb = [Text.Encoding]::ASCII.GetBytes($req)
+        $s.Write($rb, 0, $rb.Length)
+        $ms = New-Object IO.MemoryStream
+        $buf = New-Object byte[] 8192
+        while ($true) {
+            $n = $s.Read($buf, 0, $buf.Length)
+            if ($n -le 0) { break }
+            $ms.Write($buf, 0, $n)
+        }
+        $text = [Text.Encoding]::UTF8.GetString($ms.ToArray())
+        $idx = $text.IndexOf("`r`n`r`n")
+        if ($idx -lt 0) { return $null }
+        return $text.Substring($idx + 4)
+    } catch { return $null } finally { $c.Close() }
+}
+
+function Send-RawJson {
+    param([string]$Url, [string]$Json, [int]$TimeoutMs = 4000)
+    if ($Url -notmatch '^http://([^/:]+)(?::(\d+))?(/.*)?$') { return $false }
+    $h = $Matches[1]
+    $p = 80
+    if ($Matches[2]) { $p = [int]$Matches[2] }
+    $path = '/'
+    if ($Matches[3]) { $path = $Matches[3] }
+    $body = [Text.Encoding]::UTF8.GetBytes($Json)
+    $c = New-Object System.Net.Sockets.TcpClient
+    try {
+        $iar = $c.BeginConnect($h, $p, $null, $null)
+        if (-not $iar.AsyncWaitHandle.WaitOne($TimeoutMs)) { return $false }
+        $c.EndConnect($iar)
+        $c.ReceiveTimeout = $TimeoutMs
+        $s = $c.GetStream()
+        $head = "POST $path HTTP/1.1`r`nHost: ${h}:${p}`r`nContent-Type: application/json`r`nContent-Length: $($body.Length)`r`nConnection: close`r`n`r`n"
+        $hb = [Text.Encoding]::ASCII.GetBytes($head)
+        $s.Write($hb, 0, $hb.Length)
+        $s.Write($body, 0, $body.Length)
+        $buf = New-Object byte[] 1024
+        $null = $s.Read($buf, 0, $buf.Length)
+        return $true
+    } catch { return $false } finally { $c.Close() }
+}
+
+# ---------------------------------------------------------------- http server
+
+function Write-Response {
+    param($Stream, [int]$Code, [string]$ContentType, [byte[]]$Body)
+    $reason = 'OK'
+    switch ($Code) {
+        204 { $reason = 'No Content' }
+        400 { $reason = 'Bad Request' }
+        404 { $reason = 'Not Found' }
+        405 { $reason = 'Method Not Allowed' }
+        500 { $reason = 'Internal Server Error' }
+    }
+    $head = "HTTP/1.1 $Code $reason`r`nContent-Type: $ContentType`r`nContent-Length: $($Body.Length)`r`n" +
+            "Access-Control-Allow-Origin: *`r`nAccess-Control-Allow-Methods: GET, POST, OPTIONS`r`n" +
+            "Access-Control-Allow-Headers: Content-Type`r`nCache-Control: no-store`r`nConnection: close`r`n`r`n"
+    $hb = [Text.Encoding]::ASCII.GetBytes($head)
+    $Stream.Write($hb, 0, $hb.Length)
+    if ($Body.Length -gt 0) { $Stream.Write($Body, 0, $Body.Length) }
+    $Stream.Flush()
+}
+
+function Read-HttpRequest {
+    param($Stream)
+    $ms = New-Object IO.MemoryStream
+    $buf = New-Object byte[] 4096
+    $headerEnd = -1
+    while ($headerEnd -lt 0) {
+        $n = $Stream.Read($buf, 0, $buf.Length)
+        if ($n -le 0) { return $null }
+        $ms.Write($buf, 0, $n)
+        $arr = $ms.ToArray()
+        for ($i = 0; $i -le $arr.Length - 4; $i++) {
+            if ($arr[$i] -eq 13 -and $arr[$i + 1] -eq 10 -and $arr[$i + 2] -eq 13 -and $arr[$i + 3] -eq 10) { $headerEnd = $i + 4; break }
+        }
+        if ($ms.Length -gt 262144) { return $null }
+    }
+    $arr = $ms.ToArray()
+    $headerText = [Text.Encoding]::ASCII.GetString($arr, 0, $headerEnd)
+    $lines = $headerText -split "`r`n"
+    $reqLine = $lines[0] -split ' '
+    if ($reqLine.Count -lt 2) { return $null }
+    $headers = @{}
+    for ($i = 1; $i -lt $lines.Count; $i++) {
+        $p = $lines[$i] -split ':', 2
+        if ($p.Count -eq 2) { $headers[$p[0].Trim().ToLower()] = $p[1].Trim() }
+    }
+    $len = 0
+    if ($headers.ContainsKey('content-length')) { [void][int]::TryParse($headers['content-length'], [ref]$len) }
+    $body = New-Object byte[] $len
+    $got = $arr.Length - $headerEnd
+    if ($got -gt 0) { [Array]::Copy($arr, $headerEnd, $body, 0, [Math]::Min($got, $len)) }
+    while ($got -lt $len) {
+        $n = $Stream.Read($body, $got, $len - $got)
+        if ($n -le 0) { break }
+        $got += $n
+    }
+    return @{ method = $reqLine[0]; path = $reqLine[1]; headers = $headers; body = $body }
+}
+
+$script:Devices = @{}
+$script:SelfMetrics = $null
+$script:SelfSeen = 0
+$script:MacMetrics = $null
+$script:MacSeen = 0
+
+function Pull-Mac {
+    $text = Get-RawHttp -Url 'http://100.105.59.31:18992/metrics' -TimeoutMs 1500
+    if (-not $text) { return }
+    try {
+        $obj = $text | ConvertFrom-Json
+        if ($obj.ts) {
+            $script:MacMetrics = $obj
+            $script:MacSeen = Get-Epoch
+        }
+    } catch { }
+}
+
+function Build-Devices {
+    $now = Get-Epoch
+    $list = New-Object System.Collections.ArrayList
+    $selfMetrics = $script:SelfMetrics
+    if ($selfMetrics) { $selfMetrics = $selfMetrics + @{ latency = $script:Latency } }
+    [void]$list.Add(@{
+        id = 'win-' + $script:HostName.ToLower(); name = $script:HostName; platform = 'windows'
+        online = $true; last_seen = $script:SelfSeen; metrics = $selfMetrics
+    })
+    if ($script:MacMetrics) {
+        [void]$list.Add(@{
+            id = 'mac-mini'; name = $script:MacMetrics.host; platform = 'macos'
+            online = (($now - $script:MacSeen) -lt 15); last_seen = $script:MacSeen; metrics = $script:MacMetrics
+        })
+    }
+    foreach ($d in @($script:Devices.Values)) {
+        [void]$list.Add(@{
+            id = $d.id; name = $d.name; platform = $d.platform
+            online = (($now - $d.last_seen) -lt 15); last_seen = $d.last_seen; metrics = $d.metrics
+        })
+    }
+    return @{ ts = $now; devices = $list }
+}
+
+function Handle-Request {
+    param($Req, $Stream)
+    $path = ($Req.path -split '\?')[0]
+    if ($Req.method -eq 'OPTIONS') { Write-Response $Stream 204 'text/plain' ([byte[]]@()); return }
+    if ($path -eq '/healthz') { Write-Response $Stream 200 'text/plain; charset=utf-8' ([Text.Encoding]::UTF8.GetBytes('ok')); return }
+    if ($path -eq '/devices' -and $Req.method -eq 'GET') {
+        $json = (Build-Devices) | ConvertTo-Json -Depth 8 -Compress
+        Write-Response $Stream 200 'application/json; charset=utf-8' ([Text.Encoding]::UTF8.GetBytes($json)); return
+    }
+    if ($path -eq '/metrics' -and $Req.method -eq 'GET') {
+        $snap = $script:SelfMetrics
+        if ($snap) { $snap = $snap + @{ latency = $script:Latency; ts = (Get-Epoch) } }
+        $json = $snap | ConvertTo-Json -Depth 8 -Compress
+        Write-Response $Stream 200 'application/json; charset=utf-8' ([Text.Encoding]::UTF8.GetBytes($json)); return
+    }
+    if ($path -eq '/ingest' -and $Req.method -eq 'POST') {
+        try {
+            $text = [Text.Encoding]::UTF8.GetString($Req.body)
+            $obj = $text | ConvertFrom-Json
+            if ($obj.id -and $obj.metrics) {
+                $script:Devices[[string]$obj.id] = @{
+                    id = [string]$obj.id; name = [string]$obj.name; platform = [string]$obj.platform
+                    last_seen = Get-Epoch; metrics = $obj.metrics
+                }
+                Write-Response $Stream 200 'application/json' ([Text.Encoding]::UTF8.GetBytes('{"ok":true}')); return
+            }
+        } catch { }
+        Write-Response $Stream 400 'application/json' ([Text.Encoding]::UTF8.GetBytes('{"ok":false}')); return
+    }
+    if ($path -like '/static/*') {
+        $map = @{
+            '/static/metrics-hub.ps1'  = (Join-Path $PSScriptRoot 'metrics-hub.ps1')
+            '/static/install-agent.ps1' = (Join-Path $PSScriptRoot 'install-agent.ps1')
+            '/static/phone-metrics.sh' = (Join-Path $PSScriptRoot 'phone-metrics.sh')
+        }
+        if ($map.ContainsKey($path) -and (Test-Path -LiteralPath $map[$path])) {
+            $bytes = [IO.File]::ReadAllBytes($map[$path])
+            Write-Response $Stream 200 'text/plain; charset=utf-8' $bytes; return
+        }
+    }
+    Write-Response $Stream 404 'text/plain' ([Text.Encoding]::UTF8.GetBytes('not found'))
+}
+
+function Run-Hub {
+    Initialize-Static
+    $script:SelfMetrics = Get-Snapshot
+    $script:SelfSeen = Get-Epoch
+    $listener = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Any, $Port)
+    $listener.Start()
+    Write-Host ("[hub] listening on 0.0.0.0:{0} (id={1})" -f $Port, ('win-' + $script:HostName.ToLower()))
+    $lastFast = [DateTime]::UtcNow
+    $lastLat = [DateTime]::MinValue
+    $lastMac = [DateTime]::MinValue
+    while ($true) {
+        try {
+            if ($listener.Pending()) {
+                $client = $listener.AcceptTcpClient()
+                try {
+                    $client.ReceiveTimeout = 5000
+                    $client.SendTimeout = 5000
+                    $stream = $client.GetStream()
+                    $req = Read-HttpRequest $stream
+                    if ($req) { Handle-Request $req $stream }
+                } catch { } finally { $client.Close() }
+            }
+            $now = [DateTime]::UtcNow
+            if (($now - $lastFast).TotalSeconds -ge 1) {
+                $script:SelfMetrics = Get-Snapshot
+                $script:SelfSeen = Get-Epoch
+                $lastFast = $now
+            }
+            if (($now - $lastLat).TotalSeconds -ge 10) { Update-Latency; $lastLat = $now }
+            if (($now - $lastMac).TotalSeconds -ge 3) { Pull-Mac; $lastMac = $now }
+            Start-Sleep -Milliseconds 50
+        } catch {
+            Start-Sleep -Seconds 2
+        }
+    }
+}
+
+function Run-Agent {
+    Initialize-Static
+    if (-not $Id) { $Id = 'win-' + $script:HostName.ToLower() }
+    if (-not $Name) { $Name = $script:HostName }
+    Write-Host ("[agent] pushing to {0} as {1}" -f $Hub, $Id)
+    $lastLat = [DateTime]::MinValue
+    while ($true) {
+        try {
+            $now = [DateTime]::UtcNow
+            if (($now - $lastLat).TotalSeconds -ge 10) { Update-Latency; $lastLat = $now }
+            $snap = Get-Snapshot
+            $snap['latency'] = $script:Latency
+            $payload = @{
+                id = $Id; name = $Name; platform = 'windows'
+                ts = (Get-Epoch); metrics = $snap
+            } | ConvertTo-Json -Depth 8 -Compress
+            [void](Send-RawJson -Url ($Hub.TrimEnd('/') + '/ingest') -Json $payload)
+        } catch { }
+        Start-Sleep -Seconds $IntervalSec
+    }
+}
+
+while ($true) {
+    try {
+        if ($Mode -eq 'hub') { Run-Hub } else { Run-Agent }
+    } catch {
+        Write-Host ("[fatal] {0}" -f $_.Exception.Message)
+        Start-Sleep -Seconds 5
+    }
+}
