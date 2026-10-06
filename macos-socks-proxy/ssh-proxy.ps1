@@ -144,8 +144,13 @@ while ($true) {
             }
             Write-Log 'Starting ssh tunnel'
             $proc = Start-Process -FilePath $sshExe -ArgumentList $sshArgs -PassThru -WindowStyle Hidden
-            Start-Sleep -Seconds 5
-            if (-not $proc.HasExited -and (Test-SocksPort)) {
+            $up = $false
+            for ($i = 0; $i -lt 15; $i++) {
+                Start-Sleep -Seconds 1
+                if ($proc.HasExited) { break }
+                if (Test-SocksPort) { $up = $true; break }
+            }
+            if ($up) {
                 Write-Log ('Tunnel is up (ssh pid {0})' -f $proc.Id)
                 $failCount = 0
                 $lastDeepCheck = Get-Date
