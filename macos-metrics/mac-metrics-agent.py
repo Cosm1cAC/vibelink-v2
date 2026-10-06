@@ -18,10 +18,16 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 BIND = os.environ.get("METRICS_BIND", "100.105.59.31")
 PORT = int(os.environ.get("METRICS_PORT", "18992"))
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 NCPU = os.cpu_count() or 1
 LAT_TARGETS = [("1.1.1.1", 443), ("8.8.8.8", 443), ("223.5.5.5", 443)]
 NET_IFACES = ("en0", "en1", "en2", "en3", "utun0", "utun1", "utun2", "utun3", "utun4", "utun5")
+TS_CLI = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+TS_PEERS = {
+    "100.74.71.80": "haoshao",
+    "100.123.253.85": "desktop-9m0bu3h",
+    "100.126.194.61": "phone-mihomo",
+}
 
 _lock = threading.Lock()
 _state = {
@@ -35,6 +41,7 @@ _state = {
     "disk": {},
     "net": {},
     "latency": {},
+    "tailnet": {},
 }
 
 
@@ -231,6 +238,28 @@ def _load_loop():
         time.sleep(5.0)
 
 
+def _tailnet_loop():
+    while True:
+        net = {}
+        for ip, name in TS_PEERS.items():
+            out = _run([TS_CLI, "ping", "--timeout=3s", "-c", "1", ip], timeout=8)
+            entry = {"name": name, "path": None, "via": None, "ms": None}
+            m = re.search(r"via DERP\(([a-z0-9]+)\) in ([\d.]+)ms", out)
+            if m:
+                entry["path"] = "relay"
+                entry["via"] = m.group(1)
+                entry["ms"] = float(m.group(2))
+            else:
+                m = re.search(r"via ([\d.]+:\d+) in ([\d.]+)ms", out)
+                if m:
+                    entry["path"] = "direct"
+                    entry["ms"] = float(m.group(2))
+            net[ip] = entry
+        with _lock:
+            _state["tailnet"] = net
+        time.sleep(20.0)
+
+
 def _init_static():
     m = re.search(r"sec = (\d+)", _run(["sysctl", "-n", "kern.boottime"]))
     with _lock:
@@ -278,7 +307,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     _init_static()
-    for fn in (_cpu_loop, _gpu_loop, _mem_loop, _disk_loop, _net_loop, _lat_loop, _load_loop):
+    for fn in (_cpu_loop, _gpu_loop, _mem_loop, _disk_loop, _net_loop, _lat_loop, _load_loop, _tailnet_loop):
         threading.Thread(target=fn, daemon=True).start()
     srv = ThreadingHTTPServer((BIND, PORT), Handler)
     srv.serve_forever()
