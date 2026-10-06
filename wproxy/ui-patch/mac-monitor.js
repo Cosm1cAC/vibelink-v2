@@ -309,7 +309,7 @@
     var linkLabel = dev.platform === 'macos' ? '到 Hub' : '到 Mac';
     var lk = dev.link;
     if (lk && lk.path === 'direct') {
-      latHtml += '<div class="wproxy-line"><span>' + linkLabel + '</span><span class="wproxy-link direct">直连 ' + lk.ms + ' ms</span></div>';
+      latHtml += '<div class="wproxy-line"><span>' + linkLabel + '</span><span class="wproxy-link direct">' + (lk.via === 'ipv6' ? '直连(IPv6) ' : '直连 ') + lk.ms + ' ms</span></div>';
     } else if (lk && lk.path === 'relay') {
       latHtml += '<div class="wproxy-line"><span>' + linkLabel + '</span><span class="wproxy-link relay">中继(' + escapeHtml(lk.via || '') + ') ' + lk.ms + ' ms</span></div>';
     } else {
