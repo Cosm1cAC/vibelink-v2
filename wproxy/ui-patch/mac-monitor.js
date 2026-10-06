@@ -124,6 +124,8 @@
       '.wproxy-detail { display:grid; gap:.15rem; padding:.1rem 0 .15rem; }',
       '.wproxy-line { display:flex; justify-content:space-between; gap:.5rem; font-size:.75rem; color:color-mix(in srgb, var(--color-base-content) 55%, transparent); }',
       '.wproxy-line span:last-child { font-variant-numeric:tabular-nums; }',
+      '.wproxy-link.direct { color:#2fbf71; }',
+      '.wproxy-link.relay { color:#e8a33d; }',
       '.wproxy-extra { margin-top:.15rem; }',
       '.wproxy-foot { margin-top:1rem; font-size:.72rem; color:color-mix(in srgb, var(--color-base-content) 40%, transparent); text-align:right; }',
       '@media (prefers-reduced-motion: reduce){ .wproxy-bar i{ transition:none; } }'
@@ -304,6 +306,15 @@
 
     var lat = m.latency || {};
     var latHtml = '';
+    var linkLabel = dev.platform === 'macos' ? '到 Hub' : '到 Mac';
+    var lk = dev.link;
+    if (lk && lk.path === 'direct') {
+      latHtml += '<div class="wproxy-line"><span>' + linkLabel + '</span><span class="wproxy-link direct">直连 ' + lk.ms + ' ms</span></div>';
+    } else if (lk && lk.path === 'relay') {
+      latHtml += '<div class="wproxy-line"><span>' + linkLabel + '</span><span class="wproxy-link relay">中继(' + escapeHtml(lk.via || '') + ') ' + lk.ms + ' ms</span></div>';
+    } else {
+      latHtml += '<div class="wproxy-line"><span>' + linkLabel + '</span><span class="wproxy-link">--</span></div>';
+    }
     Object.keys(lat).forEach(function (key) {
       var lv = lat[key];
       latHtml += '<div class="wproxy-line"><span>' + escapeHtml(key) + '</span><span>' + (lv === null || lv === undefined ? '--' : lv + ' ms') + '</span></div>';

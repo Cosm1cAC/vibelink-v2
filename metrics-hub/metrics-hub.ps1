@@ -371,8 +371,28 @@ function Read-HttpRequest {
 $script:Devices = @{}
 $script:SelfMetrics = $null
 $script:SelfSeen = 0
+$script:SelfTsIp = $null
 $script:MacMetrics = $null
 $script:MacSeen = 0
+
+function Get-SelfTsIp {
+    $ts = (Get-Command tailscale -ErrorAction SilentlyContinue).Source
+    if (-not $ts) { $ts = Join-Path $env:ProgramFiles 'Tailscale\tailscale.exe' }
+    if (-not (Test-Path -LiteralPath $ts)) { return $null }
+    try {
+        $ip = (& $ts ip -4 2>$null | Select-Object -First 1)
+        if ($ip) { return $ip.Trim() }
+    } catch { }
+    return $null
+}
+
+function Get-TsLink {
+    param($Tailnet, [string]$TsIp)
+    if (-not $Tailnet -or -not $TsIp) { return $null }
+    $p = $Tailnet.PSObject.Properties[$TsIp]
+    if ($p) { return $p.Value }
+    return $null
+}
 
 function Pull-Mac {
     $text = Get-RawHttp -Url 'http://100.105.59.31:18992/metrics' -TimeoutMs 1500
@@ -391,27 +411,34 @@ function Build-Devices {
     $list = New-Object System.Collections.ArrayList
     $selfMetrics = $script:SelfMetrics
     if ($selfMetrics) { $selfMetrics = $selfMetrics + @{ latency = $script:Latency } }
+    $macTailnet = $null
+    if ($script:MacMetrics -and $script:MacMetrics.PSObject.Properties['tailnet']) {
+        $macTailnet = $script:MacMetrics.tailnet
+    }
     [void]$list.Add(@{
         id = 'win-' + $script:HostName.ToLower(); name = $script:HostName; platform = 'windows'
         online = $true; last_seen = $script:SelfSeen; metrics = $selfMetrics
+        link = (Get-TsLink $macTailnet $script:SelfTsIp)
     })
     if ($script:MacMetrics) {
         [void]$list.Add(@{
             id = 'mac-mini'; name = $script:MacMetrics.host; platform = 'macos'
             online = (($now - $script:MacSeen) -lt 15); last_seen = $script:MacSeen; metrics = $script:MacMetrics
+            link = (Get-TsLink $macTailnet $script:SelfTsIp)
         })
     }
     foreach ($d in @($script:Devices.Values)) {
         [void]$list.Add(@{
             id = $d.id; name = $d.name; platform = $d.platform
             online = (($now - $d.last_seen) -lt 15); last_seen = $d.last_seen; metrics = $d.metrics
+            link = (Get-TsLink $macTailnet $d.ts_ip)
         })
     }
     return @{ ts = $now; devices = $list }
 }
 
 function Handle-Request {
-    param($Req, $Stream)
+    param($Req, $Stream, $Remote)
     $path = ($Req.path -split '\?')[0]
     if ($Req.method -eq 'OPTIONS') { Write-Response $Stream 204 'text/plain' ([byte[]]@()); return 204 }
     if ($path -eq '/healthz') { Write-Response $Stream 200 'text/plain; charset=utf-8' ([Text.Encoding]::UTF8.GetBytes('ok')); return 200 }
@@ -441,6 +468,7 @@ function Handle-Request {
                 $script:Devices[[string]$obj.id] = @{
                     id = [string]$obj.id; name = [string]$obj.name; platform = [string]$obj.platform
                     last_seen = Get-Epoch; metrics = $obj.metrics
+                    ts_ip = (($Remote -split ':')[0])
                 }
                 Write-Response $Stream 200 'application/json' ([Text.Encoding]::UTF8.GetBytes('{"ok":true}')); return 200
             }
@@ -470,6 +498,7 @@ function Run-Hub {
     Initialize-Static
     $script:SelfMetrics = Get-Snapshot
     $script:SelfSeen = Get-Epoch
+    $script:SelfTsIp = Get-SelfTsIp
     $listener = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Any, $Port)
     $listener.Start()
     Write-Host ("[hub] listening on 0.0.0.0:{0} (id={1})" -f $Port, ('win-' + $script:HostName.ToLower()))
@@ -488,7 +517,7 @@ function Run-Hub {
                     $stream = $client.GetStream()
                     $req = Read-HttpRequest $stream
                     if ($req) {
-                        $code = Handle-Request $req $stream
+                        $code = Handle-Request $req $stream $remote
                         Write-ReqLog ("{0} {1} {2} -> {3}" -f $remote, $req.method, ($req.path -split '\?')[0], $code)
                     }
                 } catch { } finally { $client.Close() }
