@@ -12,6 +12,14 @@ CMFA（ClashMetaForAndroid，mihomo 官方安卓客户端，v2.11.35 起）内�
 - `Japan-MacMini` 节点：socks5 `100.105.59.31:7891`，`dialer-proxy: Tailscale`（经 tailnet 拨号，TCP+UDP）
 - 规则：`100.64.0.0/10 → Tailscale`（手机内其他 App 也能访问 tailnet）、国内域名/IP 直连、`MATCH → PROXY`
 
+## 配置分发（长期）
+
+**`http://100.105.59.31:18991/phone-config.yaml`** —— Mac 上的常驻 HTTP 服务（LaunchAgent `com.phone-config-http`，python3，仅 Tailscale 网段可达），CMFA 里的订阅 URL 可长期更新。
+
+- 服务文件：`~/phone-setup/phone-config.yaml`（含 Tailscale auth-key，不入库；仓库模板见 `cmfa-config.yaml`）
+- 保活：Windows 看门狗（`macos-socks-proxy/ssh-proxy.ps1`）会自动 bootstrap/kickstart 该 LaunchAgent
+- 换新手机/清除数据后：auth-key 是一次性的（已消费），需在后台重新生成并替换 Mac 服务文件里的 key
+
 ## 部署步骤
 
 1. **装 APK**：CMFA v2.11.35 arm64（48.8MB）
