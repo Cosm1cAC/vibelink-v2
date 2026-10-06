@@ -250,10 +250,12 @@ def _tailnet_loop():
                 entry["via"] = m.group(1)
                 entry["ms"] = float(m.group(2))
             else:
-                m = re.search(r"via ([\d.]+:\d+) in ([\d.]+)ms", out)
+                m = re.search(r"via (\[[0-9a-fA-F:]+\]|[0-9.]+):\d+ in ([\d.]+)ms", out)
                 if m:
                     entry["path"] = "direct"
                     entry["ms"] = float(m.group(2))
+                    if m.group(1).startswith("["):
+                        entry["via"] = "ipv6"
             net[ip] = entry
         with _lock:
             _state["tailnet"] = net

@@ -82,6 +82,9 @@ WebUI 侧边栏「设置」上方新增「**监控**」tab（移动端底部 tab
 ## 已知注意点
 
 - TUN 模式下节点已内置 `interface-name: "Tailscale"`（否则 mihomo 出站会被绑到物理网卡、连不上 Tailscale 网段节点 → 死循环超时）
+- **Tailscale 直连与 IPv6（2026-10-06 排查）**：本机↔Mac 的直连走 **IPv6**（无 NAT，实测 168–191ms）；IPv4 无法直连——校园网是硬 NAT（`MappingVariesByDestIP: true`，每目的地不同映射）+ Mac 侧 transix 拒绝未请求入站 UDP，双方无法主动发起。若 IPv6 不可用会回落 DERP 中继（~300ms+）
+- 本机 tailscaled 监听端口改为 43210（`C:\ProgramData\Tailscale\tailscaled-env.txt` 写 `PORT=43210` 后重启服务）——固定端口 41641 在本校园网下端点发现异常，换端口后恢复
+- Tailscale 后台已加 `grants`（`tailscale.com/cap/relay` → win2）作为中继兜底；监控页「到 Mac」行会标注 `直连(IPv6) / 直连 / 中继(xxx) + 毫秒`
 - DNS fallback 已配置为 `#PROXY`（经代理查询），避免 8.8.8.8 直连被墙超时
 - `status` 停止/运行显示基于 API + 进程名（提权进程命令行普通权限读不到，属正常）
 - uninstall 删除计划任务可能需要管理员权限（普通权限会提示）
