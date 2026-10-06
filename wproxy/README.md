@@ -55,16 +55,15 @@ pwsh -ExecutionPolicy Bypass -File .\wproxy.ps1 -Action status
 - 卸载内容：3 个官方卸载器静默执行、`CuteCloudHelperService` 服务删除、`C:\Program Files\CuteCloud` 与用户数据残留（`%APPDATA%\cutecloud`、`%LOCALAPPDATA%\CuteCloud`、`cutecloud-updater`）全部清除
 - 如需回退：重新安装 CuteCloud 并开启其系统代理（不推荐；TUN/虚拟网卡勿与本方案同时开）
 
-## 多设备监控面板（2026-10-06）
+## 监控页（侧边栏 tab，2026-10-06）
 
-WebUI（`http://127.0.0.1:9097/ui/#/settings`）右下角集成多设备监控面板：
+WebUI 侧边栏「设置」上方新增「**监控**」tab（移动端底部 tab 栏同步），点击进入全屏监控页：
 
-- 设备切换：顶部 chips（Windows / Mac / 安卓），带在线状态点；点选查看该设备详情
-- 指标：CPU / GPU / 内存 / 硬盘 / 实时带宽（↓↑）/ 延迟列表 / 负载（或队列）/ 电量（安卓）/ 开机时长；带迷你曲线
-- 内存为 **Activity Monitor 口径**（Mac：App + Wired + Compressed；Windows：已用/可用/缓存/Swap），点击「内存」行展开明细（状态记忆）
-- 数据源：`metrics-hub` 项目（本机 `http://127.0.0.1:18993/devices`）——Hub 自采集 + 收第二台 Windows/安卓 push + 拉取 Mac 指标代理
-- 实现：`ui-patch/mac-monitor.js`（Shadow DOM 隔离样式，fetch 轮询 2s）+ `ui-patch/apply-ui-patch.ps1`（注入 index.html、替换 sw.js 为自毁版以清掉 zashboard PWA 缓存）
-- 显示范围：默认仅 `#/settings` 页显示；改 `ui-patch/mac-monitor.js` 顶部 `CFG.showWhen = 'always'` 可全局显示
+- 设备卡片网格：每台设备一张卡（在线状态、CPU / GPU / 内存 / 硬盘 / 实时带宽（↓↑）/ 延迟 / 负载（或队列）/ 电量（安卓）/ 运行时长），CPU/GPU/内存/带宽带迷你曲线
+- 内存为 **Activity Monitor 口径**（Mac：App + Wired + Compressed；Windows：已用/可用/缓存/Swap），点击卡片「内存」行展开明细
+- 数据源：`metrics-hub` 项目（`http://127.0.0.1:18993/devices`）——Hub 自采集 + 收第二台 Windows/安卓 push + 拉取 Mac 指标代理
+- 实现：`ui-patch/mac-monitor.js`（无侵入注入导航项与全屏页，MutationObserver 自愈，不修改 zashboard 源码）+ `ui-patch/apply-ui-patch.ps1`（注入 index.html、替换 sw.js 为自毁版以清掉 zashboard PWA 缓存）
+- 交互：点其它导航（或手机底部 tab）即退出监控页；刷新页面保持上次状态
 
 ## 界面语言（简体中文）
 

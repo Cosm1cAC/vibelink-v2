@@ -27,9 +27,9 @@ Windows 应用
 Windows/手机 ──ssh──> ngrok TCP ──> Mac 用户态 SSH (127.0.0.1:12222, 仅密钥)
 
 监控:
-wproxy WebUI 设置页 ──> Windows metrics-hub (127.0.0.1:18993) ──┬─ 自采集（本机 Windows）
-                                                              ├─ push：第二台 Windows / 安卓 Termux
-                                                              └─ pull：Mac macos-metrics (100.105.59.31:18992)
+wproxy WebUI「监控」tab ──> Windows metrics-hub (127.0.0.1:18993) ──┬─ 自采集（本机 Windows）
+                                                                   ├─ push：第二台 Windows / 安卓 Termux
+                                                                   └─ pull：Mac macos-metrics (100.105.59.31:18992)
 ```
 
 ## 快速开始
