@@ -10,8 +10,9 @@
 ## 资源现状
 
 - **APK**：CMFA v2.11.35 arm64（46.5MB），SHA256 `af7f05d8801798a8e75de682e5f67070138becb8623b7a341c3e5cd042a3753d`（已校验）
-  - 下载：`https://github.com/MetaCubeX/ClashMetaForAndroid/releases/download/v2.11.35/cmfa-2.11.35-meta-arm64-v8a-release.apk`
-  - 主 PC（haoshao）本地已有一份：`%TEMP%\cmfa-dist\cmfa-2.11.35-arm64.apk`（可拷贝带走）
+  - **仓库内副本（推荐直接用）**：`android-phone/dist/cmfa-2.11.35-meta-arm64-v8a-release.apk`
+  - 官方下载：`https://github.com/MetaCubeX/ClashMetaForAndroid/releases/download/v2.11.35/cmfa-2.11.35-meta-arm64-v8a-release.apk`
+  - 主 PC（haoshao）本地也有一份：`%TEMP%\cmfa-dist\cmfa-2.11.35-arm64.apk`
 - **Tailscale auth key**：必须是**新生成的**（旧的一次性 key 已被消费）
   - 用户在 `https://login.tailscale.com/admin/settings/keys` 生成（Reusable 关、Ephemeral 关、Tags 空），复制 `tskey-auth-...`
 - **配置**：仓库 `android-phone/cmfa-config.yaml` 模板，把 `REPLACE_WITH_AUTH_KEY` 换成新 key
