@@ -1,4 +1,4 @@
-# 在主 Windows 主机上以普通权限运行：注册登录自启任务并立即启动 Hub。
+﻿# 在主 Windows 主机上以普通权限运行：注册登录自启任务并立即启动 Hub。
 # 防火墙放行（管理员，仅一次）见脚本末尾输出。
 
 $ErrorActionPreference = 'Stop'
