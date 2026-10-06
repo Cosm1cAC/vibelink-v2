@@ -49,6 +49,24 @@ pwsh -ExecutionPolicy Bypass -File .\wproxy.ps1 -Action status
 .\wproxy.ps1 -Action uninstall                       # 卸载
 ```
 
+## 出口节点与局域网共享（2026-10-07 更新）
+
+PROXY 组可选节点：
+
+| 节点 | 地址 | 说明 |
+| --- | --- | --- |
+| `Japan-MacMini` | socks5 `100.105.59.31:7891` | 主线路：Mac socks-relay（经 Tailscale，直连/中继自动） |
+| `Japan-Ngrok` | socks5 `127.0.0.1:1081` | 应急快路：Mac ngrok SSH 隧道 + `ssh -D`（独立于 Tailscale；免费版有流量限额） |
+| `Japan-MacUser` | socks5 `100.86.50.115:7891` | Mac 上 kobayashi 账号的 userspace Tailscale 节点（`tailscale serve --tcp` 转发 7891，可随时重启） |
+| `Japan-CF` | socks5 `127.0.0.1:7892` | Cloudflare Tunnel `socks.vibelink.cloud`（无限量；PC 侧 `cloudflared access tcp` 接入） |
+| `Japan-MacMini-SSH` | socks5 `127.0.0.1:1080` | SSH 隧道备用（仅 TCP） |
+
+其他变更：
+
+- 规则新增 `DOMAIN-SUFFIX,tailscale.com,PROXY`（浏览器访问 Tailscale 控制台需要；被墙域名解析会被污染成 CN IP 而误走直连）
+- **局域网共享**：本机 `7897` 仅监听 `127.0.0.1`（免认证，供本机应用/浏览器）；局域网设备用 `192.168.86.20:7898`（mixed，带认证，账号见 `config.yaml` 的 `listeners.users`）
+- 注意：mihomo 的 `authentication` 会连本机请求一起拦（曾导致浏览器 `ERR_TUNNEL_CONNECTION_FAILED`），所以本机口与共享口分开
+
 ## 从 CuteCloud 迁移（已完成，2026-10-06）
 
 - 系统代理已切换至本方案（`mode -Value sysproxy` → 127.0.0.1:7897），验证出口 = 日本 Mac 后卸载了 CuteCloud

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.opencode-server</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>while true; do OPENCODE_SERVER_PASSWORD="$(cat "$HOME/.config/opencode-server/password")" OPENCODE_DISABLE_FFF=1 "$HOME/.opencode/bin/opencode" serve --hostname 127.0.0.1 --port 4097 --cors http://100.74.71.80:4096 --cors http://100.105.59.31:4096 --cors http://localhost:4096 --cors http://127.0.0.1:4096; sleep 2; done &amp; while true; do /usr/bin/python3 "$HOME/bin/mesh-proxy.py" --listen 0.0.0.0:4096 --upstream 127.0.0.1:4097; sleep 2; done &amp; wait</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/kobayashi/.config/opencode-server/stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/kobayashi/.config/opencode-server/stderr.log</string>
+</dict>
+</plist>

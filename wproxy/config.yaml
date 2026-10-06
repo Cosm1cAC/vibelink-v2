@@ -82,16 +82,36 @@ proxies:
     server: 127.0.0.1
     port: 1080
     udp: false
+  - name: "Japan-Ngrok"
+    type: socks5
+    server: 127.0.0.1
+    port: 1081
+    udp: false
+  - name: "Japan-MacUser"
+    type: socks5
+    server: 100.86.50.115
+    port: 7891
+    udp: false
+    interface-name: "Tailscale"
+  - name: "Japan-CF"
+    type: socks5
+    server: 127.0.0.1
+    port: 7892
+    udp: false
 proxy-groups:
   - name: "PROXY"
     type: select
     proxies:
       - "Japan-MacMini"
       - "Japan-MacMini-SSH"
+      - "Japan-Ngrok"
+      - "Japan-MacUser"
+      - "Japan-CF"
       - "DIRECT"
 rules:
   - IP-CIDR,100.64.0.0/10,DIRECT,no-resolve
   - GEOIP,private,DIRECT
+  - DOMAIN-SUFFIX,tailscale.com,PROXY
   - DOMAIN-SUFFIX,bilibili.com,DIRECT
   - DOMAIN-SUFFIX,bilivideo.com,DIRECT
   - DOMAIN-SUFFIX,hdslb.com,DIRECT
@@ -115,3 +135,12 @@ tun:
     - 172.16.0.0/12
     - 192.168.0.0/16
   strict-route: false
+
+listeners:
+  - name: lan-share
+    type: mixed
+    port: 7898
+    listen: 0.0.0.0
+    users:
+      - username: wproxy
+        password: dataland123
