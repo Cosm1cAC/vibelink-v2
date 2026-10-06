@@ -49,6 +49,8 @@ read_cpu() {
 
 read_net() {
   rx=0; tx=0
+  netsrc="none"
+  sysfs_ok=0
   for d in /sys/class/net/*; do
     iface="${d##*/}"
     case "$iface" in
@@ -57,10 +59,14 @@ read_net() {
     [ -r "$d/statistics/rx_bytes" ] || continue
     r="$(cat "$d/statistics/rx_bytes" 2>/dev/null)"
     t="$(cat "$d/statistics/tx_bytes" 2>/dev/null)"
-    rx=$((rx + ${r:-0}))
-    tx=$((tx + ${t:-0}))
+    if [ -n "$r" ]; then
+      sysfs_ok=1
+      rx=$((rx + r)); tx=$((tx + ${t:-0}))
+    fi
   done
-  if [ "$rx" -eq 0 ] && [ "$tx" -eq 0 ]; then
+  if [ "$sysfs_ok" -eq 1 ]; then
+    netsrc="sysfs"
+  else
     while read -r line; do
       case "$line" in
         *:*)
@@ -69,6 +75,7 @@ read_net() {
           [ "$iface" = "lo" ] && continue
           set -- ${line#*:}
           rx=$((rx + $1)); tx=$((tx + $9))
+          netsrc="proc"
           ;;
       esac
     done 2>/dev/null < /proc/net/dev
@@ -149,10 +156,10 @@ while true; do
   disk_pct=$(awk -v u="${disk_used:-0}" -v t="${disk_total:-0}" 'BEGIN{ if(t>0) printf "%.1f", u*100/t; else print "null" }')
 
   json=$(cat <<EOF
-{"id":"$ID","name":"$MODEL","platform":"android","metrics":{"host":"$MODEL","model":"Android","platform":"android","boot_time":null,"uptime_s":${uptime_s:-0},"ncpu":${NC:-4},"cpu_pct":${cpu:-null},"queue":null,"load":$load_json,"gpu":null,"mem":{"total":${mem_total:-0},"used":${mem_used:-0}},"disk":{"mount":"/data","total":${disk_total:-0},"used":${disk_used:-0},"used_pct":${disk_pct:-null}},"net":{"rx_bps":${rx_bps:-0},"tx_bps":${tx_bps:-0}},"latency":{$lat_cache},"battery":${batt:-null},"charging":"$bstat"}}
+{"id":"$ID","name":"$MODEL","platform":"android","metrics":{"host":"$MODEL","model":"Android","platform":"android","boot_time":null,"uptime_s":${uptime_s:-0},"ncpu":${NC:-4},"cpu_pct":${cpu:-null},"queue":null,"load":$load_json,"gpu":null,"mem":{"total":${mem_total:-0},"used":${mem_used:-0}},"disk":{"mount":"/data","total":${disk_total:-0},"used":${disk_used:-0},"used_pct":${disk_pct:-null}},"net":{"rx_bps":${rx_bps:-0},"tx_bps":${tx_bps:-0},"src":"${netsrc:-none}"},"latency":{$lat_cache},"battery":${batt:-null},"charging":"$bstat"}}
 EOF
 )
-  resp=$(curl -s -m 6 -o "$HOME/.phone-metrics.resp" -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data-binary "$json" "$HUB/ingest")
+  resp=$(curl -s -m 10 --retry 2 --retry-delay 1 --retry-all-errors -o "$HOME/.phone-metrics.resp" -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data-binary "$json" "$HUB/ingest")
   if [ "$resp" != "200" ]; then
     echo "$(date '+%F %T') post=$resp resp=$(head -c 200 "$HOME/.phone-metrics.resp" 2>/dev/null) json=$(printf '%s' "$json" | head -c 400)" >&2
   fi
