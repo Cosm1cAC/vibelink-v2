@@ -56,21 +56,25 @@ pkg update -y && pkg install -y curl
 curl -sL http://100.74.71.80:18993/static/phone-metrics.sh -o ~/phone-metrics.sh
 chmod +x ~/phone-metrics.sh
 termux-wake-lock
-nohup ~/phone-metrics.sh >/dev/null 2>&1 &
+nohup ~/phone-metrics.sh >> ~/phone-metrics.log 2>&1 &
 ```
 
 3. （可选）开机自启：安装 Termux:Boot 后
 
 ```bash
 mkdir -p ~/.termux/boot
-printf '#!/data/data/com.termux/files/usr/bin/sh\ntermux-wake-lock\nnohup ~/phone-metrics.sh >/dev/null 2>&1 &\n' > ~/.termux/boot/metrics.sh
+printf '#!/data/data/com.termux/files/usr/bin/sh\ntermux-wake-lock\nnohup ~/phone-metrics.sh >> ~/phone-metrics.log 2>&1 &\n' > ~/.termux/boot/metrics.sh
 chmod +x ~/.termux/boot/metrics.sh
 ```
 
 4. 系统设置 → 应用 → Termux → 电池 → **无限制**（否则后台会被杀）
 
 数据路径：Termux → CMFA TUN → 规则 `100.64.0.0/10 → Tailscale(tsnode)` → Hub。
-采集：CPU（/proc/stat 差分）、内存（/proc/meminfo）、磁盘（df /data）、带宽（/proc/net/dev 差分）、延迟（/dev/tcp 计时）、电量（/sys/class/power_supply，可读时）、开机时长。
+
+Android 10+ 对应用隐藏 `/proc/stat`、`/proc/net/dev`、`/proc/uptime`，脚本已改用：
+内存（/proc/meminfo）、磁盘（df）、带宽（`/sys/class/net/*/statistics`）、延迟（/dev/tcp 计时）、
+负载（/proc/loadavg，可读时）、电量（/sys/class/power_supply；装 Termux:API 后自动改用 termux-battery-status）。
+CPU 若被系统禁止则显示 `--`。运行日志：`~/phone-metrics.log`（仅出错时写诊断）。
 
 ## 端点
 
