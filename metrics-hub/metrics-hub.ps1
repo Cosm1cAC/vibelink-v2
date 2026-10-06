@@ -41,6 +41,17 @@ function Get-Epoch {
     return [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 }
 
+function Write-ReqLog {
+    param([string]$Line)
+    try {
+        $logPath = Join-Path $PSScriptRoot 'requests.log'
+        if ((Test-Path -LiteralPath $logPath) -and (Get-Item -LiteralPath $logPath).Length -gt 1MB) {
+            Remove-Item -LiteralPath $logPath -Force
+        }
+        ('{0}  {1}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Line) | Add-Content -LiteralPath $logPath -Encoding UTF8
+    } catch { }
+}
+
 # ---------------------------------------------------------------- collectors
 
 $script:PrevCpu = $null
@@ -396,19 +407,20 @@ function Build-Devices {
 function Handle-Request {
     param($Req, $Stream)
     $path = ($Req.path -split '\?')[0]
-    if ($Req.method -eq 'OPTIONS') { Write-Response $Stream 204 'text/plain' ([byte[]]@()); return }
-    if ($path -eq '/healthz') { Write-Response $Stream 200 'text/plain; charset=utf-8' ([Text.Encoding]::UTF8.GetBytes('ok')); return }
+    if ($Req.method -eq 'OPTIONS') { Write-Response $Stream 204 'text/plain' ([byte[]]@()); return 204 }
+    if ($path -eq '/healthz') { Write-Response $Stream 200 'text/plain; charset=utf-8' ([Text.Encoding]::UTF8.GetBytes('ok')); return 200 }
     if ($path -eq '/devices' -and $Req.method -eq 'GET') {
         $json = (Build-Devices) | ConvertTo-Json -Depth 8 -Compress
-        Write-Response $Stream 200 'application/json; charset=utf-8' ([Text.Encoding]::UTF8.GetBytes($json)); return
+        Write-Response $Stream 200 'application/json; charset=utf-8' ([Text.Encoding]::UTF8.GetBytes($json)); return 200
     }
     if ($path -eq '/metrics' -and $Req.method -eq 'GET') {
         $snap = $script:SelfMetrics
         if ($snap) { $snap = $snap + @{ latency = $script:Latency; ts = (Get-Epoch) } }
         $json = $snap | ConvertTo-Json -Depth 8 -Compress
-        Write-Response $Stream 200 'application/json; charset=utf-8' ([Text.Encoding]::UTF8.GetBytes($json)); return
+        Write-Response $Stream 200 'application/json; charset=utf-8' ([Text.Encoding]::UTF8.GetBytes($json)); return 200
     }
     if ($path -eq '/ingest' -and $Req.method -eq 'POST') {
+        $text = ''
         try {
             $text = [Text.Encoding]::UTF8.GetString($Req.body)
             $obj = $text | ConvertFrom-Json
@@ -417,10 +429,13 @@ function Handle-Request {
                     id = [string]$obj.id; name = [string]$obj.name; platform = [string]$obj.platform
                     last_seen = Get-Epoch; metrics = $obj.metrics
                 }
-                Write-Response $Stream 200 'application/json' ([Text.Encoding]::UTF8.GetBytes('{"ok":true}')); return
+                Write-Response $Stream 200 'application/json' ([Text.Encoding]::UTF8.GetBytes('{"ok":true}')); return 200
             }
-        } catch { }
-        Write-Response $Stream 400 'application/json' ([Text.Encoding]::UTF8.GetBytes('{"ok":false}')); return
+            Write-ReqLog ('ingest 400 (no id/metrics): ' + $text.Substring(0, [Math]::Min(400, $text.Length)))
+        } catch {
+            Write-ReqLog ('ingest 400 (bad json): ' + $text.Substring(0, [Math]::Min(400, $text.Length)))
+        }
+        Write-Response $Stream 400 'application/json' ([Text.Encoding]::UTF8.GetBytes('{"ok":false}')); return 400
     }
     if ($path -like '/static/*') {
         $map = @{
@@ -430,10 +445,11 @@ function Handle-Request {
         }
         if ($map.ContainsKey($path) -and (Test-Path -LiteralPath $map[$path])) {
             $bytes = [IO.File]::ReadAllBytes($map[$path])
-            Write-Response $Stream 200 'text/plain; charset=utf-8' $bytes; return
+            Write-Response $Stream 200 'text/plain; charset=utf-8' $bytes; return 200
         }
     }
     Write-Response $Stream 404 'text/plain' ([Text.Encoding]::UTF8.GetBytes('not found'))
+    return 404
 }
 
 function Run-Hub {
@@ -450,12 +466,17 @@ function Run-Hub {
         try {
             if ($listener.Pending()) {
                 $client = $listener.AcceptTcpClient()
+                $remote = ''
+                try { $remote = $client.Client.RemoteEndPoint.ToString() } catch { }
                 try {
                     $client.ReceiveTimeout = 5000
                     $client.SendTimeout = 5000
                     $stream = $client.GetStream()
                     $req = Read-HttpRequest $stream
-                    if ($req) { Handle-Request $req $stream }
+                    if ($req) {
+                        $code = Handle-Request $req $stream
+                        Write-ReqLog ("{0} {1} {2} -> {3}" -f $remote, $req.method, ($req.path -split '\?')[0], $code)
+                    }
                 } catch { } finally { $client.Close() }
             }
             $now = [DateTime]::UtcNow
