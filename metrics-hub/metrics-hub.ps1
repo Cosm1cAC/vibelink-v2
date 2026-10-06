@@ -75,7 +75,7 @@ function Initialize-Static {
 }
 
 function Get-CpuPct {
-    $s = Get-CimInstance Win32_PerfRawData_PerfOS_Processor -ErrorAction SilentlyContinue |
+    $s = Get-CimInstance Win32_PerfRawData_PerfOS_Processor -OperationTimeoutSec 2 -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -eq '_Total' } | Select-Object -First 1
     if (-not $s) { return $null }
     $busy = [double]$s.PercentProcessorTime
@@ -95,27 +95,31 @@ function Get-CpuPct {
 }
 
 function Get-GpuPct {
-    $eng = Get-CimInstance Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine -ErrorAction SilentlyContinue
-    if (-not $eng) { return $null }
+    $now = Get-Epoch
+    if ($script:GpuCacheT -and ($now - $script:GpuCacheT) -lt 3) { return $script:GpuCache }
+    $script:GpuCacheT = $now
+    $eng = Get-CimInstance Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine -OperationTimeoutSec 2 -ErrorAction SilentlyContinue
+    if (-not $eng) { $script:GpuCache = $null; return $null }
     $vals = @($eng | Where-Object { $_.Name -match 'engtype_3D' } | ForEach-Object { [int]$_.UtilizationPercentage })
     if ($vals.Count -eq 0) { $vals = @($eng | ForEach-Object { [int]$_.UtilizationPercentage }) }
-    if ($vals.Count -eq 0) { return $null }
-    return [int]($vals | Measure-Object -Maximum).Maximum
+    if ($vals.Count -eq 0) { $script:GpuCache = $null; return $null }
+    $script:GpuCache = [int]($vals | Measure-Object -Maximum).Maximum
+    return $script:GpuCache
 }
 
 function Get-MemInfo {
-    $os = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
+    $os = Get-CimInstance Win32_OperatingSystem -OperationTimeoutSec 2 -ErrorAction SilentlyContinue
     if (-not $os) { return @{} }
     $total = [double]$os.TotalVisibleMemorySize * 1KB
     $avail = [double]$os.FreePhysicalMemory * 1KB
     $cached = $null
-    $pm = Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory -ErrorAction SilentlyContinue
+    $pm = Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory -OperationTimeoutSec 2 -ErrorAction SilentlyContinue
     if ($pm) {
         $cached = (Get-Prop $pm 'StandbyCacheNormalPriorityBytes') + (Get-Prop $pm 'StandbyCacheReserveBytes') +
                   (Get-Prop $pm 'StandbyCacheCoreBytes') + (Get-Prop $pm 'ModifiedPageListBytes')
     }
     $swap = $null
-    $pf = Get-CimInstance Win32_PageFileUsage -ErrorAction SilentlyContinue
+    $pf = Get-CimInstance Win32_PageFileUsage -OperationTimeoutSec 2 -ErrorAction SilentlyContinue
     if ($pf) { $swap = [double]($pf | Measure-Object -Property CurrentUsage -Sum).Sum * 1MB }
     return @{
         total      = $total
@@ -127,7 +131,7 @@ function Get-MemInfo {
 }
 
 function Get-DiskInfo {
-    $d = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'" -ErrorAction SilentlyContinue
+    $d = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'" -OperationTimeoutSec 2 -ErrorAction SilentlyContinue
     if (-not $d -or -not $d.Size) { return @{} }
     $total = [double]$d.Size
     $free = [double]$d.FreeSpace
@@ -231,7 +235,7 @@ function Update-Latency {
 
 function Get-Snapshot {
     $queue = $null
-    $sys = Get-CimInstance Win32_PerfFormattedData_PerfOS_System -ErrorAction SilentlyContinue
+    $sys = Get-CimInstance Win32_PerfFormattedData_PerfOS_System -OperationTimeoutSec 2 -ErrorAction SilentlyContinue
     if ($sys -and $sys.PSObject.Properties['ProcessorQueueLength']) { $queue = [int]$sys.ProcessorQueueLength }
     return [ordered]@{
         host      = $script:HostName
@@ -484,10 +488,16 @@ function Handle-Request {
             '/static/install-agent.ps1' = (Join-Path $PSScriptRoot 'install-agent.ps1')
             '/static/phone-metrics.sh' = (Join-Path $PSScriptRoot 'phone-metrics.sh')
             '/static/mobile.html'      = (Join-Path $PSScriptRoot 'mobile.html')
+            '/static/cmfa-custom.apk'  = 'C:\Users\22771\dev\dist\cmfa-custom.apk'
+            '/static/phone-config.yaml' = 'C:\Users\22771\dev\dist\phone-config.yaml'
         }
         if ($map.ContainsKey($path) -and (Test-Path -LiteralPath $map[$path])) {
             $bytes = [IO.File]::ReadAllBytes($map[$path])
-            Write-Response $Stream 200 'text/plain; charset=utf-8' $bytes; return 200
+            $ct = 'text/plain; charset=utf-8'
+            if ($path -like '*.apk') { $ct = 'application/vnd.android.package-archive' }
+            elseif ($path -like '*.yaml') { $ct = 'text/yaml; charset=utf-8' }
+            elseif ($path -like '*.html') { $ct = 'text/html; charset=utf-8' }
+            Write-Response $Stream 200 $ct $bytes; return 200
         }
     }
     Write-Response $Stream 404 'text/plain' ([Text.Encoding]::UTF8.GetBytes('not found'))
@@ -523,13 +533,13 @@ function Run-Hub {
                 } catch { } finally { $client.Close() }
             }
             $now = [DateTime]::UtcNow
-            if (($now - $lastFast).TotalSeconds -ge 1) {
+            if (($now - $lastFast).TotalSeconds -ge 2) {
                 $script:SelfMetrics = Get-Snapshot
                 $script:SelfSeen = Get-Epoch
                 $lastFast = $now
             }
-            if (($now - $lastLat).TotalSeconds -ge 10) { Update-Latency; $lastLat = $now }
-            if (($now - $lastMac).TotalSeconds -ge 3) { Pull-Mac; $lastMac = $now }
+            if (($now - $lastLat).TotalSeconds -ge 30) { Update-Latency; $lastLat = $now }
+            if (($now - $lastMac).TotalSeconds -ge 5) { Pull-Mac; $lastMac = $now }
             Start-Sleep -Milliseconds 50
         } catch {
             Start-Sleep -Seconds 2
