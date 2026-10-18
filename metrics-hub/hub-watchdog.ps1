@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'SilentlyContinue'
 
 function Test-Hub {
-    $code = & curl.exe -sS -m 20 -x '' -o NUL -w '%{http_code}' 'http://127.0.0.1:18993/devices' 2>$null
+    $code = & curl.exe -sS -m 20 --noproxy '*' -o NUL -w '%{http_code}' 'http://127.0.0.1:18993/devices' 2>$null
     return ($code -eq '200')
 }
 

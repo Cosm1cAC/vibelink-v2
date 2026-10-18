@@ -14,6 +14,7 @@
 ```
 
 - 面板按设备切换（设备名 chips，带在线状态点），内存行可点击展开明细
+- 延迟行（四端统一口径，2026-10-07）：`直连国内` = 223.5.5.5:443 TCP 握手；`代理链路` = 到 cp.cloudflare.com 的真实 HTTP 请求耗时（PC/手机经各自代理链路，Mac 为出口直连）。网状网（Tailscale 直连/中继）行已从卡片移除——它只是 Tailscale 互联状态，与代理性能无关，曾多次造成误解
 - push 模型：第二台 Windows / 手机**不需要任何入站权限**，主动 POST 到 Hub
 - Hub 监听 `0.0.0.0:18993`，防火墙仅放行 Tailscale 网段（`100.64.0.0/10`）；loopback 供监控页读取
 
@@ -22,7 +23,9 @@
 | 文件 | 说明 |
 | --- | --- |
 | `metrics-hub.ps1` | Hub / Agent 双模式（Windows PowerShell 5.1+，无需管理员） |
-| `install-hub.ps1` | 主 Windows：注册登录自启任务并启动 |
+| `install-hub.ps1` | 主 Windows：注册登录自启任务并启动（动作指向 `hub-start.vbs`；改动作时自动 UAC 一次） |
+| `hub-start.vbs` | 静默拉起 Hub（wscript 窗口样式 0，任务动作/看门狗重启都用它，不闪黑窗） |
+| `hub-watchdog.ps1` + `hub-watchdog.vbs` | 自愈看门狗：探测卡死并重启 `MetricsHub` 任务（见下） |
 | `install-agent.ps1` | 第二台 Windows：由 Hub 分发，下载 + 启动文件夹自启 + 立即启动 |
 | `phone-metrics.sh` | 安卓 Termux 上报脚本（/proc 采集 + curl POST） |
 
@@ -31,7 +34,7 @@
 ### 主 Windows（Hub，已完成）
 
 ```powershell
-# 普通权限：注册登录自启任务并启动
+# 注册登录自启任务并启动（任务动作已存在时需管理员，脚本会自动请求一次 UAC）
 powershell -ExecutionPolicy Bypass -File .\install-hub.ps1
 
 # 管理员一次（UAC）：放行 tailnet 网段访问
@@ -104,8 +107,67 @@ CPU 若被系统禁止则显示 `--`。运行日志：`~/phone-metrics.log`（�
 - ✅ Mac → Hub 可达（Windows netstat 显示 `100.105.59.31 → 100.74.71.80:18993 ESTABLISHED`）
 - ✅ 监控页补丁下发（多设备 chips + Hub 数据源）
 
+## Hub 自愈看门狗（hub-watchdog）
+
+每 2 分钟跑一次，探测 `http://127.0.0.1:18993/devices`：连试 3 次（间隔 10s）都拿不到 200
+就判定 hub 卡死，杀掉 `metrics-hub.ps1` 进程并重启 `MetricsHub` 计划任务。
+
+**2026-10-11 改为隐藏启动**：原先任务直接执行 `powershell.exe -WindowStyle Hidden -File hub-watchdog.ps1`，
+但每次运行仍会新建一个 `conhost.exe`，导致**每两分钟闪一次命令行窗口**。
+
+现在任务动作改成 `wscript.exe hub-watchdog.vbs`，由 VBS 以窗口样式 0（隐藏）拉起 powershell：
+
+```vbs
+CreateObject("WScript.Shell").Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""<路径>\hub-watchdog.ps1""", 0, False
+```
+
+`wscript.exe` 是 GUI 程序，任务调度器不会为它分配控制台，所以彻底不弹窗。
+（同样的写法见 `rshell/install-server.ps1:23-27`、`macos-socks-proxy/install.ps1:67`。）
+
+验证：自动触发后 `LastTaskResult=0`、`LastRunTime` 正常推进、新增 `conhost.exe` 数量为 0。
+
+```powershell
+# 手动触发一次验证
+Start-ScheduledTask -TaskName MetricsHubWatchdog
+# 完全停掉（会失去自愈能力）
+Disable-ScheduledTask -TaskName MetricsHubWatchdog
+```
+
+**2026-10-18 Hub 自身的启动也改成静默（`hub-start.vbs`）**：`MetricsHub` 任务动作原先直接执行
+`powershell.exe -WindowStyle Hidden -File metrics-hub.ps1 -Mode hub`，与上面 10-11 修掉的问题同源——
+**每次被看门狗重启（`Stop-ScheduledTask`/`Start-ScheduledTask`）或登录自启时都会闪一下黑窗**。
+现在任务动作指向同目录的 `hub-start.vbs`，由 wscript 以窗口样式 0 拉起，彻底无窗口：
+
+```vbs
+Dim sh, ps, script
+Set sh = CreateObject("WScript.Shell")
+ps = sh.ExpandEnvironmentStrings("%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe")
+script = Replace(WScript.ScriptFullName, "hub-start.vbs", "metrics-hub.ps1")
+sh.Run """" & ps & """ -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File """ & script & """ -Mode hub", 0, False
+```
+
+- **宿主必须写绝对路径**：本机 `HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\powershell.exe`
+  被指到了 `...\Programs\PowerShell\7\pwsh.exe`，裸名 `powershell.exe` 会被 App Paths 劫持成 pwsh 宿主
+  （`hub-watchdog.vbs` 里就是裸名，一直跑在 pwsh 7 下；功能正常，只是宿主与文档不一致）
+- VBS 用 `WScript.ScriptFullName` 推导同目录的 `metrics-hub.ps1`，仓库搬家无需改文件
+- 更新任务动作需要管理员：跑一次 `.\install-hub.ps1 -RegisterTaskOnly`（或直接跑 `.\install-hub.ps1`，会自动 UAC，且检测到 18993 已在监听就不重复启动）
+- 语义变化：wscript 拉起后立即退出，任务本身显示 `Ready`（旧动作下会一直显示 `Running`）；
+  `Stop-ScheduledTask` 不再能杀掉 Hub 进程，真正杀进程的是看门狗里的 `Stop-Process`（先杀后重启的顺序没变）
+- 手动起一次：`wscript.exe hub-start.vbs`（若 Hub 已在运行，新实例抢不到端口会进 5s 重试循环，记得结束它）
+
+验证（2026-10-18 20:23，端到端而非手动启动）：强杀 Hub + `Stop-ScheduledTask` → 等计划看门狗自然触发（约 2 分钟）
+→ `LastRunTime` 推进到新实例创建时刻、`LastTaskResult=0`、`GET /devices -> 200` 恢复（离线约 1.5 分钟）、
+**conhost 数量不增加**（与 10-11 同一判据）、全程只有 1 个 Hub 实例、宿主仍是 Windows PowerShell 5.1。
+
+### 已知问题：看门狗偶尔误判重启
+
+`Update-Latency` / `Get-LinkMbps`（`Get-NetAdapter`、`Get-NetRoute`）这些同步 WMI 调用偶尔卡顿，
+Hub 主循环是单线程的，卡住时 `/devices` 探测会超时（20s×3 次），看门狗即强杀重启——
+现象是请求日志 `requests.log` 里出现 3～6 分钟的空档（2026-10-17 17:18 / 17:54 / 18:34 各有一次）。
+链路速率查询因此加了缓存（`$script:LinkCache`，默认 300s），减少高频 WMI 调用。
+
 ## 卸载
 
 - 第二台 Windows：删启动文件夹 `metrics-agent.cmd` 与 `~\.metrics-agent\`，并结束 `-Mode agent` 进程
-- 主 Windows：`schtasks /Delete /TN MetricsHub /F`（管理员）+ 删除防火墙规则 `wproxy-metrics-hub`
+- 主 Windows：`schtasks /Delete /TN MetricsHub /F` + `schtasks /Delete /TN MetricsHubWatchdog /F`（管理员）+ 删除防火墙规则 `wproxy-metrics-hub`
 - 手机：结束 Termux 进程 / 删除 `~/phone-metrics.sh` 与 `~/.termux/boot/metrics.sh`
