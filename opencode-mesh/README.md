@@ -18,7 +18,7 @@
 ## 架构
 
 ```
-PC  haoshao        100.74.71.80:4096  (mesh-proxy) ──> 127.0.0.1:4097 (opencode serve)
+PC  haoshao        100.98.206.126:4096  (mesh-proxy) ──> 127.0.0.1:4097 (opencode serve)
 Mac liangmac-mini  100.105.59.31:4096 (mesh-proxy) ──> 127.0.0.1:4097 (opencode serve)
         ↑                      ↑
         └── 任一设备浏览器打开任一台 UI → Add server 聚合 ──┘
@@ -67,7 +67,7 @@ scp -i "$env:USERPROFILE\.ssh\id_ed25519" "$env:USERPROFILE\.config\opencode\ope
 ## 使用
 
 1. 任意设备浏览器打开任一台（basic auth：用户名 `opencode`，密码见该机 `~/.config/opencode-server/password`）：
-   - `http://100.74.71.80:4096`（PC）
+   - `http://100.98.206.126:4096`（PC）
    - `http://100.105.59.31:4096`（Mac）
 2. `Servers → Add server`：把另一台加进来（地址、用户名 `opencode`、密码同上）
 3. 之后一个界面里即可切换/聚合所有机器的项目与会话
@@ -87,7 +87,7 @@ scp -i "$env:USERPROFILE\.ssh\id_ed25519" "$env:USERPROFILE\.config\opencode\ope
 - **角标**：反映「地址栏那台主机」的路径 RTT（在页面内切到另一台 server 时不跟着变）；
   手机首次部署后如看不到角标，强刷一次（PWA/Service Worker 缓存）
 - **手机速度**：Tailscale 自动选路——手机与 PC 同一局域网时自动升级**直连**（实测 6~26ms，Web UI 流畅），
-  异地时自动回退 DERP 中继（实测 ~500ms，首屏/长历史会话会卡）。同一个 URL（`100.74.71.80`）通吃，
+  异地时自动回退 DERP 中继（实测 ~500ms，首屏/长历史会话会卡）。同一个 URL（`100.98.206.126`）通吃，
   无需维护局域网地址；排查当前路径：`tailscale ping phone-mihomo`（`direct` 还是 `via DERP`）
 - **fff 搜索 bug**：以 home 目录为索引根时搜索恒为空（上游 issue #41456），两端均设
   `OPENCODE_DISABLE_FFF=1` 回退 ripgrep 实现
@@ -100,7 +100,7 @@ scp -i "$env:USERPROFILE\.ssh\id_ed25519" "$env:USERPROFILE\.config\opencode\ope
 
 - ✅ Windows：看门狗 pid 保活、`0.0.0.0:4096` 监听、`/global/health` OK、CORS 预检返回 ACAO
 - ✅ macOS：opencode 1.18.34 安装成功、LaunchAgent 加载、本机 health OK
-- ✅ PC → Mac：`/global/health` 200；预检 ACAO=`http://100.74.71.80:4096`
+- ✅ PC → Mac：`/global/health` 200；预检 ACAO=`http://100.98.206.126:4096`
 - ✅ Mac → PC：`/global/health` 200；预检 ACAO=`http://100.105.59.31:4096`
 - ✅ 凭据同步：`auth.json`（open1code/opencode/open1code2/opencode-go）+ 自定义 provider `opencode.json`
 - ✅ 徽标代理：两端 HTML 注入角标成功、SSE `/event` 流式透传正常、`/session` API 正常（2026-10-06）

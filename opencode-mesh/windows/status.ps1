@@ -48,7 +48,7 @@ if (Test-Path $PasswordFile) {
         Write-Output 'badge:     FAILED'
     }
     Write-Output ('password:  {0}' -f $PasswordFile)
-    Write-Output ('url:       http://100.74.71.80:{0}/  (user: opencode)' -f $ServerPort)
+    Write-Output ('url:       http://100.98.206.126:{0}/  (user: opencode)' -f $ServerPort)
 } else {
     Write-Output 'password:  not generated (run install.ps1)'
 }

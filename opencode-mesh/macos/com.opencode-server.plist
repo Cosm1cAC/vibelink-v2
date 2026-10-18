@@ -8,7 +8,7 @@
   <array>
     <string>/bin/sh</string>
     <string>-c</string>
-    <string>while true; do OPENCODE_SERVER_PASSWORD="$(cat "$HOME/.config/opencode-server/password")" OPENCODE_DISABLE_FFF=1 "$HOME/.opencode/bin/opencode" serve --hostname 127.0.0.1 --port 4097 --cors http://100.74.71.80:4096 --cors http://100.105.59.31:4096 --cors http://localhost:4096 --cors http://127.0.0.1:4096; sleep 2; done &amp; while true; do /usr/bin/python3 "$HOME/bin/mesh-proxy.py" --listen 0.0.0.0:4096 --upstream 127.0.0.1:4097; sleep 2; done &amp; wait</string>
+    <string>while true; do OPENCODE_SERVER_PASSWORD="$(cat "$HOME/.config/opencode-server/password")" OPENCODE_DISABLE_FFF=1 "$HOME/.opencode/bin/opencode" serve --hostname 127.0.0.1 --port 4097 --cors http://100.98.206.126:4096 --cors http://100.105.59.31:4096 --cors http://localhost:4096 --cors http://127.0.0.1:4096; sleep 2; done &amp; while true; do /usr/bin/python3 "$HOME/bin/mesh-proxy.py" --listen 0.0.0.0:4096 --upstream 127.0.0.1:4097; sleep 2; done &amp; wait</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>

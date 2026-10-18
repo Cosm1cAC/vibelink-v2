@@ -89,7 +89,7 @@ if (-not $NoStart) {
         } catch { }
     }
     if ($healthy) {
-        Write-Output ('[OK] server healthy: http://100.74.71.80:{0}/  (user: opencode, password: {1})' -f $ServerPort, $PasswordFile)
+        Write-Output ('[OK] server healthy: http://100.98.206.126:{0}/  (user: opencode, password: {1})' -f $ServerPort, $PasswordFile)
     } else {
         Write-Output ('[!] server not healthy yet; see logs in {0}' -f $LogDir)
     }
