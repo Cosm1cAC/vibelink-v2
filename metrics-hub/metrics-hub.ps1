@@ -4,7 +4,7 @@
 #   Hub（主 Windows，采集本机 + 收其它设备 push + 主动拉 Mac）:
 #     powershell -File metrics-hub.ps1 -Mode hub
 #   Agent（第二台 Windows，采集本机并 push 到 Hub）:
-#     powershell -File metrics-hub.ps1 -Mode agent -Hub http://100.74.71.80:18993
+#     powershell -File metrics-hub.ps1 -Mode agent -Hub http://100.98.206.126:18993
 #
 # 端点:
 #   GET  /devices   聚合所有设备（监控页用）
@@ -18,7 +18,7 @@
 param(
     [ValidateSet('hub', 'agent')]
     [string]$Mode = 'hub',
-    [string]$Hub = 'http://100.74.71.80:18993',
+    [string]$Hub = 'http://100.98.206.126:18993',
     [int]$Port = 18993,
     [string]$Id = '',
     [string]$Name = '',

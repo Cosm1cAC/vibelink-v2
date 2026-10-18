@@ -31,6 +31,10 @@
 
 ## 部署
 
+> ⚠️ **2026-10-10 本机 Tailscale 节点重建**（`haoshao` → `haoshao-1`），地址从 `100.74.71.80`
+> 变为 **`100.98.206.126`**（MagicDNS `haoshao-1.tail2fec51.ts.net`），旧地址已不可达。仓库内脚本/文档已同步；
+> 但**手机上已装好的旧脚本仍写着旧地址**，需重下 `/static/phone-metrics.sh`（或改 `HUB=`）才能继续上报。
+
 ### 主 Windows（Hub，已完成）
 
 ```powershell
@@ -44,7 +48,7 @@ New-NetFirewallRule -DisplayName "wproxy-metrics-hub" -Direction Inbound -Action
 ### 第二台 Windows（Agent，普通权限，无需管理员）
 
 ```powershell
-powershell -NoProfile -Command "[Net.WebRequest]::DefaultWebProxy = New-Object Net.WebProxy; irm http://100.74.71.80:18993/static/install-agent.ps1 | iex"
+powershell -NoProfile -Command "[Net.WebRequest]::DefaultWebProxy = New-Object Net.WebProxy; irm http://100.98.206.126:18993/static/install-agent.ps1 | iex"
 ```
 
 前置：该机 Tailscale 已登录在线。安装后：下载脚本到 `~\.metrics-agent\`、启动文件夹写入 `metrics-agent.cmd`（登录自启）、立即启动上报。
@@ -56,7 +60,7 @@ powershell -NoProfile -Command "[Net.WebRequest]::DefaultWebProxy = New-Object N
 
 ```bash
 pkg update -y && pkg install -y curl
-curl -sL http://100.74.71.80:18993/static/phone-metrics.sh -o ~/phone-metrics.sh
+curl -sL http://100.98.206.126:18993/static/phone-metrics.sh -o ~/phone-metrics.sh
 chmod +x ~/phone-metrics.sh
 termux-wake-lock
 nohup ~/phone-metrics.sh >> ~/phone-metrics.log 2>&1 &
@@ -81,7 +85,7 @@ CPU 若被系统禁止则显示 `--`。运行日志：`~/phone-metrics.log`（�
 
 ## 手机查看监控
 
-浏览器直接打开 **`http://100.74.71.80:18993/`**（Hub 内置手机版监控页，深色自适应，2s 刷新；仅 tailnet 可达，无需任何额外配置）。建议「添加到主屏幕」当 App 用。
+浏览器直接打开 **`http://100.98.206.126:18993/`**（Hub 内置手机版监控页，深色自适应，2s 刷新；仅 tailnet 可达，无需任何额外配置）。建议「添加到主屏幕」当 App 用。
 
 > 完整的 zashboard（127.0.0.1:9097）只监听 Windows 本机且需要后端密钥，手机如需使用需额外开放监听+防火墙+在手机上配置密钥，一般不必。
 
@@ -104,7 +108,7 @@ CPU 若被系统禁止则显示 `--`。运行日志：`~/phone-metrics.log`（�
 
 - ✅ Hub 本机全字段实测：cpu=3.1%、gpu、mem=14.3G/16.9G、disk=91.8%、net、延迟（直连223.5.5.5=23.4ms、代理出口=34ms）
 - ✅ agent 模式回环测试：`test-agent` 上报后出现在 `/devices`
-- ✅ Mac → Hub 可达（Windows netstat 显示 `100.105.59.31 → 100.74.71.80:18993 ESTABLISHED`）
+- ✅ Mac → Hub 可达（Windows netstat 显示 `100.105.59.31 → 100.98.206.126:18993 ESTABLISHED`）
 - ✅ 监控页补丁下发（多设备 chips + Hub 数据源）
 
 ## Hub 自愈看门狗（hub-watchdog）

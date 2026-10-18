@@ -1,10 +1,10 @@
 # 在第二台 Windows 主机上运行（普通权限即可，无需管理员）：
-#   powershell -NoProfile -Command "[Net.WebRequest]::DefaultWebProxy = New-Object Net.WebProxy; irm http://100.74.71.80:18993/static/install-agent.ps1 | iex"
+#   powershell -NoProfile -Command "[Net.WebRequest]::DefaultWebProxy = New-Object Net.WebProxy; irm http://100.98.206.126:18993/static/install-agent.ps1 | iex"
 #
 # 作用：下载 metrics-hub.ps1 到 ~\.metrics-agent\，通过「启动文件夹」实现登录自启（免管理员），并立即启动。
 
 $ErrorActionPreference = 'Stop'
-$hub = 'http://100.74.71.80:18993'
+$hub = 'http://100.98.206.126:18993'
 $dir = Join-Path $env:USERPROFILE '.metrics-agent'
 New-Item -ItemType Directory -Path $dir -Force | Out-Null
 
