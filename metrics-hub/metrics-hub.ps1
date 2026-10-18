@@ -223,14 +223,44 @@ function Test-SocksMs {
 }
 
 function Update-Latency {
+    # 统一口径：直连国内（223.5.5.5:443 TCP）/ 代理链路（到 cp.cloudflare.com 的真实请求，含握手）
     $lat = [ordered]@{}
-    $lat['直连223.5.5.5'] = Test-TcpMs -TargetHost '223.5.5.5' -TargetPort 443 -TimeoutMs 1200
-    $lat['直连8.8.8.8'] = Test-TcpMs -TargetHost '8.8.8.8' -TargetPort 443 -TimeoutMs 1200
+    $lat['直连国内'] = Test-TcpMs -TargetHost '223.5.5.5' -TargetPort 443 -TimeoutMs 1200
     $proxyUp = Test-TcpMs -TargetHost '127.0.0.1' -TargetPort 7897 -TimeoutMs 500
     if ($proxyUp) {
-        $lat['代理出口'] = Test-SocksMs -ProxyHost '127.0.0.1' -ProxyPort 7897 -DstHost 'www.gstatic.com' -DstPort 80 -TimeoutMs 6000
+        $v = Test-SocksMs -ProxyHost '127.0.0.1' -ProxyPort 7897 -DstHost 'cp.cloudflare.com' -DstPort 80 -TimeoutMs 8000
+        # <5ms 视为本机伪响应（如本机代理直答），不报告以免误导
+        if ($null -ne $v -and $v -ge 5) { $lat['代理链路'] = $v }
+    }
+    # 无可用本机代理时，若本机 Tailscale 可直达 Mac，则经 Mac 的 socks 测（如笔记本）
+    if (-not $lat.Contains('代理链路')) {
+        if (Test-TcpMs -TargetHost '100.105.59.31' -TargetPort 7891 -TimeoutMs 800) {
+            $v2 = Test-SocksMs -ProxyHost '100.105.59.31' -ProxyPort 7891 -DstHost 'cp.cloudflare.com' -DstPort 80 -TimeoutMs 8000
+            if ($null -ne $v2 -and $v2 -ge 5) { $lat['代理链路'] = $v2 }
+        }
     }
     $script:Latency = $lat
+}
+
+$script:LinkCache = @{ t = 0; v = $null }
+
+function Get-LinkMbps {
+    # 默认路由网卡的链路速率（带宽上限），300s 缓存
+    # （Get-NetAdapter/Get-NetRoute 是同步 WMI 调用，偶尔卡秒级；单线程主循环里卡住会让看门狗误判重启）
+    $now = Get-Epoch
+    if ($script:LinkCache.t -and ($now - $script:LinkCache.t) -lt 300) { return $script:LinkCache.v }
+    $v = $null
+    try {
+        $route = Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Select-Object -First 1
+        $ad = $null
+        if ($route) { $ad = Get-NetAdapter -InterfaceIndex $route.InterfaceIndex -ErrorAction SilentlyContinue }
+        if ($ad -and $ad.LinkSpeed) {
+            if ($ad.LinkSpeed -match '([\d.]+)\s*Gbps') { $v = [int]([double]$Matches[1] * 1000) }
+            elseif ($ad.LinkSpeed -match '([\d.]+)\s*Mbps') { $v = [int][double]$Matches[1] }
+        }
+    } catch { }
+    $script:LinkCache = @{ t = $now; v = $v }
+    return $v
 }
 
 function Get-Snapshot {
@@ -250,6 +280,7 @@ function Get-Snapshot {
         mem       = (Get-MemInfo)
         disk      = (Get-DiskInfo)
         net       = (Get-NetInfo)
+        link_mbps = (Get-LinkMbps)
     }
 }
 
@@ -431,7 +462,7 @@ function Build-Devices {
             link = (Get-TsLink $macTailnet $script:SelfTsIp)
         })
     }
-    foreach ($d in @($script:Devices.Values)) {
+    foreach ($d in @($script:Devices.Values | Sort-Object { $_.id })) {
         [void]$list.Add(@{
             id = $d.id; name = $d.name; platform = $d.platform
             online = (($now - $d.last_seen) -lt 15); last_seen = $d.last_seen; metrics = $d.metrics
