@@ -1,12 +1,16 @@
 mixed-port: 7897
 allow-lan: false
 bind-address: 127.0.0.1
+# interface-name: "WLAN"
+# ↑ 2026-10-23：本机已改走有线（以太网 192.168.86.197），WLAN 断开后此绑定会让 mihomo 的
+#   DIRECT 出站全部发到 169.254 死网卡 —— 表现为「开了代理就断网」。改为不绑定，
+#   由系统路由表选出口（Tailscale 只在 100.64/10 + /32 上生效，不影响默认路由）。
 mode: rule
 log-level: info
 ipv6: false
 unified-delay: true
 tcp-concurrent: true
-find-process-mode: "off"
+find-process-mode: "strict"
 external-controller: 127.0.0.1:9097
 secret: "9f2c7a41e8b3d6504c1f8a2e6d9b0473"
 external-ui: ui
@@ -20,6 +24,12 @@ geox-url:
 profile:
   store-selected: true
   store-fake-ip: true
+# 校园网对部分 CF 任播地址段绕行 LAX（325ms、丢包 60%+，TLS 握手 1~12s 或直接失败）。
+# 162.159.140.245 实测走 HKG（137ms），握手 0.3s 左右，用于 CF 隧道和 commandcode.ai。
+hosts:
+  "socks.vibelink.cloud": 162.159.140.245
+  "commandcode.ai": 162.159.140.245
+  "api.commandcode.ai": 162.159.140.245
 dns:
   enable: true
   listen: 127.0.0.1:1055
@@ -36,40 +46,40 @@ dns:
     - 223.5.5.5
     - 119.29.29.29
   nameserver:
+    # AliDNS(223.5.5.5) 对 loverslab 等站点会返回污染/不可达 IP；腾讯 DoH 实测返回真实地址
+    - https://1.12.12.12/dns-query
     - https://doh.pub/dns-query
-    - https://dns.alidns.com/dns-query
   fallback:
     - https://1.1.1.1/dns-query#PROXY
     - https://8.8.8.8/dns-query#PROXY
-  fallback-filter:
-    geoip: true
-    geoip-code: CN
-    geosite:
-      - gfw
-    ipcidr:
-      - 240.0.0.0/4
-  fake-ip-filter:
-    - "+.lan"
-    - "+.local"
-    - "+.localhost"
-    - "+.home.arpa"
-    - "+.ts.net"
-    - "dns.msftncsi.com"
-    - "www.msftncsi.com"
-    - "www.msftconnecttest.com"
-    - "captive.apple.com"
-    - "connectivitycheck.gstatic.com"
-    - "detectportal.firefox.com"
-    - "nmcheck.gnome.org"
-    - "network-test.debian.org"
-    - "+.pool.ntp.org"
-    - "time.apple.com"
-    - "time.asia.apple.com"
-    - "time.windows.com"
-    - "ntp.aliyun.com"
-    - "ntp.tencent.com"
-    - "stun.l.google.com"
-    - "stun.qq.com"
+fallback-filter:
+  geosite:
+    - gfw
+  ipcidr:
+    - 240.0.0.0/4
+fake-ip-filter:
+  - "+.lan"
+  - "+.local"
+  - "+.localhost"
+  - "+.home.arpa"
+  - "+.ts.net"
+  - "+.tailscale.com"
+  - "dns.msftncsi.com"
+  - "www.msftncsi.com"
+  - "www.msftconnecttest.com"
+  - "captive.apple.com"
+  - "connectivitycheck.gstatic.com"
+  - "detectportal.firefox.com"
+  - "nmcheck.gnome.org"
+  - "network-test.debian.org"
+  - "+.pool.ntp.org"
+  - "time.apple.com"
+  - "time.asia.apple.com"
+  - "time.windows.com"
+  - "ntp.aliyun.com"
+  - "ntp.tencent.com"
+  - "stun.l.google.com"
+  - "stun.qq.com"
 proxies:
   - name: "Japan-MacMini"
     type: socks5
@@ -77,6 +87,11 @@ proxies:
     port: 7891
     udp: true
     interface-name: "Tailscale"
+  - name: "Japan-MacHy2"
+    type: socks5
+    server: 127.0.0.1
+    port: 7893
+    udp: false
   - name: "Japan-MacMini-SSH"
     type: socks5
     server: 127.0.0.1
@@ -98,35 +113,94 @@ proxies:
     server: 127.0.0.1
     port: 7892
     udp: false
+  - name: "PhoneEntry"
+    type: socks5
+    server: 192.168.137.104
+    port: 7890
+    udp: false
+  - name: "Japan-PhoneRelay"
+    type: socks5
+    server: 100.105.59.31
+    port: 7891
+    udp: false
+    dialer-proxy: "PhoneEntry"
+  - name: "PhoneSocks"
+    type: socks5
+    server: 100.109.145.14
+    port: 18080
+    username: termux
+    password: NRLIGzDSZIQ768eEEKUUkb3D
+    udp: false
+    interface-name: "Tailscale"
+  - name: "Japan-PhoneRelay2"
+    type: socks5
+    server: 100.105.59.31
+    port: 7891
+    udp: false
+    dialer-proxy: "PhoneSocks"
 proxy-groups:
   - name: "PROXY"
     type: select
     proxies:
       - "Japan-MacMini"
+      - "Japan-MacHy2"
       - "Japan-MacMini-SSH"
       - "Japan-Ngrok"
       - "Japan-MacUser"
       - "Japan-CF"
+      - "Japan-PhoneRelay"
+      - "Japan-PhoneRelay2"
       - "DIRECT"
+  # Pornhub 视频：CF 隧道实测 525KB/s，MacHy2 只有 4.7KB/s；失败回落 MacHy2
+  - name: "PORN-VIDEO"
+    type: fallback
+    proxies:
+      - "Japan-CF"
+      - "Japan-MacHy2"
+    url: "http://cp.cloudflare.com/generate_204"
+    interval: 30
+    timeout: 8000
 rules:
   - IP-CIDR,100.64.0.0/10,DIRECT,no-resolve
   - GEOIP,private,DIRECT
+  - PROCESS-NAME,tailscaled.exe,DIRECT
+  - PROCESS-NAME,tailscale.exe,DIRECT
+  # Telegram Desktop 的 MTProto 直连 DC IP，域名规则匹配不到，按进程整体走代理
+  - PROCESS-NAME,Telegram.exe,PROXY
+  # Telegram 官方 DC 网段（浏览器版/其他客户端按 IP 连接时也需要）
+  - IP-CIDR,91.108.4.0/22,PROXY,no-resolve
+  - IP-CIDR,91.108.8.0/22,PROXY,no-resolve
+  - IP-CIDR,91.108.12.0/22,PROXY,no-resolve
+  - IP-CIDR,91.108.16.0/22,PROXY,no-resolve
+  - IP-CIDR,91.108.20.0/22,PROXY,no-resolve
+  - IP-CIDR,91.108.56.0/22,PROXY,no-resolve
+  - IP-CIDR,149.154.160.0/20,PROXY,no-resolve
+  - IP-CIDR,185.76.151.0/24,PROXY,no-resolve
   - DOMAIN-SUFFIX,tailscale.com,PROXY
-  - DOMAIN-SUFFIX,bilibili.com,DIRECT
-  - DOMAIN-SUFFIX,bilivideo.com,DIRECT
-  - DOMAIN-SUFFIX,hdslb.com,DIRECT
-  - DOMAIN-SUFFIX,qq.com,DIRECT
-  - DOMAIN-SUFFIX,tencent.com,DIRECT
-  - DOMAIN-SUFFIX,wechat.com,DIRECT
-  - GEOSITE,cn,DIRECT
-  - GEOIP,CN,DIRECT
-  - MATCH,PROXY
+  # CF 隧道入口：必须 DIRECT 才能命中 hosts 里优选到的 HKG 边缘 IP
+  - DOMAIN,socks.vibelink.cloud,DIRECT
+  # Pornhub 视频/动图走 CF 隧道；页面 HTML 与小图仍走 PROXY（MacHy2 TTFB 更低）
+  - DOMAIN-SUFFIX,ev.phncdn.com,PORN-VIDEO
+  - DOMAIN-SUFFIX,el.phncdn.com,PORN-VIDEO
+  - DOMAIN-SUFFIX,el2.phncdn.com,PORN-VIDEO
+  # LoversLab：静态资源直连；主站（含下载）走代理——直连大文件会被限到 KB/s 级
+  - DOMAIN,static.loverslab.com,DIRECT
+  - DOMAIN,www.loverslab.com,PROXY
+  - DOMAIN-SUFFIX,loverslab.com,DIRECT
+  # Cloudflare 人机验证脚本也直连，否则验证页会卡在慢速代理上
+  - DOMAIN-SUFFIX,challenges.cloudflare.com,DIRECT
+  # 谷歌静态资源直连实测 0.1~0.2s（主站被墙，但 CDN 段没被墙），少走隧道少丢包
+  - DOMAIN-SUFFIX,gstatic.com,DIRECT
+  - DOMAIN-SUFFIX,fonts.googleapis.com,DIRECT
+  - DOMAIN-SUFFIX,fonts.gstatic.com,DIRECT
+  - GEOSITE,geolocation-!cn,PROXY
+  - MATCH,DIRECT
 tun:
   enable: false
   stack: mixed
   device: wproxy
   auto-route: true
-  auto-detect-interface: true
+  auto-detect-interface: false
   dns-hijack:
     - "any:53"
   route-exclude-address:
