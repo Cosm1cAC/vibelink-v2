@@ -75,7 +75,8 @@ function Test-SocksDeep {
 function Invoke-MacRelayCheck {
     try {
         $remote = 'msgs=""; netstat -an | grep -q "\.7891" || { launchctl kickstart -k gui/$(id -u)/com.socks-relay >/dev/null 2>&1 || launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.socks-relay.plist >/dev/null 2>&1; launchctl kickstart -k gui/$(id -u)/com.socks-relay >/dev/null 2>&1; msgs="$msgs relay"; }; launchctl list | grep -q com.ssh-fallback || { launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.ssh-fallback.plist >/dev/null 2>&1; launchctl kickstart -k gui/$(id -u)/com.ssh-fallback >/dev/null 2>&1; msgs="$msgs ssh-fallback"; }; launchctl list | grep -q com.ngrok-ssh || { launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.ngrok-ssh.plist >/dev/null 2>&1; launchctl kickstart -k gui/$(id -u)/com.ngrok-ssh >/dev/null 2>&1; msgs="$msgs ngrok"; }; launchctl list | grep -q com.mac-metrics || { launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.mac-metrics.plist >/dev/null 2>&1; launchctl kickstart -k gui/$(id -u)/com.mac-metrics >/dev/null 2>&1; msgs="$msgs mac-metrics"; }; launchctl list | grep -q com.phone-config-http || { launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.phone-config-http.plist >/dev/null 2>&1; launchctl kickstart -k gui/$(id -u)/com.phone-config-http >/dev/null 2>&1; msgs="$msgs phone-config-http"; }; curl -s --max-time 5 http://127.0.0.1:4040/api/tunnels | grep -q "tcp" || { launchctl kickstart -k gui/$(id -u)/com.ngrok-ssh >/dev/null 2>&1; msgs="$msgs ngrok-tunnel"; }; echo "RELCHECK:${msgs:-ok}"'
-        $out = & ssh -o BatchMode=yes -o ConnectTimeout=15 -o IdentitiesOnly=yes -i $KeyPath $SshTarget $remote 2>&1 | Out-String
+        $jumpArgs = if ($JumpHost) { @('-J', $JumpHost) } else { @() }
+        $out = & ssh -o BatchMode=yes -o ConnectTimeout=15 -o IdentitiesOnly=yes @jumpArgs -i $KeyPath $SshTarget $remote 2>&1 | Out-String
         $text = $out.Trim()
         if ($text -notmatch 'RELCHECK:ok') {
             Write-Log ('Mac relay check: {0}' -f ($text -replace '\s+', ' '))
@@ -88,9 +89,27 @@ function Invoke-MacRelayCheck {
 $sshExe = $SshExePath
 if (-not $sshExe -or -not (Test-Path -LiteralPath $sshExe)) { $sshExe = Join-Path $env:SystemRoot 'System32\OpenSSH\ssh.exe' }
 
+$jumpArgs = if ($JumpHost) { @('-J', $JumpHost) } else { @() }
+# 有跳板时用 -L 直通 Mac 的 socks-relay(7891)，且把 SSH 终点放在跳板上，
+# 由跳板直连 Mac —— 只需一跳 SSH，避免双跳 + Mac 回连自己(发夹)造成的间歇失败。
+# 无跳板时保持原设计 -D。
+if ($TunnelTarget) {
+    $macHost = ($SshTarget -split '@')[-1]
+    $fwdArgs = @('-L', ('{0}:{1}:7891' -f $LocalPort, $macHost))
+    $mainTarget = $TunnelTarget
+    $mainJump = @()
+} elseif ($JumpHost) {
+    $macHost = ($SshTarget -split '@')[-1]
+    $fwdArgs = @('-L', ('{0}:{1}:7891' -f $LocalPort, $macHost))
+    $mainTarget = $SshTarget
+    $mainJump = $jumpArgs
+} else {
+    $fwdArgs = @('-D', [string]$LocalPort)
+    $mainTarget = $SshTarget
+    $mainJump = @()
+}
 $sshArgs = @(
     '-N'
-    '-D', [string]$LocalPort
     '-i', $KeyPath
     '-o', 'BatchMode=yes'
     '-o', 'IdentitiesOnly=yes'
@@ -99,10 +118,11 @@ $sshArgs = @(
     '-o', 'ServerAliveCountMax=3'
     '-o', 'TCPKeepAlive=yes'
     '-o', 'StrictHostKeyChecking=accept-new'
-    $SshTarget
+) + $fwdArgs + $mainJump + @(
+    $mainTarget
 )
 
-Write-Log ('Watchdog starting. target={0} localPort={1}' -f $SshTarget, $LocalPort)
+Write-Log ('Watchdog starting. target={0} localPort={1} jump={2} tunnelTarget={3}' -f $SshTarget, $LocalPort, $(if ($JumpHost) { $JumpHost } else { 'none' }), $(if ($TunnelTarget) { $TunnelTarget } else { $SshTarget }))
 Stop-ProxySsh
 Start-Sleep -Seconds 1
 

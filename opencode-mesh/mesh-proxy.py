@@ -9,8 +9,14 @@
 仅标准库实现，macOS 系统 python3 与 Windows python 均可运行。
 """
 import argparse
+import ipaddress
+import json
+import os
+import shutil
 import socket
+import subprocess
 import threading
+import time
 
 INJECT_TAG = b'<script src="/__mesh/badge.js" defer></script>'
 
@@ -30,8 +36,41 @@ BADGE_JS = """(function () {
     if (document.body) { document.body.appendChild(el); } else { setTimeout(mount, 300); }
   }
   mount();
+
+  var pathInfo = null;
+  var rtt = null;
+
+  function label() {
+    var ms = rtt === null ? '' : ' ' + Math.round(rtt) + 'ms';
+    if (!pathInfo) return '测速中…' + ms;
+    var p = pathInfo.path;
+    if (p === 'local') return '本机' + ms;
+    if (p === 'direct') return (pathInfo.reason === 'lan' ? '直连·局域网' : '直连·Tailscale') + ms;
+    if (p === 'relay') return '中继·DERP' + ms;
+    if (p === 'wan') return '公网直连' + ms;
+    return '路径未知' + ms;
+  }
+
+  function paint() {
+    el.textContent = label();
+    el.title = pathInfo
+      ? ('path=' + pathInfo.path + ' reason=' + pathInfo.reason + ' peer=' + pathInfo.peer +
+         (pathInfo.tailscale && pathInfo.tailscale.relay ? ' relay=' + pathInfo.tailscale.relay : ''))
+      : '';
+    var good = pathInfo && (pathInfo.path === 'direct' || pathInfo.path === 'local');
+    var mid = pathInfo && pathInfo.path === 'relay';
+    el.style.background = good ? '#16a34a' : (mid ? '#d97706' : '#6b7280');
+  }
+
+  function probePath() {
+    fetch('/__mesh/path', { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (j) { pathInfo = j; paint(); })
+      .catch(function () { pathInfo = null; paint(); });
+  }
+
   var ema = null;
-  function probe() {
+  function probeRtt() {
     var t0 = performance.now();
     fetch('/global/health', { cache: 'no-store' })
       .then(function (r) { return r.arrayBuffer(); })
@@ -39,15 +78,86 @@ BADGE_JS = """(function () {
       .then(function () {
         var ms = performance.now() - t0;
         ema = (ema === null) ? ms : (ema * 0.5 + ms * 0.5);
-        var direct = ema < 150;
-        el.textContent = (direct ? '直连' : '中继') + ' ' + Math.round(ema) + 'ms';
-        el.style.background = direct ? '#16a34a' : '#d97706';
+        rtt = ema;
+        paint();
       });
   }
-  probe();
-  setInterval(probe, 5000);
+
+  probePath();
+  probeRtt();
+  setInterval(probePath, 10000);
+  setInterval(probeRtt, 5000);
 })();
 """.encode('utf-8')
+
+
+# --- path classification -------------------------------------------------
+# Same contract as the hub: report the path the bytes actually take, with a
+# reason, instead of guessing from an RTT threshold.
+
+TS_CANDIDATES = [
+    os.path.join(os.environ.get('ProgramFiles', r'C:\Program Files'), 'Tailscale', 'tailscale.exe'),
+    'tailscale.exe',
+    'tailscale',
+    '/Applications/Tailscale.app/Contents/MacOS/Tailscale',
+]
+
+_ts_lock = threading.Lock()
+_ts_cache = {'at': 0.0, 'peers': {}}
+
+
+def read_tailscale_peers():
+    now = time.time()
+    with _ts_lock:
+        if now - _ts_cache['at'] < 5:
+            return _ts_cache['peers']
+    peers = {}
+    for exe in TS_CANDIDATES:
+        if not (os.path.isabs(exe) and os.path.exists(exe)) and shutil.which(exe) is None:
+            continue
+        try:
+            out = subprocess.run([exe, 'status', '--json'], capture_output=True, timeout=2).stdout
+            status = json.loads(out or b'{}')
+        except Exception:
+            continue
+        for peer in (status.get('Peer') or {}).values():
+            info = {
+                'direct': bool(peer.get('CurAddr')),
+                'relay': peer.get('Relay') or None,
+                'host': peer.get('HostName') or '',
+            }
+            for ip in peer.get('TailscaleIPs') or []:
+                peers[ip] = info
+        self_peer = status.get('Self')
+        if self_peer:
+            for ip in self_peer.get('TailscaleIPs') or []:
+                peers[ip] = {'direct': True, 'relay': None, 'host': self_peer.get('HostName') or '', 'self': True}
+        break
+    with _ts_lock:
+        _ts_cache['at'] = now
+        _ts_cache['peers'] = peers
+    return peers
+
+
+def classify_path(peer_ip):
+    try:
+        addr = ipaddress.ip_address(peer_ip)
+    except ValueError:
+        return {'peer': peer_ip, 'ipClass': 'wan', 'path': 'wan', 'reason': 'unparsed'}
+    if addr.is_loopback:
+        return {'peer': peer_ip, 'ipClass': 'loopback', 'path': 'local', 'reason': 'loopback'}
+    if addr in ipaddress.ip_network('100.64.0.0/10'):
+        ts = read_tailscale_peers().get(peer_ip)
+        if not ts:
+            return {'peer': peer_ip, 'ipClass': 'tailscale', 'path': 'unknown', 'reason': 'tailscale-status-unavailable'}
+        if ts['direct']:
+            return {'peer': peer_ip, 'ipClass': 'tailscale', 'path': 'direct', 'reason': 'tailscale-direct', 'tailscale': ts}
+        if ts['relay']:
+            return {'peer': peer_ip, 'ipClass': 'tailscale', 'path': 'relay', 'reason': 'tailscale-derp', 'tailscale': ts}
+        return {'peer': peer_ip, 'ipClass': 'tailscale', 'path': 'unknown', 'reason': 'tailscale-no-endpoint', 'tailscale': ts}
+    if addr.is_private:
+        return {'peer': peer_ip, 'ipClass': 'lan', 'path': 'direct', 'reason': 'lan'}
+    return {'peer': peer_ip, 'ipClass': 'wan', 'path': 'wan', 'reason': 'public-route'}
 
 
 class BufSock:
@@ -139,6 +249,12 @@ def handle(client, upstream):
 
         if method == 'GET' and path == '/__mesh/badge.js':
             send_simple(client, '200 OK', 'application/javascript; charset=utf-8', BADGE_JS)
+            return
+
+        if method == 'GET' and path == '/__mesh/path':
+            peer = client.getpeername()[0]
+            body = json.dumps(classify_path(peer), ensure_ascii=False).encode('utf-8')
+            send_simple(client, '200 OK', 'application/json; charset=utf-8', body)
             return
 
         up = socket.create_connection(upstream, timeout=10)

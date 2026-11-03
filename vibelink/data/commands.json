@@ -1,0 +1,16 @@
+[
+  {
+    "id": "1a18af4572b0001",
+    "device": "pc-rs",
+    "action": "probe",
+    "args": {},
+    "status": "done",
+    "createdAt": 1793332631339,
+    "startedAt": 1793332635522,
+    "finishedAt": 1793332635542,
+    "result": {
+      "message": "probe queued",
+      "ok": true
+    }
+  }
+]

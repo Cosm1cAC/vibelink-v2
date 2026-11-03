@@ -1,0 +1,14 @@
+# hysteria2 客户端：PC -> tailnet(UDP 8443) -> Mac 侧 python 中转 -> hysteria2 服务端 -> Mac 出口
+# 桌面端固定文件（wproxy 看门狗负责拉起；exe 与 mihomo.exe 同目录，已被 .gitignore）
+# Mac 侧对应: ~/bin/hysteria (com.hysteria2, 听 127.0.0.1:8444) + ~/bin/udp-relay.py (com.udp-relay, 听 100.105.59.31:8443)
+# 背景: 2026-10-18 校园网国际出口丢包 ~10%，普通 TCP 塌到 25KB/s；Brutal CC 抗丢包 (实测 770KB/s)
+server: 100.105.59.31:8443
+auth: 7a6343aafb5234395b3df23005b56a57
+tls:
+  sni: hy2.local
+  insecure: true
+socks5:
+  listen: 127.0.0.1:7893
+bandwidth:
+  up: 2 mbps
+  down: 8 mbps

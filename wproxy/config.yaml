@@ -138,6 +138,16 @@ proxies:
     port: 7891
     udp: false
     dialer-proxy: "PhoneSocks"
+proxy-providers:
+  cute:
+    type: file
+    path: ./providers/cute.yaml
+    exclude-filter: "剩余流量|套餐到期"
+    health-check:
+      enable: true
+      url: https://www.gstatic.com/generate_204
+      interval: 300
+
 proxy-groups:
   - name: "PROXY"
     type: select
@@ -151,6 +161,8 @@ proxy-groups:
       - "Japan-PhoneRelay"
       - "Japan-PhoneRelay2"
       - "DIRECT"
+    use:
+      - cute
   # Pornhub 视频：CF 隧道实测 525KB/s，MacHy2 只有 4.7KB/s；失败回落 MacHy2
   - name: "PORN-VIDEO"
     type: fallback
@@ -193,6 +205,20 @@ rules:
   - DOMAIN-SUFFIX,gstatic.com,DIRECT
   - DOMAIN-SUFFIX,fonts.googleapis.com,DIRECT
   - DOMAIN-SUFFIX,fonts.gstatic.com,DIRECT
+  # B站全链路直连：直播/视频 CDN 有 Akamai 节点（upos-hz-mirrorakam.akamaized.net），
+  # 会被 geolocation-!cn 判成境外而塞进慢速代理隧道 → 直播卡顿。这里必须排在 GEOSITE 之前。
+  - DOMAIN-SUFFIX,bilibili.com,DIRECT
+  - DOMAIN-SUFFIX,hdslb.com,DIRECT
+  - DOMAIN-SUFFIX,bilivideo.com,DIRECT
+  - DOMAIN-SUFFIX,bilivideo.cn,DIRECT
+  - DOMAIN-SUFFIX,szbdyd.com,DIRECT
+  # 注：mihomo 的 DOMAIN-SUFFIX 按标签边界匹配，upos-hz-mirrorakam.akamaized.net
+  # 不会被 DOMAIN-SUFFIX,mirrorakam.akamaized.net 命中，故用 KEYWORD。
+  - DOMAIN-KEYWORD,mirrorakam,DIRECT
+  - DOMAIN-KEYWORD,bilivideo,DIRECT
+  # 2026-10-30：jio.com 不在 geolocation-!cn 里，会掉到 MATCH,DIRECT，
+  # 从国内直连印度 Jio 的 IP（49.40.8.x）必超时；实测经 HY2 隧道 301/200 正常。
+  - DOMAIN-SUFFIX,jio.com,PROXY
   - GEOSITE,geolocation-!cn,PROXY
   - MATCH,DIRECT
 tun:

@@ -1,0 +1,470 @@
+[
+  {
+    "at": 1793332610231,
+    "device": "pc-rs",
+    "kind": "online",
+    "message": "HAOSHAO 上线"
+  },
+  {
+    "at": 1793332631339,
+    "device": "pc-rs",
+    "kind": "command",
+    "message": "排队 probe"
+  },
+  {
+    "at": 1793332635542,
+    "device": "pc-rs",
+    "kind": "command",
+    "message": "probe done"
+  },
+  {
+    "at": 1793332636245,
+    "device": "laptop-rs",
+    "kind": "online",
+    "message": "DESKTOP-9M0BU3H 上线"
+  },
+  {
+    "at": 1793332639532,
+    "device": null,
+    "kind": "config",
+    "message": "cmfa-lan-gateway.yaml 新版本 1793332639531"
+  },
+  {
+    "at": 1793336910371,
+    "device": "pc-rs",
+    "kind": "online",
+    "message": "HAOSHAO 上线"
+  },
+  {
+    "at": 1793337839253,
+    "device": "pc-rs",
+    "kind": "online",
+    "message": "HAOSHAO 上线"
+  },
+  {
+    "at": 1793337845855,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793337855855,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793337865855,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793337875855,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793337885855,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793337895855,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793337905856,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793337915872,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793337925855,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793337935855,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793337945863,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793337955855,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793337965855,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793337980884,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793337996663,
+    "device": "pc-rs",
+    "kind": "online",
+    "message": "HAOSHAO 上线"
+  },
+  {
+    "at": 1793338005855,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793338015855,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793338025855,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793338035855,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793338045855,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793338055855,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793338065856,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793338075856,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793338085855,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793338095855,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793338105855,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793338115855,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793338125865,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793338135855,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793338145856,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793338155859,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793338165855,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793338175856,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793338185872,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793338195855,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793338205855,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793338208579,
+    "device": null,
+    "kind": "policy",
+    "message": "策略已更新（enabled=true dryRun=true）"
+  },
+  {
+    "at": 1793338211420,
+    "device": null,
+    "kind": "policy",
+    "message": "策略已更新（enabled=true dryRun=true）"
+  },
+  {
+    "at": 1793338215856,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793338225855,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793338235855,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793338275863,
+    "device": "pc-rs",
+    "kind": "online",
+    "message": "HAOSHAO 上线"
+  },
+  {
+    "at": 1793338285536,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793338585536,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793338885536,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793339185545,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793339495537,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793339805540,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793340115537,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793340425537,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793340725554,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793341035536,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793341335536,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793341635536,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793341935537,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793342245540,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793342555536,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793342855538,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793343165536,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793343465536,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793343765536,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793344065536,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793344365537,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793344665540,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793344975538,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793345285538,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793345595536,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793345895537,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  },
+  {
+    "at": 1793346029762,
+    "device": "pc-rs",
+    "kind": "online",
+    "message": "HAOSHAO 上线"
+  },
+  {
+    "at": 1793346129348,
+    "device": "pc-rs",
+    "kind": "online",
+    "message": "HAOSHAO 上线"
+  },
+  {
+    "at": 1793346137012,
+    "device": "pc-rs",
+    "kind": "policy-dry",
+    "message": "proxy pc-rs -> 127.0.0.1:7897（原 192.168.137.156:7897，出口 离线→兜底）"
+  }
+]

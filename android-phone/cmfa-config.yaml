@@ -39,8 +39,6 @@ dns:
     - https://1.1.1.1/dns-query#PROXY
     - https://8.8.8.8/dns-query#PROXY
   fallback-filter:
-    geoip: true
-    geoip-code: CN
     geosite:
       - gfw
     ipcidr:
@@ -89,12 +87,6 @@ proxy-groups:
 rules:
   - IP-CIDR,100.64.0.0/10,Tailscale,no-resolve
   - GEOIP,private,DIRECT
-  - DOMAIN-SUFFIX,bilibili.com,DIRECT
-  - DOMAIN-SUFFIX,bilivideo.com,DIRECT
-  - DOMAIN-SUFFIX,hdslb.com,DIRECT
-  - DOMAIN-SUFFIX,qq.com,DIRECT
-  - DOMAIN-SUFFIX,tencent.com,DIRECT
-  - DOMAIN-SUFFIX,wechat.com,DIRECT
-  - GEOSITE,cn,DIRECT
-  - GEOIP,CN,DIRECT
-  - MATCH,PROXY
+  - DOMAIN-SUFFIX,tailscale.com,PROXY
+  - GEOSITE,geolocation-!cn,PROXY
+  - MATCH,DIRECT

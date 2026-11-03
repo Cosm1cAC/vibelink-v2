@@ -27,6 +27,59 @@ function Write-Log([string]$Message) {
     Add-Content -LiteralPath $logFile -Value ('{0}  {1}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Message) -Encoding UTF8
 }
 
+# 2026-10-24：兜底直连此前只写一行本地日志，2026-10-24 断网 4 小时无人知晓。
+# 这里加桌面通知（原生 WinRT Toast，无需第三方模块），并对同类告警做冷却去重，
+# 避免节点反复抖动时刷屏。
+$AlertState = @{}
+$AlertCooldownSeconds = 1800
+
+function Send-Alert([string]$Key, [string]$Title, [string]$Body) {
+    $now = Get-Date
+    if ($AlertState.ContainsKey($Key)) {
+        $last = $AlertState[$Key]
+        if (($now - $last).TotalSeconds -lt $AlertCooldownSeconds) { return }
+    }
+    $AlertState[$Key] = $now
+    Write-Log ('[alert] {0} :: {1}' -f $Title, $Body)
+
+    # 1) 控制台/日志兜底（Toast 失败也不至于静默）
+    Write-Host ''
+    Write-Host ('  [!] ' + $Title) -ForegroundColor Red
+    Write-Host ('      ' + $Body) -ForegroundColor Yellow
+    Write-Host ''
+
+    # 2) Windows 原生 Toast
+    #    pwsh 7 没有 WinRT 投影（[Windows.UI.Notifications...] 类型找不到），
+    #    因此转交 Windows PowerShell 5.1 子进程发送；用 -EncodedCommand(UTF-16LE)
+    #    传中文，避免 LoadXml 因编码问题抛 0xC00CE56D。
+    try {
+        # 单引号字符串内注入：转义 XML 特殊字符，并避免破坏外层单引号
+        $esc = { param($s) $s -replace '&', '&amp;' -replace '<', '&lt;' -replace '>', '&gt;' -replace "'", '&apos;' }
+        $tSafe = & $esc $Title
+        $bSafe = & $esc $Body
+        $XmlSafe = '<toast><visual><binding template="ToastGeneric"><text>' + $tSafe + '</text><text>' + $bSafe + '</text></binding></visual><audio src="ms-winsoundevent:Notification.Reminder"/></toast>'
+
+        $ps51 = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        if (-not (Test-Path -LiteralPath $ps51)) { throw "powershell.exe 5.1 not found: $ps51" }
+
+        $inner = @"
+try {
+  [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
+  [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null
+  `$x = New-Object Windows.Data.Xml.Dom.XmlDocument
+  `$x.LoadXml('$XmlSafe')
+  `$toast = New-Object Windows.UI.Notifications.ToastNotification `$x
+  [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe').Show(`$toast)
+} catch { }
+"@
+        $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($inner))
+        $p = Start-Process -FilePath $ps51 -ArgumentList @('-NoProfile', '-WindowStyle', 'Hidden', '-EncodedCommand', $enc) -WindowStyle Hidden -PassThru -Wait
+        if ($p.ExitCode -ne 0) { Write-Log ('[alert] toast exit {0}' -f $p.ExitCode) }
+    } catch {
+        Write-Log ('[alert] toast failed: {0}' -f $_.Exception.Message)
+    }
+}
+
 $mutex = New-Object System.Threading.Mutex($false, 'WProxyWatchdog')
 $acquired = $false
 try { $acquired = $mutex.WaitOne(1000) } catch [System.Threading.AbandonedMutexException] { $acquired = $true }
@@ -36,8 +89,8 @@ if (-not $acquired) { Write-Log 'Another watchdog instance is running. Exiting.'
 # Keeps the fastest healthy node selected: primary = phone relay (CMFA), fallbacks below.
 # When every node is unreachable, falls back to DIRECT so traffic degrades instead of erroring.
 # Any manually selected node outside this list pauses automatic switching.
-$PrimaryNode = 'Japan-PhoneRelay'
-$FallbackNodes = @('Japan-MacHy2', 'Japan-PhoneRelay2', 'Japan-MacMini', 'Japan-CF')
+$PrimaryNode = 'Japan-MacHy2'
+$FallbackNodes = @('Japan-CF')
 $FailSafeNode = 'DIRECT'
 $SwitchCheckSeconds = 30
 $FailThreshold = 2
@@ -148,7 +201,11 @@ function Invoke-AutoSwitchCheck {
         if ($script:primaryFails -ge $FailThreshold) {
             $fb = Select-AliveFallback
             if ($fb) { Set-CurrentNode $fb.name; Write-Log ('[auto] switched to fallback {0} ({1}ms)' -f $fb.name, $fb.delay) }
-            else { Set-CurrentNode $FailSafeNode; Write-Log ('[auto] primary {0} down and no fallback reachable; fail-safe -> {1}' -f $PrimaryNode, $FailSafeNode) }
+            else {
+                Set-CurrentNode $FailSafeNode
+                Write-Log ('[auto] primary {0} down and no fallback reachable; fail-safe -> {1}' -f $PrimaryNode, $FailSafeNode)
+                Send-Alert 'failsafe' '代理已全部失效，已回退直连' '所有日本节点都不可达，境外网站将无法访问。请检查 Mac mini 是否在线。'
+            }
             $script:primaryFails = 0
             $script:primaryRecovers = 0
             $script:slowCount = 0
@@ -163,6 +220,11 @@ function Invoke-AutoSwitchCheck {
         if ($script:primaryRecovers -ge $RecoverThreshold) {
             Set-CurrentNode $PrimaryNode
             Write-Log ('[auto] switched back to primary {0} ({1}ms)' -f $PrimaryNode, $pd)
+            # 从兜底直连恢复时也通知一次，让用户知道代理已恢复
+            if ($AlertState.ContainsKey('failsafe')) {
+                Send-Alert 'recovered' '代理已恢复' ('已切回 {0}（{1}ms），境外访问恢复正常。' -f $PrimaryNode, $pd)
+                $AlertState.Remove('failsafe')
+            }
             $script:primaryRecovers = 0
             $script:currentFails = 0
             $script:slowCount = 0
@@ -181,7 +243,11 @@ function Invoke-AutoSwitchCheck {
         if ($script:currentFails -ge $FailThreshold) {
             $fb = Select-AliveFallback
             if ($fb -and $fb.name -ne $current) { Set-CurrentNode $fb.name; Write-Log ('[auto] {0} dead {1}x; switched to {2} ({3}ms)' -f $current, $script:currentFails, $fb.name, $fb.delay) }
-            elseif (-not $fb) { Set-CurrentNode $FailSafeNode; Write-Log ('[auto] {0} dead and no fallback reachable; fail-safe -> {1}' -f $current, $FailSafeNode) }
+            elseif (-not $fb) {
+                Set-CurrentNode $FailSafeNode
+                Write-Log ('[auto] {0} dead and no fallback reachable; fail-safe -> {1}' -f $current, $FailSafeNode)
+                Send-Alert 'failsafe' '代理已全部失效，已回退直连' '所有日本节点都不可达，境外网站将无法访问。请检查 Mac mini 是否在线。'
+            }
             $script:currentFails = 0
         }
         return
@@ -201,6 +267,41 @@ function Invoke-AutoSwitchCheck {
     Invoke-DegradedSwitch $current $cd $reason
 }
 
+# ---- 系统代理归属：笔记本优先，其次本机 mihomo，都不可用才直连 ----
+$Reg = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings'
+$LaptopProxy = '192.168.5.5:7897'
+$LocalProxy = '127.0.0.1:7897'
+
+function Test-ProxyUrl([string]$addr) {
+    if (-not (Test-Path -LiteralPath $CurlExe)) { return $false }
+    $code = & $CurlExe --disable --silent --output NUL --write-out '%{http_code}' --connect-timeout 2 --max-time 6 `
+        --proxy ('http://' + $addr) --noproxy 'never-bypass.invalid' `
+        --url 'https://www.gstatic.com/generate_204' 2>$null
+    return ($LASTEXITCODE -eq 0 -and "$code" -eq '204')
+}
+
+function Set-SystemProxy([string]$addr) {
+    if ($addr) {
+        Set-ItemProperty $Reg ProxyEnable 1 -Type DWord
+        Set-ItemProperty $Reg ProxyServer $addr
+    } else {
+        Set-ItemProperty $Reg ProxyEnable 0 -Type DWord
+    }
+    $sig = 'using System;using System.Runtime.InteropServices;public class WR{[DllImport("wininet.dll")]public static extern bool InternetSetOption(IntPtr h,int o,IntPtr b,int l);public static void Go(){InternetSetOption(IntPtr.Zero,39,IntPtr.Zero,0);InternetSetOption(IntPtr.Zero,37,IntPtr.Zero,0);}}'
+    try { if (-not ('WR' -as [type])) { Add-Type -TypeDefinition $sig }; [WR]::Go() } catch {}
+}
+
+$script:laptopMiss = 0
+function Invoke-ProxyCheck {
+    # 2026-11-03 起：笔记本通道暂时废弃，出口固定走本机 mihomo（Japan-MacHy2）
+    $on = (Get-ItemProperty $Reg).ProxyEnable
+    $cur = (Get-ItemProperty $Reg).ProxyServer
+    if (Test-ProxyUrl $LocalProxy) {
+        if ($on -ne 1 -or $cur -ne $LocalProxy) { Set-SystemProxy $LocalProxy; Write-Log ('[sysproxy] -> ' + $LocalProxy) }
+        return
+    }
+    if ($on -ne 0) { Set-SystemProxy $null; Write-Log '[sysproxy] -> DIRECT' }
+}
 function Get-MihomoProcesses {
     Get-CimInstance Win32_Process -Filter "Name = 'mihomo.exe'" -ErrorAction SilentlyContinue |
         Where-Object { $_.CommandLine -and $_.CommandLine.Contains('wproxy') }
@@ -214,8 +315,16 @@ function Stop-Mihomo {
 }
 
 function Get-HysteriaProcesses {
+    # 2026-10-24：原来只用 CommandLine 过滤（要求包含 'wproxy'）。看门狗以
+    # LeastPrivilege 运行时，hysteria.exe 的 CommandLine 常为 NULL（提权/跨会话进程
+    # 读不到命令行），导致 alive 永远 False -> 看门狗每 10 秒杀一次并重启 hysteria，
+    # 反复刷 "hysteria check: alive=False listening=True"。
+    # 改为：优先按命令行匹配；命令行不可读时退化为按进程名匹配。
     Get-CimInstance Win32_Process -Filter "Name = 'hysteria.exe'" -ErrorAction SilentlyContinue |
-        Where-Object { $_.CommandLine -and $_.CommandLine.Contains('wproxy') }
+        Where-Object {
+            if ($_.CommandLine) { $_.CommandLine.Contains('wproxy') }
+            else { $true }
+        }
 }
 
 function Stop-Hysteria {
@@ -335,6 +444,7 @@ while ($true) {
 
         if ((Get-Date) -ge $nextSwitchCheck) {
             Invoke-AutoSwitchCheck
+            Invoke-ProxyCheck
             $nextSwitchCheck = (Get-Date).AddSeconds($SwitchCheckSeconds)
         }
 
@@ -344,3 +454,6 @@ while ($true) {
         Start-Sleep -Seconds 10
     }
 }
+
+
+
