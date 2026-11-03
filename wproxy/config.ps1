@@ -6,3 +6,4 @@ $ApiBase = "http://127.0.0.1:$ApiPort"
 $TaskName = 'WProxy'
 $MihomoExe = Join-Path $WproxyDir 'mihomo.exe'
 $PwshExe = Join-Path $PSHOME 'pwsh.exe'
+$StartupDelaySeconds = 45

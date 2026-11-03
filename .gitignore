@@ -1,4 +1,5 @@
 wproxy/mihomo.exe
+wproxy/hysteria.exe
 wproxy/wintun.dll
 wproxy/geosite.dat
 wproxy/geoip.metadb
@@ -6,9 +7,16 @@ wproxy/ui/
 wproxy/logs/
 wproxy/stop.request
 wproxy/cache.db
+wproxy/providers/
+# 含 hysteria2 认证口令，只留在本机
+wproxy/hysteria-client.yaml
 
 **/logs/
 *.log
 
 *.tmp
 *.bak
+
+mesh/data/
+mesh-rs/target/
+mesh-rs/data/

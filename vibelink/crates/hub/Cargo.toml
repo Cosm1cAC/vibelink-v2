@@ -1,0 +1,16 @@
+[package]
+name = "vibelink-hub"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+vibelink-protocol = { path = "../protocol" }
+serde.workspace = true
+serde_json.workspace = true
+axum = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time", "net", "io-util"] }
+# 只用来转发到本机 magpie（明文 HTTP），所以不要 TLS，省一堆依赖
+reqwest = { version = "0.12", default-features = false, features = ["stream"] }
+
+
+

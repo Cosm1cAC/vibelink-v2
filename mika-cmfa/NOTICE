@@ -1,0 +1,15 @@
+Mika
+Copyright 2026 wangzan101
+
+This distribution includes Clash Meta for Android (CMFA) v2.11.36
+and mihomo (commit 3f27ef39f8c96bbfbc8b0b9bb10f5c9ef60149d8),
+both Copyright (C) MetaCubeX and contributors, licensed under the
+GNU General Public License v3.0.
+
+The combined work is distributed under GPL-3.0. See LICENSE and
+licenses/GPL-3.0.txt.
+
+Corresponding source:
+- https://github.com/MetaCubeX/ClashMetaForAndroid/tree/v2.11.36
+- https://github.com/MetaCubeX/mihomo/tree/3f27ef39f8c96bbfbc8b0b9bb10f5c9ef60149d8
+- This repository, including third_party/ClashMetaForAndroid

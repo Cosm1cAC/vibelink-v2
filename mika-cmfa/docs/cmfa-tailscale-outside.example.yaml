@@ -1,0 +1,55 @@
+# 外出使用：CMFA 内置 Tailscale + 日本 Mac 出口
+# 把 <TAILSCALE_AUTH_KEY> 换成新生成的一次性 auth key（tskey-auth-...），
+# 然后在 CMFA 里导入本文件、选中、启动 VPN。
+# 手机不需要和 PC 在同一个局域网，热点/蜂窝都能用。
+mixed-port: 7890
+allow-lan: false
+mode: rule
+log-level: info
+ipv6: false
+
+dns:
+  enable: true
+  ipv6: false
+  listen: 0.0.0.0:1053
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  default-nameserver:
+    - 223.5.5.5
+    - 119.29.29.29
+  nameserver:
+    - https://doh.pub/dns-query
+    - https://dns.alidns.com/dns-query
+
+proxies:
+  # 手机自己加入 tailnet（CMFA 内置，不占用 Android 的第二个 VPN 槽）
+  - name: ts
+    type: tailscale
+    hostname: phone-mihomo
+    auth-key: <TAILSCALE_AUTH_KEY>
+    state-dir: ./ts-state
+    udp: true
+
+  # 日本 Mac 的 socks5，经 tailnet 直连
+  - name: japan
+    type: socks5
+    server: 100.105.59.31
+    port: 7891
+    udp: true
+    dialer-proxy: ts
+
+proxy-groups:
+  - name: PROXY
+    type: select
+    proxies:
+      - japan
+      - DIRECT
+
+rules:
+  # tailnet 目的地（PC/Mac 的 opencode 等）直连
+  - IP-CIDR,100.64.0.0/10,DIRECT,no-resolve
+  - IP-CIDR,192.168.0.0/16,DIRECT,no-resolve
+  - IP-CIDR,10.0.0.0/8,DIRECT,no-resolve
+  - IP-CIDR,172.16.0.0/12,DIRECT,no-resolve
+  - IP-CIDR,127.0.0.0/8,DIRECT,no-resolve
+  - MATCH,PROXY
