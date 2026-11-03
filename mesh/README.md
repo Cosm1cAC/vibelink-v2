@@ -99,6 +99,9 @@ node mesh/test/takeover.mjs
 node mesh/test/client.mjs
 ```
 
+测试直接跑 `.ts`：Node 23+ 默认支持；Node 22.x 需要给两条命令都加
+`--experimental-strip-types`（测试内部拉起的 hub/agent 也要用同一个 node）。
+
 ## 目录
 
 | 路径 | 作用 |
