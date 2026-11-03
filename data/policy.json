@@ -1,0 +1,30 @@
+{
+  "enabled": true,
+  "dryRun": true,
+  "rules": [
+    {
+      "id": "pc-follows-laptop",
+      "device": "pc-rs",
+      "egress": "laptop-rs",
+      "port": 7897,
+      "fallback": "127.0.0.1:7897",
+      "enabled": true
+    }
+  ],
+  "watchdogs": [
+    {
+      "id": "laptop-hysteria",
+      "device": "laptop-rs",
+      "service": "WProxyHysteria",
+      "port": 1082,
+      "enabled": true
+    },
+    {
+      "id": "laptop-mihomo",
+      "device": "laptop-rs",
+      "service": "WProxy",
+      "port": 7897,
+      "enabled": true
+    }
+  ]
+}

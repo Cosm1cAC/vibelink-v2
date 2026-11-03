@@ -1,0 +1,88 @@
+[
+  {
+    "id": "laptop-rs",
+    "hostname": "DESKTOP-9M0BU3H",
+    "platform": "windows Microsoft Windows [�汾 10.0.26200.9711]",
+    "arch": "x86_64",
+    "agentVersion": "0.1.0",
+    "ips": [
+      "100.123.253.85",
+      "192.168.137.156"
+    ],
+    "gateway": "192.168.137.1",
+    "proxy": {
+      "enabled": true,
+      "server": "127.0.0.1:7897"
+    },
+    "ports": {
+      "1082": true,
+      "18995": false,
+      "4096": false,
+      "4097": false,
+      "7890": false,
+      "7897": true
+    },
+    "opencode": null,
+    "latency": {
+      "target": "127.0.0.1:7897",
+      "tcpMs": 1,
+      "connectMs": 0
+    },
+    "mem": {
+      "free": 6162,
+      "total": 16163
+    },
+    "uptimeSec": 7272,
+    "note": null,
+    "firstSeen": 1793332636245,
+    "lastSeen": 1793332641330,
+    "online": true,
+    "ageMs": 0
+  },
+  {
+    "id": "pc-rs",
+    "hostname": "HAOSHAO",
+    "platform": "windows Microsoft Windows [�汾 10.0.26300.9711]",
+    "arch": "x86_64",
+    "agentVersion": "0.1.0",
+    "ips": [
+      "100.98.206.126",
+      "172.17.16.1",
+      "172.18.208.1",
+      "172.23.208.1",
+      "172.24.64.1",
+      "172.26.0.1",
+      "192.168.137.1",
+      "192.168.86.197"
+    ],
+    "gateway": "192.168.80.1",
+    "proxy": {
+      "enabled": true,
+      "server": "192.168.137.156:7897"
+    },
+    "ports": {
+      "1082": false,
+      "18995": true,
+      "4096": true,
+      "4097": true,
+      "7890": true,
+      "7897": true
+    },
+    "opencode": 4096,
+    "latency": {
+      "target": "192.168.137.156:7897",
+      "tcpMs": 3,
+      "connectMs": 3
+    },
+    "mem": {
+      "free": 24894,
+      "total": 65303
+    },
+    "uptimeSec": 588113,
+    "note": null,
+    "firstSeen": 1793332610231,
+    "lastSeen": 1793346324557,
+    "online": true,
+    "ageMs": 0
+  }
+]

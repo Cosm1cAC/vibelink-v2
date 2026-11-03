@@ -1,7 +1,9 @@
 # Android 手机接入（ClashMetaForAndroid + mihomo 内置 Tailscale 出站）
 
-手机全流量（含 UDP）经 Tailscale 从日本 Mac 出口，规则与 Windows wproxy 一致（国内直连，其余走日本）。
+手机全流量经 Tailscale 从日本 Mac 出口，规则与 Windows wproxy 一致（**默认直连，需要外网的才代理**）。
 **只装一个 App**，不占用双 VPN 槽（Android 同一时刻只允许一个 VPN 服务，Tailscale App 与 Clash 类 TUN 不能共存）。
+
+> ⚠️ 2026-10-11：Mac 侧 socks-relay 的 UDP 分支实测不通，因此手机上的 UDP 流量目前也无法经代理出口。
 
 ## 原理
 
@@ -9,8 +11,11 @@ CMFA（ClashMetaForAndroid，mihomo 官方安卓客户端，v2.11.35 起）内�
 （userspace 入网，无需系统 Tailscale），配置里：
 
 - `Tailscale` 节点：auth-key 登录你的 tailnet（单次使用，注册后 state 持久化）
-- `Japan-MacMini` 节点：socks5 `100.105.59.31:7891`，`dialer-proxy: Tailscale`（经 tailnet 拨号，TCP+UDP）
-- 规则：`100.64.0.0/10 → Tailscale`（手机内其他 App 也能访问 tailnet）、国内域名/IP 直连、`MATCH → PROXY`
+- `Japan-MacMini` 节点：socks5 `100.105.59.31:7891`，`dialer-proxy: Tailscale`（经 tailnet 拨号，**TCP 可用，UDP 待修**）
+- 规则：`100.64.0.0/10 → Tailscale`（手机内其他 App 也能访问 tailnet）、`tailscale.com → PROXY`、
+  `GEOSITE geolocation-!cn → PROXY`（非中国大陆域名）、`MATCH → DIRECT`（默认直连）
+- DNS：`fallback-filter` 只按 `geosite: gfw` + `240.0.0.0/4` 走境外解析器，
+  其余域名用 doh.pub / alidns 直解析，代理挂了也不会整体 DNS 卡死
 
 ## 配置分发（长期）
 

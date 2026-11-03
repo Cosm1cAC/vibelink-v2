@@ -11,7 +11,7 @@ Mac 后台监控数据源：**无 sudo、stdlib-only 的 Python 指标代理**�
 | 内存 | `vm_stat` 页统计 + `sysctl hw.memsize` + `vm.swapusage` | **Activity Monitor 口径**：used = App(匿名−可清除) + Wired + Compressed；另给出文件缓存与 Swap；面板点击「内存」行可展开明细 |
 | 硬盘 | `df -k /System/Volumes/Data` | Data 卷才是真实占用（系统卷是只读封存卷） |
 | 带宽 | `netstat -ib` 计数器每秒差分 | 汇总只算物理网卡（en*），避免 Tailscale 虚拟网卡重复计数 |
-| 延迟 | TCP connect 计时（1.1.1.1 / 8.8.8.8 / 223.5.5.5 :443） | ICMP ping 需要 root，TCP connect 等价可用 |
+| 延迟 | 直连国内（223.5.5.5:443 TCP）+ 代理链路（到 cp.cloudflare.com 的真实请求） | 四端统一口径（与 metrics-hub / phone-metrics 一致）；Mac 即出口，代理链路为直连 |
 | 负载/开机时长 | `vm.loadavg` / `kern.boottime` | |
 
 - 纯 stdlib（`http.server`），运行在系统签名的 python3 上（ALF 放行入站）；**仅监听 Tailscale IP** `100.105.59.31:18992`，不暴露公网。
@@ -45,7 +45,7 @@ Windows 看门狗（`macos-socks-proxy/ssh-proxy.ps1`，计划任务 `MacSocksPr
 
 ## 验证记录（2026-10-06）
 
-- ✅ `curl http://100.105.59.31:18992/metrics` 返回完整 JSON：cpu=3.5%、gpu=3%、mem=10.8G/16G、disk=28.2%、net rx/tx、latency 1.1.1.1=14.8ms / 8.8.8.8=16.1ms / 223.5.5.5=23.6ms
+- ✅ `curl http://100.105.59.31:18992/metrics` 返回完整 JSON：cpu=3.5%、gpu=3%、mem=10.8G/16G、disk=28.2%、net rx/tx、latency 直连国内=23.6ms / 代理链路=36ms（2026-10-07 统一口径后实测）
 - ✅ launchd 守护运行（`com.mac-metrics`），Windows 看门狗已纳入守护列表
 - ✅ mihomo 已验证可向浏览器提供补丁后的 `/ui/`（含 mac-monitor.js）
 

@@ -1,0 +1,86 @@
+# CMFA 手机配置 —— 走 PC 热点网关（PC:7890 -> 笔记本:7897 -> AUTO-DORM -> HY2）
+# 用法：CMFA -> 配置 -> 从 URL 导入 -> http://192.168.137.1:8080/cmfa-lan-gateway.yaml
+# 注意：用了这个配置就把 Wi-Fi 里的"手动代理"关掉，否则两层代理叠加会报 SSL 证书错误。
+mode: rule
+log-level: info
+ipv6: false
+unified-delay: true
+tcp-concurrent: true
+find-process-mode: "off"
+geodata-mode: false
+geo-auto-update: false
+geox-url:
+  mmdb: "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.metadb"
+  asn: "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/GeoLite2-ASN.mmdb"
+  geoip: "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.dat"
+  geosite: "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geosite.dat"
+profile:
+  store-selected: true
+  store-fake-ip: true
+dns:
+  enable: true
+  listen: 127.0.0.1:1055
+  ipv6: false
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  use-hosts: true
+  use-system-hosts: true
+  respect-rules: false
+  default-nameserver:
+    - 223.5.5.5
+    - 119.29.29.29
+  proxy-server-nameserver:
+    - 223.5.5.5
+    - 119.29.29.29
+  nameserver:
+    - https://doh.pub/dns-query
+    - https://dns.alidns.com/dns-query
+  fallback:
+    - https://1.1.1.1/dns-query#PROXY
+    - https://8.8.8.8/dns-query#PROXY
+  fallback-filter:
+    geosite:
+      - gfw
+    ipcidr:
+      - 240.0.0.0/4
+  fake-ip-filter:
+    - "+.lan"
+    - "+.local"
+    - "+.localhost"
+    - "+.mshome.net"
+    - "+.ts.net"
+    - "dns.msftncsi.com"
+    - "www.msftncsi.com"
+    - "www.msftconnecttest.com"
+    - "captive.apple.com"
+    - "connectivitycheck.gstatic.com"
+    - "detectportal.firefox.com"
+    - "nmcheck.gnome.org"
+    - "network-test.debian.org"
+    - "+.pool.ntp.org"
+    - "time.apple.com"
+    - "time.asia.apple.com"
+    - "time.windows.com"
+    - "ntp.aliyun.com"
+    - "ntp.tencent.com"
+proxies:
+  # netsh portproxy 只转发 TCP，所以 udp 关掉；UDP/QUIC 走 DIRECT
+  - name: "LAN-Gateway"
+    type: http
+    server: 192.168.137.1
+    port: 7890
+    udp: false
+proxy-groups:
+  - name: "PROXY"
+    type: select
+    proxies:
+      - "LAN-Gateway"
+      - "DIRECT"
+rules:
+  - IP-CIDR,100.64.0.0/10,DIRECT,no-resolve
+  - GEOIP,private,DIRECT
+  - DOMAIN-SUFFIX,mshome.net,DIRECT
+  - DOMAIN-SUFFIX,tailscale.com,DIRECT
+  - GEOSITE,cn,DIRECT
+  - GEOIP,CN,DIRECT
+  - MATCH,PROXY
