@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url'
 import { startControl } from '../agent/control.ts'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const NODE_FLAGS = process.execArgv.filter((a) => a === '--experimental-strip-types')
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 const allocatedPorts = new Set()
@@ -78,7 +79,7 @@ async function startFakeAgent(port) {
 
 async function startHub(port, dataDir) {
   let stderr = ''
-  const child = spawn(process.execPath, ['hub/server.ts'], {
+  const child = spawn(process.execPath, [...NODE_FLAGS, 'hub/server.ts'], {
     cwd: ROOT,
     env: { ...process.env, MESH_PORT: String(port), MESH_DATA: dataDir },
     stdio: ['ignore', 'pipe', 'pipe']
@@ -103,7 +104,7 @@ async function startHub(port, dataDir) {
 }
 
 async function startAgent(base, token, device, controlPort, reclaimMs = '0') {
-  const child = spawn(process.execPath, ['agent/agent.ts'], {
+  const child = spawn(process.execPath, [...NODE_FLAGS, 'agent/agent.ts'], {
     cwd: ROOT,
     env: {
       ...process.env,
