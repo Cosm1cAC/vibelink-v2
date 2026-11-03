@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mesh · 多设备控制面</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="dot" id="hub-dot"></span>mesh<span class="ver" id="hub-ver"></span></div>
+  <div class="meta" id="hub-meta">connecting…</div>
+  <button class="ghost" id="copy-mobile" title="复制带 token 的手机接管链接">手机接管</button>
+  <div class="token-box">
+    <input id="token" type="password" placeholder="hub token" autocomplete="off">
+    <button id="save-token">保存</button>
+  </div>
+</header>
+
+<main>
+  <section class="panel topology-panel">
+    <div class="panel-head"><h2>拓扑</h2><span class="hint" id="topo-hint"></span></div>
+    <div class="topology" id="topology">
+      <div class="hub-node"><b>HUB</b><small id="hub-addr"></small></div>
+      <div class="devices-row" id="devices-row"></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head"><h2>设备</h2><span class="hint">点击卡片展开动作</span></div>
+    <div class="cards" id="cards"></div>
+  </section>
+
+  <section class="panel two-col">
+    <div>
+      <div class="panel-head"><h2>配置版本库</h2><span class="hint">/phone/&lt;name&gt;?t=token</span></div>
+      <div id="configs" class="configs"></div>
+      <form id="upload" class="upload">
+        <input id="cfg-name" placeholder="名字，例如 cmfa-lan-gateway.yaml" required>
+        <textarea id="cfg-body" placeholder="粘贴配置内容…" rows="6" required></textarea>
+        <button type="submit">上传新版本</button>
+      </form>
+    </div>
+    <div>
+      <div class="panel-head"><h2>事件</h2><span class="hint">最近 80 条</span></div>
+      <ul id="events" class="events"></ul>
+    </div>
+  </section>
+</main>
+
+<div id="toast" class="toast"></div>
+<script src="/app.js"></script>
+</body>
+</html>
