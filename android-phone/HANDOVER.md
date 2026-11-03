@@ -27,7 +27,7 @@
 5. 验证：
    - 主 PC 上 `tailscale status` 出现 `phone-mihomo` 在线（tsnode 注册成功）
    - 手机浏览器开 `https://api.ipify.org` 返回 `130.62.209.98`（日本出口）
-   - 手机浏览器开 `http://100.74.71.80:4096` 能进 opencode（basic auth：用户名 `opencode`，密码见主 PC 的 `%USERPROFILE%\.config\opencode-server\password`，当前为 `[REMOVED_CREDENTIAL]`）
+   - 手机浏览器开 `http://100.98.206.126:4096` 能进 opencode（basic auth：用户名 `opencode`，密码见主 PC 的 `%USERPROFILE%\.config\opencode-server\password`，当前为 `[REMOVED_CREDENTIAL]`）
 
 ## 长期配置更新（可选，先不急）
 
@@ -39,3 +39,18 @@ Mac 上有订阅服务 `http://100.105.59.31:18991/phone-config.yaml`（LaunchAg
 - wproxy（mihomo）：新增出口节点 `Japan-MacUser`（Mac userspace Tailscale 节点 100.86.50.115）、`Japan-CF`（Cloudflare Tunnel `socks.vibelink.cloud`，PC 侧 `127.0.0.1:7892`）、`Japan-Ngrok`（`127.0.0.1:1081`）；规则新增 `DOMAIN-SUFFIX,tailscale.com,PROXY`；本机口 7897 免认证，局域网共享口 **7898**（带认证）
 - 手机如果在家同 WiFi，也可临时用主 PC 的共享代理 `http://wproxy:[REMOVED_CREDENTIAL]@192.168.86.20:7898`（opencode 不读该环境变量，仅浏览器/curl 等可用）
 - 注意：仓库里 `captive-portal/` 与 `yto-portal-auth/` 是重复的 yto2022 重登看门狗；`yto-portal-auth` 是实测可用版本（密码已更正），建议停掉另一个的启动项，避免双重登录
+
+## 2026-10-07 晚间更新：CMFA 变成主 PC 的中继（已上线）
+
+- 发现：手机 CMFA 的 tsnode（`phone-mihomo-1`）到 Mac 是**直连**（~130ms），比 PC→Mac 的 DERP 中继（220–450ms）快，且 CMFA 作为 VPN 常驻、比 Termux 稳定
+- 方案：主 PC wproxy 新增节点：
+  - `PhoneEntry`：socks5 手机热点 IP `192.168.137.104:7890`（CMFA 混合端口；需 CMFA → **覆寫（Override）** 页开「允許來自區域網路的連線」，v2.11.35 不在「網路」页）
+  - `Japan-PhoneRelay`：socks5 Mac `100.105.59.31:7891` + `dialer-proxy: PhoneEntry`
+- 实测 `Japan-PhoneRelay` 138–150ms（全节点最快），已设为自动切换主节点（策略内嵌 `wproxy/mihomo-run.ps1`，兜底 MacMini → CF，30s 探测、2 次失败切换）
+- 注意：
+  - 手机 WiFi 休眠会令中继抖动（Mac 侧曾见 `phone-mihomo-1 offline 5m`）→ 建议 CMFA 关闭电池优化 + 系统 WLAN「休眠时保持连接」
+  - 手机热点 IP 为 DHCP，可能变化；变化后更新 `wproxy/config.yaml` 的 `PhoneEntry.server` 并 `.\wproxy.ps1 -Action reload`
+  - 经 Mac 的隧道单流吞吐 ~100KB/s（跨境段丢包，非手机问题）；延迟才是中继的收益点
+- Termux 备用链路（`Japan-PhoneRelay2`）当前不可用：手动启动的 tailscaled 缺 `--socks5-server=localhost:1055`。如需启用：
+  `pkill tailscaled; nohup tailscaled --tun=userspace-networking --socks5-server=localhost:1055 --socket=$HOME/.tailscale/tailscaled.sock --statedir=$HOME/.tailscale > ~/tailscaled.log 2>&1 &`
+  然后重跑 `tailscale serve --bg --tcp=18080 tcp://127.0.0.1:1055`

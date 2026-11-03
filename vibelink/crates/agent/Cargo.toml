@@ -1,0 +1,11 @@
+[package]
+name = "vibelink-agent"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+vibelink-protocol = { path = "../protocol" }
+serde.workspace = true
+serde_json.workspace = true
+if-addrs = "0.13"
+sysinfo = "0.33"

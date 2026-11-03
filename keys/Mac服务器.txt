@@ -1,0 +1,11 @@
+host: 100.105.59.31
+port: 22
+user: kobayashi
+password: kobayashi
+platform: darwin
+workspace: /Users/kobayashi/tbs-science/eval-site
+harbor: /Users/kobayashi/tbs-science/runtimes/harbor-modal-0.22.0/bin/harbor
+path: /Users/kobayashi/bin:/Users/kobayashi/.local/lima/bin:/Users/kobayashi/.local/bin
+name: Mac mini
+container_proxy: http://192.168.5.2:7892
+magpie_gateway: http://127.0.0.1:3425/v1

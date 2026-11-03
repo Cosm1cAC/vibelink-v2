@@ -3,7 +3,7 @@
 #
 # 安装（Termux 里执行一次）：
 #   pkg install -y curl
-#   curl -sL http://100.74.71.80:18993/static/phone-metrics.sh -o ~/phone-metrics.sh
+#   curl -sL http://100.98.206.126:18993/static/phone-metrics.sh -o ~/phone-metrics.sh
 #   chmod +x ~/phone-metrics.sh
 #   termux-wake-lock
 #   nohup ~/phone-metrics.sh >> ~/phone-metrics.log 2>&1 &
@@ -21,7 +21,7 @@
 # - 运行日志：~/phone-metrics.log（只在出错时写诊断）
 # - Hub 地址/设备 ID 可覆盖: HUB=... ID=... ~/phone-metrics.sh
 
-HUB="${HUB:-http://100.74.71.80:18993}"
+HUB="${HUB:-http://100.98.206.126:18993}"
 INTERVAL="${INTERVAL:-5}"
 IDFILE="$HOME/.metrics-id"
 
@@ -80,6 +80,13 @@ read_net() {
       esac
     done 2>/dev/null < /proc/net/dev
   fi
+  # SELinux 下 sysfs/proc 常被拒（-r 只看权限位不反映 MAC），退到 netlink
+  if [ "${rx:-0}" -eq 0 ] && [ "${tx:-0}" -eq 0 ] && command -v ip >/dev/null 2>&1; then
+    ipout=$(ip -s link show wlan0 2>/dev/null)
+    r=$(printf '%s\n' "$ipout" | awk '/RX:/{getline; print $1; exit}')
+    t=$(printf '%s\n' "$ipout" | awk '/TX:/{getline; print $1; exit}')
+    case "$r" in ''|*[!0-9]*) ;; *) rx=$r; tx=${t:-0}; netsrc="netlink" ;; esac
+  fi
 }
 
 tcp_ms() {
@@ -133,6 +140,14 @@ while true; do
   fi
   prev_rx=$rx; prev_tx=$tx; prev_t=$now
 
+  # sysfs/proc/netlink 均被 SELinux 拒绝时，用 CMFA 内核 API 的实时速率（本机 9090，非流式读取 2s）
+  if [ "${rx:-0}" -eq 0 ] && [ "${tx:-0}" -eq 0 ]; then
+    mtraffic=$(curl -s -m 2 http://127.0.0.1:9090/traffic 2>/dev/null | tail -n 1)
+    mu=$(printf '%s' "$mtraffic" | sed -n 's/.*"up":\([0-9][0-9]*\).*/\1/p')
+    md=$(printf '%s' "$mtraffic" | sed -n 's/.*"down":\([0-9][0-9]*\).*/\1/p')
+    if [ -n "$md" ]; then rx_bps=$md; tx_bps=${mu:-0}; netsrc="mihomo"; fi
+  fi
+
   batt=""; bstat=""
   for c in /sys/class/power_supply/*/capacity; do
     if [ -r "$c" ]; then batt=$(cat "$c" 2>/dev/null); break; fi
@@ -147,17 +162,29 @@ while true; do
   fi
 
   if [ $((now - lat_t)) -ge 15 ]; then
-    # 用 curl 测首字节：经 VPN 的目标若用 /dev/tcp 只能测到本地 TUN 接收，不是真实链路
-    l1=$(curl -s -o /dev/null -m 8 -w '%{time_starttransfer}' http://www.baidu.com/ 2>/dev/null | awk '{printf "%.0f", $1*1000}')
+    # 统一口径：直连国内（223.5.5.5:443 TCP 握手）/ 代理链路（经 CMFA 链路到目标的真实请求 TTFB）
+    l1=$(tcp_ms 223.5.5.5 443)
     l2=$(curl -s -o /dev/null -m 8 -w '%{time_starttransfer}' http://cp.cloudflare.com/generate_204 2>/dev/null | awk '{printf "%.0f", $1*1000}')
-    lat_cache="\"直连百度\":${l1:-null},\"代理Cloudflare\":${l2:-null}"
+    lat_cache="\"直连国内\":${l1:-null},\"代理链路\":${l2:-null}"
     lat_t=$now
   fi
 
   disk_pct=$(awk -v u="${disk_used:-0}" -v t="${disk_total:-0}" 'BEGIN{ if(t>0) printf "%.1f", u*100/t; else print "null" }')
 
+  link_mbps=""
+  for sp in /sys/class/net/wlan*/speed; do
+    if [ -r "$sp" ]; then
+      v=$(cat "$sp" 2>/dev/null)
+      case "$v" in ''|*[!0-9]*) ;; *) link_mbps="$v"; break ;; esac
+    fi
+  done
+  # sysfs 被 SELinux 拒时，用 Termux:API 取 WiFi 链路速率
+  if [ -z "$link_mbps" ] && command -v termux-wifi-connectioninfo >/dev/null 2>&1; then
+    link_mbps=$(termux-wifi-connectioninfo 2>/dev/null | tr -d ' \n' | sed -n 's/.*"link_speed_mbps":\([0-9][0-9]*\).*/\1/p')
+  fi
+
   json=$(cat <<EOF
-{"id":"$ID","name":"$MODEL","platform":"android","metrics":{"host":"$MODEL","model":"Android","platform":"android","boot_time":null,"uptime_s":${uptime_s:-0},"ncpu":${NC:-4},"cpu_pct":${cpu:-null},"queue":null,"load":$load_json,"gpu":null,"mem":{"total":${mem_total:-0},"used":${mem_used:-0}},"disk":{"mount":"/data","total":${disk_total:-0},"used":${disk_used:-0},"used_pct":${disk_pct:-null}},"net":{"rx_bps":${rx_bps:-0},"tx_bps":${tx_bps:-0},"src":"${netsrc:-none}"},"latency":{$lat_cache},"battery":${batt:-null},"charging":"$bstat"}}
+{"id":"$ID","name":"$MODEL","platform":"android","metrics":{"host":"$MODEL","model":"Android","platform":"android","boot_time":null,"uptime_s":${uptime_s:-0},"ncpu":${NC:-4},"cpu_pct":${cpu:-null},"queue":null,"load":$load_json,"gpu":null,"mem":{"total":${mem_total:-0},"used":${mem_used:-0}},"disk":{"mount":"/data","total":${disk_total:-0},"used":${disk_used:-0},"used_pct":${disk_pct:-null}},"net":{"rx_bps":${rx_bps:-0},"tx_bps":${tx_bps:-0},"src":"${netsrc:-none}"},"link_mbps":${link_mbps:-null},"latency":{$lat_cache},"battery":${batt:-null},"charging":"$bstat"}}
 EOF
 )
   resp=$(curl -s -m 10 --retry 2 --retry-delay 1 --retry-all-errors -o "$HOME/.phone-metrics.resp" -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data-binary "$json" "$HUB/ingest")

@@ -30,7 +30,9 @@
   var devices = [], lastTs = 0, hubOk = null, linkRtt = null, inflight = false;
   var hist = {};
   var cards = {};
-  var pageOpen = localStorage.getItem('wproxyMonitorPage') === '1';
+  var pageOpen = false;
+  var hashAtOpen = '';
+  var linkUnit = localStorage.getItem('wproxyLinkUnit') === 'MBs' ? 'MBs' : 'Mbps';
 
   var navMenu = null, navItem = null, navIndicator = null;
   var mobileBtn = null, tabBar = null, tabIndicator = null;
@@ -50,6 +52,14 @@
   function fmtUptime(up) {
     if (up === null || up === undefined || up === 0) return '--';
     return up >= 86400 ? (up / 86400).toFixed(1) + 'd' : (up / 3600).toFixed(1) + 'h';
+  }
+  function fmtLink(mbps) {
+    if (!mbps) return '--';
+    if (linkUnit === 'MBs') {
+      var mbs = mbps / 8;
+      return (mbs >= 100 ? mbs.toFixed(0) : mbs.toFixed(1)) + ' MB/s';
+    }
+    return mbps >= 1000 ? (mbps / 1000).toFixed(1) + ' Gbps' : Math.round(mbps) + ' Mbps';
   }
   function escapeHtml(s) {
     return String(s === null || s === undefined ? '' : s)
@@ -126,6 +136,7 @@
       '.wproxy-line span:last-child { font-variant-numeric:tabular-nums; }',
       '.wproxy-link.direct { color:#2fbf71; }',
       '.wproxy-link.relay { color:#e8a33d; }',
+      '.wproxy-link.bad { color:#ff453a; }',
       '.wproxy-extra { margin-top:.15rem; }',
       '.wproxy-foot { margin-top:1rem; font-size:.72rem; color:color-mix(in srgb, var(--color-base-content) 40%, transparent); text-align:right; }',
       '@media (prefers-reduced-motion: reduce){ .wproxy-bar i{ transition:none; } }'
@@ -177,6 +188,7 @@
     if (!ref) return false;
     var btn = ref.cloneNode(true);
     btn.removeAttribute('aria-current');
+    btn.removeAttribute('href');
     var icon = btn.querySelector('svg');
     if (icon) icon.outerHTML = MONITOR_ICON_TAB;
     var label = btn.querySelector('span');
@@ -234,6 +246,7 @@
     '  <div class="wproxy-detail" data-f="mem-detail" style="display:none"></div>',
     '  <div class="wproxy-row"><span class="k">硬盘</span><div class="wproxy-metric"><span class="wproxy-val" data-f="disk"></span><div class="wproxy-bar"><i data-f="disk-bar" style="background:#e8a33d"></i></div></div></div>',
     '  <div class="wproxy-row"><span class="k">带宽</span><div class="wproxy-metric"><span class="wproxy-val" data-f="net"></span><div class="wproxy-bar" style="visibility:hidden"></div><canvas class="wproxy-spark" data-f="net-sp" width="144" height="36"></canvas></div></div>',
+    '  <div class="wproxy-row"><span class="k">上限</span><div class="wproxy-metric"><span class="wproxy-val wproxy-clickable" data-f="link" title="带宽上限（网卡链路速率）· 点击切换 Mbps / MB/s"></span></div></div>',
     '  <div data-f="lat"></div>',
     '  <div class="wproxy-line wproxy-extra"><span data-f="extra"></span><span></span></div>',
     '</div>'
@@ -253,8 +266,19 @@
       refs.memOpen = !refs.memOpen;
       refs['mem-detail'].style.display = refs.memOpen ? 'grid' : 'none';
     });
+    refs.link.addEventListener('click', function (e) {
+      e.stopPropagation();
+      linkUnit = linkUnit === 'MBs' ? 'Mbps' : 'MBs';
+      localStorage.setItem('wproxyLinkUnit', linkUnit);
+      if (lastData) renderPage(lastData);
+    });
     cards[id] = refs;
     return refs;
+  }
+
+  function markOffline(refs) {
+    refs.root.classList.add('off');
+    refs.root.querySelector('.cage').textContent = '离线';
   }
 
   function updateCard(refs, dev, ts) {
@@ -303,21 +327,20 @@
     push(hh.net, (rx + tx) / 1024);
     refs.net.textContent = '↓' + fmtRate(rx) + '  ↑' + fmtRate(tx);
     spark(refs['net-sp'], hh.net, '#3ac9d6');
+    refs.link.textContent = fmtLink(m.link_mbps);
 
     var lat = m.latency || {};
     var latHtml = '';
-    var linkLabel = dev.platform === 'macos' ? '到 Hub' : '到 Mac';
-    var lk = dev.link;
-    if (lk && lk.path === 'direct') {
-      latHtml += '<div class="wproxy-line"><span>' + linkLabel + '</span><span class="wproxy-link direct">' + (lk.via === 'ipv6' ? '直连(IPv6) ' : '直连 ') + lk.ms + ' ms</span></div>';
-    } else if (lk && lk.path === 'relay') {
-      latHtml += '<div class="wproxy-line"><span>' + linkLabel + '</span><span class="wproxy-link relay">中继(' + escapeHtml(lk.via || '') + ') ' + lk.ms + ' ms</span></div>';
-    } else {
-      latHtml += '<div class="wproxy-line"><span>' + linkLabel + '</span><span class="wproxy-link">--</span></div>';
+    function latSpan(key, val) {
+      if (val === null || val === undefined) return '<span>--</span>';
+      var cls = '';
+      if (key.indexOf('代理链路') === 0) {
+        cls = val <= 800 ? ' class="wproxy-link direct"' : (val <= 1500 ? ' class="wproxy-link relay"' : ' class="wproxy-link bad"');
+      }
+      return '<span' + cls + '>' + val + ' ms</span>';
     }
     Object.keys(lat).forEach(function (key) {
-      var lv = lat[key];
-      latHtml += '<div class="wproxy-line"><span>' + escapeHtml(key) + '</span><span>' + (lv === null || lv === undefined ? '--' : lv + ' ms') + '</span></div>';
+      latHtml += '<div class="wproxy-line"><span>' + escapeHtml(key) + '</span>' + latSpan(key, lat[key]) + '</div>';
     });
     refs.lat.innerHTML = latHtml;
 
@@ -340,7 +363,7 @@
       updateCard(ensureCard(dev.id), dev, data.ts || 0);
     }
     Object.keys(cards).forEach(function (id) {
-      if (!seen[id]) { cards[id].root.remove(); delete cards[id]; }
+      if (!seen[id]) markOffline(cards[id]);
     });
     var onlineCount = list.filter(function (d) { return d.online !== false; }).length;
     pageStatus.classList.toggle('off', !hubOk);
@@ -349,14 +372,13 @@
       : 'Hub 离线';
     overlay.querySelector('#wproxy-mon-status-text').textContent = stText;
     overlay.querySelector('#wproxy-mon-foot').textContent =
-      '数据源 metrics-hub · 刷新 ' + CFG.refreshMs / 1000 + 's · ' +
-      (linkRtt === null ? '' : linkRtt + 'ms') +
+      '直连国内 = 223.5.5.5:443 TCP · 代理链路 = 到目标的真实请求耗时（含握手） · 上限 = 网卡链路速率 ｜ 数据源 metrics-hub · 刷新 ' + CFG.refreshMs / 1000 + 's' +
       (data && data.ts ? ' · ' + new Date(data.ts * 1000).toLocaleTimeString() : '');
   }
 
   function openPage() {
     pageOpen = true;
-    localStorage.setItem('wproxyMonitorPage', '1');
+    hashAtOpen = location.hash;
     if (ensureOverlay() && lastData) renderPage(lastData);
     else if (ensureOverlay() && devices.length) renderPage({ ts: lastTs, devices: devices });
     applyState();
@@ -364,7 +386,6 @@
 
   function closePage() {
     pageOpen = false;
-    localStorage.setItem('wproxyMonitorPage', '0');
     applyState();
   }
 
@@ -391,6 +412,7 @@
     setTimeout(function () { syncQueued = false; sync(); }, 200);
   }
   function sync() {
+    if (pageOpen && location.hash !== hashAtOpen) closePage();
     injectStyles();
     injectNav();
     injectMobileTab();
@@ -438,6 +460,11 @@
   });
 
   function boot() {
+    document.addEventListener('click', function (e) {
+      if (!pageOpen) return;
+      var el = e.target;
+      if (el && el.closest && el.closest('a[href]')) closePage();
+    }, true);
     sync();
     new MutationObserver(scheduleSync).observe(document.documentElement, { childList: true, subtree: true });
     setInterval(sync, 3000);

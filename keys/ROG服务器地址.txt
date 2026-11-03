@@ -1,0 +1,10 @@
+host: 192.168.0.227
+port: 22
+user: kobayashi
+password: kanna191
+name: ROG Linux 32GB
+platform: linux
+workspace: /opt/tb-science/cloud1/eval-site
+harbor: /opt/tb-science/cloud1/runtime/bin/harbor
+path: /opt/tb-science/cloud1/tools:/usr/local/bin:/usr/bin:/bin
+ssh_proxy: socks5://100.105.59.31:7891

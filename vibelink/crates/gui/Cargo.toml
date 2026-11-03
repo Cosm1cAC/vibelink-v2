@@ -1,0 +1,14 @@
+[package]
+name = "vibelink-gui"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+vibelink-protocol = { path = "../protocol" }
+serde.workspace = true
+serde_json.workspace = true
+eframe = { version = "0.37", default-features = false, features = ["glow", "default_fonts"] }
+tray-icon = "0.26"
+
+
+

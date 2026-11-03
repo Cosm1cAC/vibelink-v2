@@ -1,0 +1,21 @@
+# 2026-10-29：本机已迁到 HAOSHAO PC；本文件就是本机（云端③）的凭据。
+# 100.98.206.126:2222 由 Windows portproxy 转到 WSL 172.17.22.252:2222。
+host: 100.98.206.126
+port: 2222
+user: tbs
+password: TbsPc-Cloud3-9fK2mQ7v
+name: HAOSHAO PC
+platform: linux
+workspace: /home/tbs/tbs-science/eval-site
+harbor: /home/tbs/.local/bin/harbor
+path: /home/tbs/.local/bin:/usr/local/bin:/usr/bin:/bin
+# container_proxy 已停用（2026-10-26）：host.docker.internal:7899 的代理下载大包必断，agent 安装 apt-get install 会失败；容器直连外网稳定，改为直连。
+# 2026-10-28 重新启用：容器 -> Windows 7900 -> WSL 7899 直连
+container_proxy: http://host.docker.internal:7900
+container_proxy_https: http://host.docker.internal:7900
+magpie_gateway: http://host.docker.internal:3425/v1
+
+# 2026-10-26：macOS 的接口作用域默认路由把 100.98.206.126 送到 en0 网关（不经 utun0），
+# 导致桥接 SSH 到云端3 全部超时（读取容量失败：远端桥接超时 45s）。
+# 显式把源地址钉在本机 Tailscale IPv4 上，强制走 utun0。实测 3/3 成功。
+ssh_source: 100.105.59.31

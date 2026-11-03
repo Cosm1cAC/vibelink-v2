@@ -8,8 +8,10 @@
 
 - 每台机器：`opencode serve --hostname 127.0.0.1 --port 4097`（内部），前面加一层极简反向代理
   `mesh-proxy.py`（对外 `0.0.0.0:4096`）：HTML 注入角标脚本，其余流量（SSE/上传/下载/预检）原样透传
-- 页面左下角**角标**：每 5 秒测一次到当前主机的 RTT，<150ms 显示绿色「直连 xx ms」，否则橙色「中继 xx ms」
-  （Tailscale 同局域网自动直连、异地自动 DERP 中继，角标实时反映当前路径）
+- 页面左下角**角标**：显示**真实链路**，不是按 RTT 猜。代理在 `/__mesh/path` 里按请求源地址
+  分类（本机 / 局域网 / Tailscale / 公网），再查 `tailscale status --json` 的 `CurAddr` 与
+  `Relay` 判断打洞直连还是 DERP 中继，5 秒缓存；RTT 只作为附加信息显示
+  （Tailscale 同局域网自动直连、异地自动 DERP 中继）
 - basic auth 保护，LaunchAgent / 启动文件夹保活
 - 跨机访问必需 `--cors <对方 UI origin>`（实测：默认不带 `Access-Control-Allow-Origin`，浏览器会拦截）
 - Web UI 原生支持多服务器：`Servers → Add server`（地址 + 用户名 + 密码），之后统一列出各机器的项目/会话
@@ -84,8 +86,9 @@ scp -i "$env:USERPROFILE\.ssh\id_ed25519" "$env:USERPROFILE\.config\opencode\ope
 
 - **CORS**：跨机访问必须 `--cors`（实测无 `Access-Control-Allow-Origin` 头浏览器直接拦）。新增设备时，
   把新 origin 加进**两端**白名单（Windows `windows/config.ps1`、Mac `macos/com.opencode-server.plist`）
-- **角标**：反映「地址栏那台主机」的路径 RTT（在页面内切到另一台 server 时不跟着变）；
-  手机首次部署后如看不到角标，强刷一次（PWA/Service Worker 缓存）
+- **角标**：反映「地址栏那台主机」的路径（在页面内切到另一台 server 时不跟着变）；
+  手机首次部署后如看不到角标，强刷一次（PWA/Service Worker 缓存）。
+  `path=unknown` 表示本机没有 Tailscale CLI 或该 peer 不在 `status` 里，不是故障
 - **手机速度**：Tailscale 自动选路——手机与 PC 同一局域网时自动升级**直连**（实测 6~26ms，Web UI 流畅），
   异地时自动回退 DERP 中继（实测 ~500ms，首屏/长历史会话会卡）。同一个 URL（`100.98.206.126`）通吃，
   无需维护局域网地址；排查当前路径：`tailscale ping phone-mihomo`（`direct` 还是 `via DERP`）

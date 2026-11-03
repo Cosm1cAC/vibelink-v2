@@ -7,7 +7,7 @@
 | 目录 | 部署位置 | 说明 |
 | --- | --- | --- |
 | `wproxy/` | Windows | 主客户端：开源 mihomo 内核 + 自研控制台（一键启停 / 系统代理·TUN 切换 / 热重载 / 开源 WebUI） |
-| `macos-udp-proxy/` | Mac | 主节点：TCP+UDP SOCKS5 中继（python3 实现，开机自启 + 三层保活） |
+| `macos-udp-proxy/` | Mac | 主节点：SOCKS5 中继（python3 实现，开机自启 + 三层保活）。**TCP 可用，UDP 实测不通（2026-10-11）** |
 | `macos-socks-proxy/` | Windows | 备用线路：SSH SOCKS5 隧道（仅 TCP）+ 保活看门狗 |
 | `android-phone/` | 安卓手机 | CMFA（mihomo 内核内置 Tailscale 出站）单 App 接入，规则同 wproxy |
 | `macos-ssh-fallback/` | Mac + Windows | 应急 SSH 通道：用户态纯密钥 SSH + ngrok 出站隧道，**不依赖 Tailscale** |
@@ -20,10 +20,11 @@
 
 ```
 Windows 应用
-  └─> wproxy (mihomo, 127.0.0.1:7897 / TUN)
-        ├─ 国内域名/IP ────────────────> 直连
-        ├─ 主线路 ──Tailscale──> Mac socks-relay (100.105.59.31:7891, TCP+UDP) ──> 日本大阪出口
-        └─ 备线路 ──SSH 隧道───> Mac sshd (127.0.0.1:1080, 仅 TCP)
+  └─> wproxy (mihomo, 127.0.0.1:7897 系统代理 / TUN 不可用)
+        ├─ 默认 ────────────────────> 直连（MATCH → DIRECT）
+        ├─ 非中国大陆域名 ──────────> 主线路 ──Tailscale──> Mac socks-relay (100.105.59.31:7891, TCP) ──> 日本大阪出口
+        │                              （GEOSITE geolocation-!cn，27217 条）
+        └─ 全部节点不可达时 ────────> 自动降级直连（fail-safe）
 
 应急通道（不依赖 Tailscale）:
 Windows/手机 ──ssh──> ngrok TCP ──> Mac 用户态 SSH (127.0.0.1:12222, 仅密钥)

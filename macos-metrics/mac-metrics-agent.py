@@ -20,11 +20,12 @@ BIND = os.environ.get("METRICS_BIND", "100.105.59.31")
 PORT = int(os.environ.get("METRICS_PORT", "18992"))
 VERSION = "1.1.0"
 NCPU = os.cpu_count() or 1
-LAT_TARGETS = [("1.1.1.1", 443), ("8.8.8.8", 443), ("223.5.5.5", 443)]
+CN_TARGET = ("223.5.5.5", 443)
+PROXY_TARGET = ("cp.cloudflare.com", 80)
 NET_IFACES = ("en0", "en1", "en2", "en3", "utun0", "utun1", "utun2", "utun3", "utun4", "utun5")
 TS_CLI = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
 TS_PEERS = {
-    "100.74.71.80": "haoshao",
+    "100.98.206.126": "haoshao-1",
     "100.123.253.85": "desktop-9m0bu3h",
     "100.126.194.61": "phone-mihomo",
 }
@@ -42,6 +43,7 @@ _state = {
     "net": {},
     "latency": {},
     "tailnet": {},
+    "link_mbps": None,
 }
 
 
@@ -214,16 +216,28 @@ def _net_loop():
             prev, prev_t = cur, cur_t
 
 
+def _http_ms(host, port, path="/generate_204", timeout=5.0):
+    t0 = time.perf_counter()
+    with socket.create_connection((host, port), timeout=timeout) as s:
+        s.sendall(("GET %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n" % (path, host)).encode())
+        s.recv(64)
+    return round((time.perf_counter() - t0) * 1000, 1)
+
+
 def _lat_loop():
+    # 统一口径：直连国内（223.5.5.5:443 TCP）/ 代理链路（Mac 即出口，到目标的直连真实请求）
     while True:
         lat = {}
-        for host, port in LAT_TARGETS:
-            t0 = time.perf_counter()
-            try:
-                with socket.create_connection((host, port), timeout=3):
-                    lat["%s:%d" % (host, port)] = round((time.perf_counter() - t0) * 1000, 1)
-            except Exception:
-                lat["%s:%d" % (host, port)] = None
+        t0 = time.perf_counter()
+        try:
+            with socket.create_connection(CN_TARGET, timeout=3):
+                lat["直连国内"] = round((time.perf_counter() - t0) * 1000, 1)
+        except Exception:
+            lat["直连国内"] = None
+        try:
+            lat["代理链路"] = _http_ms(*PROXY_TARGET)
+        except Exception:
+            lat["代理链路"] = None
         with _lock:
             _state["latency"] = lat
         time.sleep(5.0)
@@ -262,12 +276,29 @@ def _tailnet_loop():
         time.sleep(20.0)
 
 
+def _link_mbps():
+    # 默认路由网卡的链路速率（带宽上限）：以太网从 media 解析（如 1000baseT → 1000）
+    try:
+        out = _run(["route", "-n", "get", "default"])
+        m = re.search(r"interface:\s*(\S+)", out)
+        if not m:
+            return None
+        media = _run(["ifconfig", m.group(1)])
+        m2 = re.search(r"media:\s*autoselect\s*\((\d+)baseT", media)
+        if m2:
+            return int(m2.group(1))
+    except Exception:
+        pass
+    return None
+
+
 def _init_static():
     m = re.search(r"sec = (\d+)", _run(["sysctl", "-n", "kern.boottime"]))
     with _lock:
         _state["boot_time"] = int(m.group(1)) if m else None
         _state["model"] = _run(["sysctl", "-n", "hw.model"]).strip() or None
         _state["host"] = socket.gethostname()
+        _state["link_mbps"] = _link_mbps()
 
 
 class Handler(BaseHTTPRequestHandler):

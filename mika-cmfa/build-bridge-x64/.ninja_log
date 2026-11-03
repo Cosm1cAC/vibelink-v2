@@ -1,0 +1,5 @@
+# ninja log v5
+23	121	8153219639159881	CMakeFiles/bridge.dir/bridge_helper.c.o	609e85d6dd4c5a91
+0	164	8153219639559468	CMakeFiles/bridge.dir/jni_helper.c.o	92a623703ab80695
+12	293	8153219640831079	CMakeFiles/bridge.dir/main.c.o	6489724643d7390d
+294	548	8153219643456830	libbridge.so	d0b03bd3ebe18e1e

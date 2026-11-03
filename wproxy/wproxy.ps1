@@ -16,7 +16,7 @@ function Test-Elevated {
 function Get-ApiHeaders { @{ Authorization = "Bearer $ApiSecret" } }
 
 function Invoke-Api([string]$Method, [string]$Path, $Body) {
-    $p = @{ Method = $Method; Uri = ($ApiBase + $Path); Headers = (Get-ApiHeaders); TimeoutSec = 15 }
+    $p = @{ Method = $Method; Uri = ($ApiBase + $Path); Headers = (Get-ApiHeaders); TimeoutSec = 15; ErrorAction = 'Stop' }
     if ($null -ne $Body) {
         $p['Body'] = ($Body | ConvertTo-Json -Compress -Depth 6)
         $p['ContentType'] = 'application/json'
@@ -66,7 +66,8 @@ function Stop-AllProcesses {
 function Register-WProxyTask {
     $action = New-ScheduledTaskAction -Execute $PwshExe -Argument ('-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}"' -f (Join-Path $WproxyDir 'mihomo-run.ps1'))
     $trigger = New-ScheduledTaskTrigger -AtLogOn
-    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) -Hidden -MultipleInstances IgnoreNew
+    $trigger.Delay = 'PT{0}S' -f $StartupDelaySeconds
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) -Hidden -MultipleInstances IgnoreNew -StartWhenAvailable
     $principal = New-ScheduledTaskPrincipal -UserId ("{0}\{1}" -f $env:USERDOMAIN, $env:USERNAME) -LogonType Interactive -RunLevel Highest
     Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description 'wproxy: open-source mihomo core watchdog' -Force | Out-Null
 }
@@ -152,24 +153,34 @@ switch ($Action) {
         } catch {}
     }
     'reload' {
-        Invoke-Api 'PUT' '/configs?force=true' @{ path = (Join-Path $WproxyDir 'config.yaml') } | Out-Null
-        Write-Output '[OK] config reloaded'
+        try {
+            Invoke-Api 'PUT' '/configs?force=true' @{ path = (Join-Path $WproxyDir 'config.yaml') } | Out-Null
+            Write-Output '[OK] config reloaded'
+        } catch {
+            Write-Output ('[!] reload failed: {0}' -f $_.Exception.Message)
+        }
     }
     'mode' {
         switch ($Value) {
             'sysproxy' {
                 Set-SystemProxy $false
-                Invoke-Api 'PATCH' '/configs' @{ tun = @{ enable = $false } } | Out-Null
+                try { Invoke-Api 'PATCH' '/configs' @{ tun = @{ enable = $false } } | Out-Null } catch {
+                    Write-Output ('[!] cannot reach core API: {0}' -f $_.Exception.Message); break
+                }
                 Set-SystemProxy $true
                 Write-Output ('[OK] system proxy -> 127.0.0.1:{0}, TUN off' -f $MixedPort)
             }
             'tun' {
                 Set-SystemProxy $false
-                Invoke-Api 'PATCH' '/configs' @{ tun = @{ enable = $true } } | Out-Null
+                try { Invoke-Api 'PATCH' '/configs' @{ tun = @{ enable = $true } } | Out-Null } catch {
+                    Write-Output ('[!] cannot reach core API: {0}' -f $_.Exception.Message); break
+                }
                 Write-Output '[OK] TUN on, system proxy off'
             }
             'off' {
-                Invoke-Api 'PATCH' '/configs' @{ tun = @{ enable = $false } } | Out-Null
+                try { Invoke-Api 'PATCH' '/configs' @{ tun = @{ enable = $false } } | Out-Null } catch {
+                    Write-Output ('[!] cannot reach core API: {0}' -f $_.Exception.Message); break
+                }
                 Set-SystemProxy $false
                 Write-Output '[OK] TUN off, system proxy off'
             }
@@ -179,15 +190,23 @@ switch ($Action) {
         }
     }
     'select' {
-        if (-not $Value) { Write-Output 'usage: wproxy.ps1 -Action select -Value <Japan-MacMini|Japan-MacMini-SSH|DIRECT>'; break }
-        Invoke-Api 'PUT' '/proxies/PROXY' @{ name = $Value } | Out-Null
-        Write-Output ('[OK] node selected: {0}' -f $Value)
+        if (-not $Value) { Write-Output 'usage: wproxy.ps1 -Action select -Value <Japan-MacHy2|Japan-PhoneRelay|Japan-PhoneRelay2|Japan-MacMini|Japan-MacUser|Japan-Ngrok|Japan-CF|DIRECT>'; break }
+        try {
+            Invoke-Api 'PUT' '/proxies/PROXY' @{ name = $Value } | Out-Null
+            Write-Output ('[OK] node selected: {0}' -f $Value)
+        } catch {
+            Write-Output ('[!] select failed: {0}' -f $_.Exception.Message)
+        }
     }
     'delay' {
         $name = if ($Value) { $Value } else { 'Japan-MacMini' }
         $u = [uri]::EscapeDataString('https://cp.cloudflare.com/generate_204')
-        $r = Invoke-Api 'GET' ('/proxies/{0}/delay?url={1}&timeout=5000' -f $name, $u) $null
-        Write-Output ('[delay] {0}: {1} ms' -f $name, $r.delay)
+        try {
+            $r = Invoke-Api 'GET' ('/proxies/{0}/delay?url={1}&timeout=5000' -f $name, $u) $null
+            Write-Output ('[delay] {0}: {1} ms' -f $name, $r.delay)
+        } catch {
+            Write-Output ('[delay] {0}: unreachable' -f $name)
+        }
     }
     'ui' {
         $url = 'http://127.0.0.1:{0}/ui/#/setup?hostname=127.0.0.1&port={0}&secret={1}' -f $ApiPort, $ApiSecret
