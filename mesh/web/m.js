@@ -249,7 +249,7 @@ function paintPath() {
 async function pollPath() {
   const t0 = performance.now()
   try {
-    const info = await api('/api/path')
+    const info = await api('/api/path', { timeoutMs: 8_000 })
     S.rtt = performance.now() - t0
     S.path = info
   } catch {
