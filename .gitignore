@@ -33,3 +33,9 @@ build/
 dist/
 **/dist/
 node_modules/
+
+# 凭据不入库
+keys/
+*.pem
+*.key
+.env
