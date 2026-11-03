@@ -20,3 +20,16 @@ wproxy/hysteria-client.yaml
 mesh/data/
 mesh-rs/target/
 mesh-rs/data/
+
+target/
+**/target/
+build/
+**/build/
+*.apk
+*.aab
+*.so
+*.rlib
+*.rmeta
+dist/
+**/dist/
+node_modules/
