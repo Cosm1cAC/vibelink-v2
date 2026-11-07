@@ -30,7 +30,7 @@ Codex 的 DeepSeek provider 使用 Responses API，地址为 Hub 的 `/api/llm/v
 
 会话内容与历史文件保存在 agent 的 Codex 目录中。Hub 的 `agent_sessions.json` 只记录会话 ID、所属 agent、用户、模型、设备和标题等索引。新建、续聊、读消息和中断均使用同一个运行目录；改变模型会清除旧活动绑定，重新建立会话。旧 Hub 自建 DeepSeek 会话不会伪装成 Codex 会话继续使用。
 
-GPT 的默认官方登录目录为 `~/.vibelink-cli/dev/codex`。DeepSeek 使用隔离的 `~/.vibelink-cli/scopes/<scope>/codex`，不复制 ChatGPT 登录信息。scope 从版本、用户身份和模型生成。内测用户的工作区、HOME、CLI 缓存与会话目录独立，工具进程不继承宿主的 Agent Token 或其他账号环境；执行采用 Codex 限制读取权限配置：文件系统默认拒绝，只开放当前工作区和最小运行库，工具网络访问关闭；只读职位的工作区仅可读。启用 `--strict-config`，旧 CLI 不得静默忽略配置。宿主无法执行限制读取策略时，创建/续聊会话或工具调用失败，不降级为宽泛读取或无沙箱。内测工作区禁止项目级 Codex 配置覆盖。生产内测可通过 `VIBELINK_BETA_AGENT_DEVICE` 选择独立主机上的工作节点；默认使用 `pc` 的隔离运行目录。远程节点需设置 `VIBELINK_MODEL_GATEWAY_URL` 为节点可达的 Hub 模型网关地址。当前 PC 的 Codex 0.167.0 在该限制读取配置下拒绝原生 Windows 会话启动；内测运行需配备支持此配置的 Linux/WSL 等隔离工作节点，不能将 PC 本次验证视为内测可上线。
+GPT 的默认官方登录目录为 `~/.vibelink-cli/dev/codex`。DeepSeek 使用隔离的 `~/.vibelink-cli/scopes/<scope>/codex`，不复制 ChatGPT 登录信息。scope 从版本、用户身份和模型生成。内测用户的工作区、HOME、CLI 缓存与会话目录独立，工具进程不继承宿主的 Agent Token 或其他账号环境；执行采用 Codex 限制读取权限配置：文件系统默认拒绝，只开放当前工作区和最小运行库，工具网络访问关闭；只读职位的工作区仅可读。启用 `--strict-config`，旧 CLI 不得静默忽略配置。宿主无法执行限制读取策略时，创建/续聊会话或工具调用失败，不降级为宽泛读取或无沙箱。内测工作区禁止项目级 Codex 配置覆盖。生产内测可通过 `VIBELINK_BETA_AGENT_DEVICE` 选择独立主机上的工作节点；默认使用 `pc` 的隔离运行目录。远程节点需设置 `VIBELINK_MODEL_GATEWAY_URL` 为节点可达的 Hub 模型网关地址。Windows 内测明确使用 `windows.sandbox = "mxc"`，不启用自动降级。此前失败来自旧的 unelevated/elevated 后端，不代表本机无法隔离；本机 Codex 0.167.0 的 MXC 已通过工作区读写、目录外/同级用户/CLI 配置拒绝读取及本机网络拒绝连接验证。清空继承环境时保留 MXC 必需的 `SystemDrive`。不支持 MXC 的 Windows 节点会拒绝启动，可改用支持限制读取的 Linux/WSL 节点。
 
 Hub 与 Agent 必须一起更新。新的 `codex.runtime.*` 请求会被旧 Agent 拒绝，不允许旧 Agent 忽略模型配置后意外调用 GPT 订阅。
 
@@ -74,8 +74,22 @@ Hub 与 Agent 必须一起更新。新的 `codex.runtime.*` 请求会被旧 Agen
 
 ## 验证
 
-Rust 测试覆盖用户隔离、限额预占、并发、重启恢复、UTC+8 换日、JSON/SSE usage、身份防伪、仅模型能力 Token 和实际 agent 会话绑定。`gateway_smoke` 是默认不运行的真实调用测试，读取 `VIBELINK_CODEX_SMOKE_REQUEST` 指定的临时请求文件。已在临时 Hub 上通过生产 Agent 处理函数验证开发版 DeepSeek 的官方 Codex 新建与续聊：同一 session 两轮，2 次真实请求，20,037 tokens（输入 20,033、输出 4、缓存命中 13,824），缺失 usage 为 0。内测权限配置另外验证为不支持时拒绝启动，不发送上游推理请求。临时 Hub 已停止，未替换正在运行的服务。
+Rust 测试覆盖用户隔离、限额预占、并发、重启恢复、UTC+8 换日、JSON/SSE usage、身份防伪、仅模型能力 Token 和实际 agent 会话绑定。`gateway_smoke` 是默认不运行的真实调用测试，读取 `VIBELINK_CODEX_SMOKE_REQUEST` 指定的临时请求文件。已在临时 Hub 上通过生产 Agent 处理函数验证开发版 DeepSeek 的官方 Codex 新建与续聊：同一 session 两轮，2 次真实请求，20,037 tokens（输入 20,033、输出 4、缓存命中 13,824），缺失 usage 为 0。内测 MXC 已另行验证真实新建与续聊，以及读写职位和只读职位的文件边界。临时 Hub 已停止。
 
 Android 开发版与内测版分别验证模型策略、订阅入口和更新分版相关 24 项测试，并构建独立包名的 1.5.3 APK；全量测试在上次运行时仍有既有 Windows/POSIX、资源与功能断言失败，不宣称全量测试通过。
 
 依据：[OpenAI 自定义 provider 配置](https://learn.chatgpt.com/docs/config-file/config-advanced)、[配置参考](https://learn.chatgpt.com/docs/config-file/config-reference)、[权限配置](https://learn.chatgpt.com/docs/permissions)，以及本机 Magpie `/v1/models` 与真实 Responses 调用。
+
+
+## Windows 运行部署
+
+开发 Hub（18995）和内测 Hub（18998）分别连接独立 Agent 进程。内测 Agent 使用独立的 Hub agent Token，以 `--beta-worker` 启动，使用独立单实例互斥体，只接收带内测 DeepSeek 运行时绑定的 Codex 请求，不启动开发者本地定时任务或共用二进制的自动更新线程。内测 Codex 使用 `--no-daemon`，避免共享后台服务状态。看门狗分别识别两个 Agent，避免其中一个存在时漏掉另一个。
+
+升级前备份原二进制、启动脚本和两个版本的数据；旧开发数据导入 `data/dev`，旧内测数据导入 `data-beta/beta`，保留各自邀请码、已激活 Token、Bot 和累计额度。不得将开发者凭据导入内测。部署完成后核对二进制 SHA-256、两个 Hub 健康、两个 Agent 心跳和真实内测会话 usage。
+
+MXC 依据：[官方 Windows 沙箱说明](https://learn.chatgpt.com/docs/windows/windows-sandbox)。显式 `mxc` 配置在宿主不支持时失败，不能改为 `prefer_mxc` 后允许回落到旧后端。
+
+
+2026-11-08 已在 PC 部署：开发/内测 Hub 均健康，分别连接 Agent 0.2.9；公网手机入口健康检查通过。生产内测临时用户的新建和同会话续聊共 2 次上游请求，输入 20,945、输出 4、总量 20,949、缓存命中 14,080 tokens，usage 缺失为 0，跨用户读取被拒绝；验证凭据已撤销。带 MXC 读写/只读/原生 curl 网络探针的集成测试另行通过。旧程序、配置和原数据备份在运行目录的 `backups/runtime-20261108-051158`。
+
+Mac 上原有 Agent 已在隔离源码目录完成 17 项测试与 release 编译，替换为 0.2.9，使用独立 agent 凭据，Hub 心跳确认在线；原二进制和启动脚本保留于 `~/src/vibelink-upgrades/20261108-mxc/`。

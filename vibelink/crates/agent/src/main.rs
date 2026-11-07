@@ -23,7 +23,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-const AGENT_VERSION: &str = "0.2.8";
+const AGENT_VERSION: &str = "0.2.9";
 const PUSH: Duration = Duration::from_secs(5);
 const SLOW: Duration = Duration::from_secs(30);
 
@@ -500,11 +500,18 @@ fn to_json(s: String) -> Result<serde_json::Value, String> {
     serde_json::from_str(&s).map_err(|e| format!("bad json from opencode: {e}"))
 }
 
+fn is_beta_worker() -> bool {
+    std::env::args().any(|a| a == "--beta-worker")
+}
+
 fn handle_session_request(kind: &str, payload: &serde_json::Value, data: &std::path::Path) -> Result<serde_json::Value, String> {
     if kind.starts_with("codex.runtime.") && payload.get("codexRuntime").is_none() {return Err("Runtime binding required".into());}
     let normalized=kind.strip_prefix("codex.runtime.").map(|name|format!("codex.{name}"));
     let kind=normalized.as_deref().unwrap_or(kind);
     let runtime = codex_runtime::Runtime::parse(payload)?;
+    if is_beta_worker() && (!kind.starts_with("codex.") || !runtime.beta || runtime.model != codex_runtime::DEEPSEEK) {
+        return Err("Public worker requires an isolated DeepSeek Codex binding".into());
+    }
     codex_runtime::with(runtime, || handle_scoped_session_request(kind,payload,data))
 }
 
@@ -899,7 +906,12 @@ fn ensure_single_instance() {
             ) -> isize;
             fn GetLastError() -> u32;
         }
-        let name: Vec<u16> = "Local\\VibelinkAgentSingleton\0".encode_utf16().collect();
+        let singleton = if is_beta_worker() {
+            "Local\\VibelinkAgentBetaSingleton\0"
+        } else {
+            "Local\\VibelinkAgentSingleton\0"
+        };
+        let name: Vec<u16> = singleton.encode_utf16().collect();
         let h = CreateMutexW(std::ptr::null(), 1, name.as_ptr());
         if h != 0 && GetLastError() == 183 {
             // ERROR_ALREADY_EXISTS = 183：已有实例在运行，直接退出避免双实例并发轮询与刷屏
@@ -937,10 +949,10 @@ fn main() {
     {
         let base3 = base.clone();
         let token3 = token.clone();
-        thread::spawn(move || update_worker(base3, token3));
+        if !is_beta_worker() { thread::spawn(move || update_worker(base3, token3)); }
     }
     // 定时任务按时自动执行（以前只能手动「立即执行」）
-    thread::spawn(schedule::worker);
+    if !is_beta_worker() { thread::spawn(schedule::worker); }
 
     let mut last_slow = Instant::now() - SLOW;
     let mut cached_gw: Option<String> = None;

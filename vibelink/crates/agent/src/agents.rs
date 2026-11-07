@@ -774,7 +774,7 @@ fn official_codex_install(path: &Path) -> bool {
     })
 }
 
-fn find_codex_exe() -> Option<PathBuf> {
+pub(crate) fn find_codex_exe() -> Option<PathBuf> {
     let mut candidates: Vec<PathBuf> = Vec::new();
     if cfg!(windows) {
         let appdata = std::env::var("APPDATA").unwrap_or_default();

@@ -104,6 +104,9 @@ impl Runtime {
         let mut config = String::from("cli_auth_credentials_store = \"file\"\n");
         if self.beta {
             config.push_str(&self.permissions_config());
+            if cfg!(windows) {
+                config.push_str("\n[windows]\nsandbox = \"mxc\"\n");
+            }
         }
         fs::write(self.home().join("config.toml"), config).map_err(|e| e.to_string())?;
         if self.beta {
@@ -138,6 +141,7 @@ enabled = false
             for key in [
                 "PATH",
                 "SystemRoot",
+                "SystemDrive",
                 "WINDIR",
                 "COMSPEC",
                 "PATHEXT",
@@ -173,8 +177,6 @@ enabled = false
                 &table,
                 "--model",
                 DEEPSEEK,
-                "-c",
-                "model_supports_reasoning=false",
             ]);
         } else {
             crate::subscription_policy::configure_codex(cmd);
@@ -184,7 +186,13 @@ enabled = false
             }
         }
         if self.beta {
+            if cfg!(windows) {
+                // Explicit selection fails closed on hosts without MXC. Never
+                // prefer-and-fallback to a legacy backend for public users.
+                cmd.args(["-c", "windows.sandbox=\"mxc\""]);
+            }
             cmd.args([
+                "--no-daemon",
                 "--strict-config",
                 "--ask-for-approval",
                 "never",
@@ -218,6 +226,13 @@ mod tests {
         assert!(policy.contains("\":root\" = \"deny\""));
         assert!(policy.contains("enabled = false"));
         assert!(args.iter().any(|v| v == "--strict-config"));
+        if cfg!(windows) {
+            assert!(args.iter().any(|v| v == "windows.sandbox=\"mxc\""));
+            assert!(
+                cmd.get_envs()
+                    .any(|(key, value)| key == "SystemDrive" && value.is_some())
+            );
+        }
     }
     #[test]
     fn new_runtime_protocol_rejects_requests_without_binding_before_any_cli_launch() {

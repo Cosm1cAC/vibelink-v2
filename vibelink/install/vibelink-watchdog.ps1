@@ -98,8 +98,15 @@ while ($true) {
         $hubMiss = 0
     }
 
-    if (-not (Get-Process vibelink-agent -ErrorAction SilentlyContinue)) {
+    # The private and public workers use the same binary but separate Hub tokens.
+    $agents = @(Get-CimInstance Win32_Process -Filter "Name = 'vibelink-agent.exe'" -ErrorAction SilentlyContinue)
+    if (-not ($agents | Where-Object { $_.CommandLine -notmatch '--beta-worker' })) {
         Start-Agent
+    }
+    $betaLauncher = Join-Path $root 'run-agent-beta.cmd'
+    if ((Test-Path -LiteralPath $betaLauncher) -and -not ($agents | Where-Object { $_.CommandLine -match '--beta-worker' })) {
+        Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', "`"$betaLauncher`"" -WindowStyle Hidden
+        Say "started isolated beta worker"
     }
 
     $tsState = Ensure-Tailscale
