@@ -1,22 +1,18 @@
 //! Role recipes never select providers. Edition policy owns runtime bindings.
 use std::path::PathBuf;
 
-pub const DEEPSEEK_MODEL: &str = "deepseek-flash";
+pub const DEEPSEEK_MODEL: &str = "auto/deepseek-v4.1-flash";
 
-pub fn default_engine(template_id: &str, beta: bool) -> &'static str {
-    if !beta && template_id == "tpl_grok_cos" {
-        "codex"
-    } else {
-        "deepseek"
-    }
+pub fn default_engine(_template_id: &str, _beta: bool) -> &'static str { "codex" }
+pub fn default_model(template_id: &str, beta: bool) -> &'static str {
+    if !beta && template_id == "tpl_grok_cos" { "" } else { DEEPSEEK_MODEL }
 }
-
-pub fn validate_engine(engine: &str, beta: bool) -> Result<(), String> {
-    if engine == "deepseek" || (!beta && engine == "codex") {
-        Ok(())
-    } else {
-        Err("Only DeepSeek API and development Codex official CLI are enabled".into())
-    }
+pub fn validate_engine(engine: &str, _beta: bool) -> Result<(), String> {
+    if engine == "codex" { Ok(()) } else { Err("Bot sessions must use the official Codex agent".into()) }
+}
+pub fn validate_model(model: &str, beta: bool) -> Result<(), String> {
+    if model == DEEPSEEK_MODEL || (!beta && (model.is_empty() || model.starts_with("gpt-"))) { Ok(()) }
+    else { Err("Only GPT subscription or the shared Magpie DeepSeek route is available".into()) }
 }
 
 pub fn data_dir(base: PathBuf, beta: bool) -> PathBuf {
@@ -83,11 +79,12 @@ mod tests {
             data_dir("data".into(), false)
         );
         assert_eq!(default_engine("tpl_grok_cos", false), "codex");
-        assert_eq!(default_engine("tpl_grok_cos", true), "deepseek");
-        assert_eq!(default_engine("tpl_benjamin_code", false), "deepseek");
+        assert_eq!(default_engine("tpl_grok_cos", true), "codex");
+        assert_eq!(default_engine("tpl_benjamin_code", false), "codex");
         for engine in ["claude", "antigravity", "gemini", "opencode", "gpt"] {
             assert!(validate_engine(engine, false).is_err());
         }
-        assert!(validate_engine("codex", true).is_err());
+        assert!(validate_model("", true).is_err());
+        assert_eq!(default_model("tpl_grok_cos", true), DEEPSEEK_MODEL);
     }
 }

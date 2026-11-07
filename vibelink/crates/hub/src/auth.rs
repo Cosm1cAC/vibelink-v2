@@ -172,6 +172,7 @@ pub fn required(method: &str, path: &str) -> Need {
     {
         return Need::Agent;
     }
+    if path.starts_with("/api/usage/") { return Need::Admin; }
     // 客户端与受托 Agent 均可调用的 Fleet / Bot 上下文 / 审批请求接口
     if (get && path.starts_with("/api/bots/"))
         || (post && (path == "/api/fleet/action" || path == "/api/approvals/request"))

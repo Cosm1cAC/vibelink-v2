@@ -70,7 +70,7 @@ pub fn prepare_session_request(cwd: &str, text: &str, body: &Value) -> (String, 
 
     // 将该 Bot 绑定的专属技能剧本落盘至 `~/.vibelink-cli/dev/codex/skills/<id>/SKILL.md`
     if let Some(skills_arr) = bot_ctx.and_then(|c| c.get("skills")).and_then(Value::as_array) {
-        let skills_root = crate::subscription_policy::cli_home().join("skills");
+        let skills_root = crate::codex_runtime::current().home().join("skills");
         for sk in skills_arr {
             let sid = sk.get("id").and_then(Value::as_str).unwrap_or("").trim();
             let sname = sk.get("name").and_then(Value::as_str).unwrap_or("").trim();
@@ -108,6 +108,11 @@ pub fn prepare_session_request(cwd: &str, text: &str, body: &Value) -> (String, 
 
 /// 工作目录一律夹在白名单根目录里（见 `roots.rs`）；不在根目录里就退回默认目录。
 fn resolve_cwd(cwd: &str, fallback: Option<&str>) -> String {
+    let runtime=crate::codex_runtime::current();
+    if runtime.beta {
+        let root=runtime.workspace();let requested=crate::roots::normalize(Path::new(cwd));
+        return if !cwd.is_empty() && crate::roots::within(&requested,&[root.clone()]) {requested.to_string_lossy().into()} else {root.to_string_lossy().into()};
+    }
     let def = default_cwd();
     let fb = fallback.map(str::trim).filter(|s| !s.is_empty()).unwrap_or(def.as_str());
     crate::roots::clamp_cwd(cwd, fb)
@@ -134,6 +139,7 @@ fn new_uuid_v4() -> String {
 
 #[derive(Clone, Debug)]
 struct LiveSession {
+    runtime_scope: String,
     agent: String,
     id: String,
     title: String,
@@ -753,7 +759,7 @@ fn append_live_turn(id: &str, data: &mut Vec<Value>) {
 // ---------------- Codex ----------------
 
 fn codex_root() -> PathBuf {
-    crate::subscription_policy::cli_home().join("sessions")
+    crate::codex_runtime::current().home().join("sessions")
 }
 
 fn official_codex_install(path: &Path) -> bool {
@@ -880,7 +886,7 @@ pub fn codex_sessions() -> Vec<Value> {
     if let Ok(map) = live_map().lock() {
         for live in map.values() {
             let resolved_live_id = resolve_session_id(&live.id);
-            if live.agent == "codex" && !seen.contains(&live.id) && !seen.contains(&resolved_live_id) {
+            if live.agent == "codex" && live.runtime_scope == crate::codex_runtime::current().scope && !seen.contains(&live.id) && !seen.contains(&resolved_live_id) {
                 seen.insert(live.id.clone());
                 out.push(json!({
                     "id": live.id,
@@ -1255,7 +1261,13 @@ fn read_codex_disk_messages(id: &str) -> Vec<Value> {
     data
 }
 
+fn ensure_codex_scope(id:&str)->Result<(),String> {
+    if get_live(&resolve_session_id(id)).is_some_and(|live|live.runtime_scope!=crate::codex_runtime::current().scope) {return Err("Session belongs to another Codex runtime".into());}
+    Ok(())
+}
+
 pub fn codex_messages(id: &str, cursor: &str) -> Result<Value, String> {
+    ensure_codex_scope(id)?;
     let real_id = resolve_session_id(id);
     let mut data = read_codex_disk_messages(&real_id);
     if data.is_empty() && find_codex_file(&real_id).is_none() && get_live(&real_id).is_none() {
@@ -1271,7 +1283,7 @@ fn spawn_codex_runner(
     prompt: String,
     id_tx: Option<mpsc::Sender<Result<String, String>>>,
 ) {
-    thread::spawn(move || {
+    crate::codex_runtime::spawn(move || {
         let Some(exe) = find_codex_exe() else {
             if let Some(tx) = id_tx {
                 let _ = tx.send(Err("codex CLI not found".into()));
@@ -1290,7 +1302,11 @@ fn spawn_codex_runner(
         } else {
             Command::new(&exe)
         };
-        crate::subscription_policy::configure_codex(&mut cmd);
+        if let Err(error) = crate::codex_runtime::current().configure(&mut cmd) {
+            if let Some(tx) = id_tx { let _ = tx.send(Err(error)); }
+            return;
+        }
+        if crate::codex_runtime::current().beta { /* restrictive permission profile from runtime */ } else if crate::codex_runtime::current().read_only {cmd.args(["--sandbox","read-only"]);} else { cmd.arg("--dangerously-bypass-approvals-and-sandbox"); }
         let resolved_existing = existing_sid.as_ref().map(|s| resolve_session_id(s));
         let has_disk_session = resolved_existing
             .as_ref()
@@ -1302,7 +1318,6 @@ fn spawn_codex_runner(
                 "resume",
                 "--json",
                 "--skip-git-repo-check",
-                "--dangerously-bypass-approvals-and-sandbox",
                 sid,
                 "-",
             ]);
@@ -1313,7 +1328,6 @@ fn spawn_codex_runner(
                 &cwd,
                 "--json",
                 "--skip-git-repo-check",
-                "--dangerously-bypass-approvals-and-sandbox",
                 "-",
             ]);
         }
@@ -1360,6 +1374,25 @@ fn spawn_codex_runner(
         }
 
         let pid = child.id();
+        // Always drain stderr. CLI startup errors must not fill its pipe or leave
+        // a rejected tenant launch waiting forever before thread.started.
+        if let Some(stderr) = child.stderr.take() {
+            let init = id_tx.clone();
+            let beta = crate::codex_runtime::current().beta;
+            thread::spawn(move || {
+                for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+                    if beta && (line.contains("refusing to run unsandboxed")
+                        || line.contains("Restricted read-only access requires")
+                        || line.contains("requires effective `:root` read access")) {
+                        if let Some(tx) = &init {
+                            let _ = tx.send(Err("Worker cannot enforce tenant filesystem isolation. Configure a supported isolated Linux/WSL worker; unsafe fallback is disabled".into()));
+                        }
+                        kill_pid(pid);
+                        break;
+                    }
+                }
+            });
+        }
         let mut active_id = resolved_existing.clone().unwrap_or_default();
         if !active_id.is_empty() {
             if let Ok(mut map) = live_map().lock() {
@@ -1389,6 +1422,7 @@ fn spawn_codex_runner(
                                 map.insert(
                                     active_id.clone(),
                                     LiveSession {
+                                        runtime_scope: crate::codex_runtime::current().scope,
                                         agent: "codex".into(),
                                         id: active_id.clone(),
                                         title: trim_title(&prompt, 60),
@@ -1521,7 +1555,7 @@ fn spawn_codex_runner(
 }
 
 pub fn codex_create(cwd: &str, text: &str, files: Option<&Value>) -> Result<Value, String> {
-    crate::subscription_policy::prepare_codex()?;
+    crate::codex_runtime::current().prepare()?;
     crate::subscription_policy::validate_project(cwd)?;
     let latest_cwd = codex_sessions()
         .first()
@@ -1539,6 +1573,7 @@ pub fn codex_create(cwd: &str, text: &str, files: Option<&Value>) -> Result<Valu
             map.insert(
                 sid.clone(),
                 LiveSession {
+                    runtime_scope: crate::codex_runtime::current().scope,
                     agent: "codex".into(),
                     id: sid.clone(),
                     title: title.clone(),
@@ -1583,7 +1618,8 @@ pub fn codex_create(cwd: &str, text: &str, files: Option<&Value>) -> Result<Valu
 }
 
 pub fn codex_prompt(id: &str, text: &str, cwd: Option<&str>, files: Option<&Value>) -> Result<Value, String> {
-    crate::subscription_policy::prepare_codex()?;
+    ensure_codex_scope(id)?;
+    crate::codex_runtime::current().prepare()?;
     let real_id = resolve_session_id(id);
     let disk_cwd = find_codex_file(&real_id)
         .and_then(|p| codex_meta(&p))
@@ -1606,7 +1642,7 @@ pub fn codex_prompt(id: &str, text: &str, cwd: Option<&str>, files: Option<&Valu
         let queued_cwd = resolved_cwd.clone();
         let queued_prompt = final_prompt.clone();
         let queued_clean = clean_user.clone();
-        thread::spawn(move || {
+        crate::codex_runtime::spawn(move || {
             let wait_start = now_ms();
             while live_running(&queued_real_id) == Some(true) && now_ms().saturating_sub(wait_start) < 600_000 {
                 thread::sleep(Duration::from_millis(450));
@@ -1615,6 +1651,7 @@ pub fn codex_prompt(id: &str, text: &str, cwd: Option<&str>, files: Option<&Valu
             let started = now_ms();
             if let Ok(mut map) = live_map().lock() {
                 let session_entry = LiveSession {
+                    runtime_scope: crate::codex_runtime::current().scope,
                     agent: "codex".into(),
                     id: queued_real_id.clone(),
                     title: trim_title(&queued_clean, 60),
@@ -1652,6 +1689,7 @@ pub fn codex_prompt(id: &str, text: &str, cwd: Option<&str>, files: Option<&Valu
     let started = now_ms();
     if let Ok(mut map) = live_map().lock() {
         let session_entry = LiveSession {
+            runtime_scope: crate::codex_runtime::current().scope,
             agent: "codex".into(),
             id: real_id.clone(),
             title: trim_title(&clean_user, 60),
@@ -1695,6 +1733,7 @@ pub fn codex_prompt(id: &str, text: &str, cwd: Option<&str>, files: Option<&Valu
 }
 
 pub fn codex_interrupt(id: &str) -> Result<Value, String> {
+    ensure_codex_scope(id)?;
     let real_id = resolve_session_id(id);
     if let Ok(mut map) = live_map().lock() {
         for key in [real_id.as_str(), id] {
@@ -3167,6 +3206,9 @@ pub fn scheduler_list() -> Value {
 pub fn scheduler_action(body: &Value) -> Result<Value, String> {
     let _g = crate::schedule::file_lock().lock().unwrap_or_else(|e| e.into_inner());
     let action = body.get("action").and_then(Value::as_str).unwrap_or("list");
+    if action == "create" && crate::schedule::requires_model_binding(body) {
+        return Err("Bot schedules require a fresh Hub model grant; use the Bot conversation until metered scheduling is available".into());
+    }
     let mut list = scheduler_list()
         .get("tasks")
         .and_then(Value::as_array)
@@ -3238,6 +3280,9 @@ pub fn scheduler_action(body: &Value) -> Result<Value, String> {
             let id = body.get("id").and_then(Value::as_str).unwrap_or("");
             for item in &mut list {
                 if item.get("id").and_then(Value::as_str) == Some(id) {
+                    if crate::schedule::requires_model_binding(item) {
+                        return Err("Bot schedule paused: missing fresh Hub model binding".into());
+                    }
                     let ag = item.get("agent").and_then(Value::as_str).unwrap_or("antigravity");
                     let cwd = item.get("cwd").and_then(Value::as_str).unwrap_or("");
                     let prompt = item.get("prompt").and_then(Value::as_str).unwrap_or("");

@@ -8,7 +8,7 @@ import com.wangzan101.vibelink.core.model.ModelRole
 import com.wangzan101.vibelink.ui.OnboardingState
 
 /**
- * 首次启动配置独立 DeepSeek API 通道。订阅模型只通过电脑端官方 CLI。
+ * 首次启动配置Magpie DeepSeek 路由组。订阅模型只通过电脑端官方 CLI。
  *
  * 不走 VibeLink 原来的「选服务商 → 填 Base URL/Key → 试模型 → 选主模型」引导，
  * 装完直接能聊。用户想换模型，去「设置 › 模型」改就行（我们只写一次）。
@@ -18,9 +18,9 @@ object Preconfigure {
     private const val DONE = "done"
     private const val CONFIG_ID = "vibelink-hub"
 
-    /** Hub 的 DeepSeek API 入口。客户端凭配对或租户 token 鉴权。 */
+    /** Hub 的用户计量入口（上游 Magpie）。客户端凭配对或租户 token 鉴权。 */
     fun baseUrl(hub: String): String = hub.trimEnd('/') + "/api/llm/v1"
-    const val MODEL = "deepseek-flash"
+    const val MODEL = "auto/deepseek-v4.1-flash"
 
     /**
      * 配对成功后调：把 vibelink 服务商的地址和 Key 换成当前 hub 与新 token

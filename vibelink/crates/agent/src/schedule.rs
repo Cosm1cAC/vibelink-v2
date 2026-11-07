@@ -273,6 +273,13 @@ fn home() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
+/// Persisted Bot schedules have no renewable per-user gateway grant. Fail closed.
+pub fn requires_model_binding(task: &Value) -> bool {
+    task.get("botId").and_then(Value::as_str).is_some_and(|id| !id.is_empty())
+        || task.get("model").and_then(Value::as_str).is_some_and(|m| !m.is_empty())
+        || task.get("codexRuntime").is_some()
+}
+
 /// 一次检查：返回这次触发了几个任务。`run` 负责真正开会话（便于测试替换）。
 pub fn tick_with(
     file: &std::path::Path,
@@ -300,6 +307,14 @@ pub fn tick_with(
 
     let mut fired = 0;
     for t in list.iter_mut() {
+        if requires_model_binding(t) {
+            if let Some(o) = t.as_object_mut() {
+                o.insert("enabled".into(), json!(false));
+                o.insert("lastStatus".into(), json!("已暂停：需要 Hub 签发模型与用户计量绑定，禁止回退 GPT"));
+            }
+            changed = true;
+            continue;
+        }
         match due(t, now) {
             Some(true) => {
                 let agent = t.get("agent").and_then(Value::as_str).unwrap_or("antigravity").to_string();
@@ -385,6 +400,13 @@ pub fn worker() {
 mod tests {
     use super::*;
     use std::cell::RefCell;
+
+    #[test]
+    fn bot_schedules_do_not_fall_back_to_default_subscription() {
+        assert!(requires_model_binding(&json!({"botId":"bot-1","agent":"codex"})));
+        assert!(requires_model_binding(&json!({"model":"auto/deepseek-v4.1-flash"})));
+        assert!(!requires_model_binding(&json!({"agent":"codex","botId":""})));
+    }
 
     #[test]
     fn parses_intervals() {

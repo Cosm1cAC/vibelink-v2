@@ -1407,7 +1407,7 @@ fn upgrade_state_to_v2_recipes(state: &mut BotsDiskState) -> bool {
 
 fn migrate_model_policy(state: &mut BotsDiskState, beta: bool) {
     let templates = builtin_grok_bot_templates();
-    let upgrade = state.recipe_schema_version < 8;
+    let upgrade = state.recipe_schema_version < 10;
     for bot in &mut state.bots {
         if let Some(tpl) = templates.iter().find(|t| t.id == bot.template_id) {
             if upgrade {
@@ -1425,7 +1425,7 @@ fn migrate_model_policy(state: &mut BotsDiskState, beta: bool) {
             let engine = crate::model_policy::default_engine(&bot.template_id, beta);
             if bot.engine != engine { bot.active_session_id.clear(); bot.session_ids.clear(); }
             bot.engine = engine.into();
-            bot.model = if engine == "deepseek" { crate::model_policy::DEEPSEEK_MODEL.into() } else { String::new() };
+            bot.model = crate::model_policy::default_model(&bot.template_id,beta).into();
         }
     }
     for group in &mut state.groups {
@@ -1434,7 +1434,7 @@ fn migrate_model_policy(state: &mut BotsDiskState, beta: bool) {
             group.description = "幕僚长统筹、情报官查证、代码主程实现、审校官验收".into();
         }
     }
-    state.recipe_schema_version = 8;
+    state.recipe_schema_version = 10;
 }
 
 impl BotFleetStore {
@@ -1988,7 +1988,7 @@ impl BotFleetStore {
                 (idx as u64) * 30_000,
             );
             seeded.engine = crate::model_policy::default_engine(&tpl.id, self.beta_mode).into();
-            seeded.model = if seeded.engine == "deepseek" { crate::model_policy::DEEPSEEK_MODEL.into() } else { String::new() };
+            seeded.model = crate::model_policy::default_model(&tpl.id,self.beta_mode).into();
             if let Some(existing) = s.bots.iter_mut().find(|b| b.id == *bot_id) {
                 existing.template_id = seeded.template_id;
                 existing.name = seeded.name;
@@ -2433,6 +2433,8 @@ impl BotFleetStore {
                     existing.engine = eng.trim().to_string();
                 }
                 if let Some(m) = body.get("model").and_then(Value::as_str) {
+                    crate::model_policy::validate_model(m.trim(),self.beta_mode)?;
+                    if existing.model != m.trim() {existing.active_session_id.clear();existing.session_ids.clear();}
                     existing.model = m.trim().to_string();
                 }
                 if let Some(te) = body.get("thinkingEffort").and_then(Value::as_str) {
@@ -2586,7 +2588,7 @@ impl BotFleetStore {
             model: body
                 .get("model")
                 .and_then(Value::as_str)
-                .unwrap_or("")
+                .unwrap_or_else(||crate::model_policy::default_model(tpl_id,self.beta_mode))
                 .to_string(),
             thinking_effort: body
                 .get("thinkingEffort")
@@ -3184,7 +3186,8 @@ impl BotFleetStore {
                             Some(&cwd),
                             (idx as u64) * 1000,
                         );
-                        new_bot.engine = crate::model_policy::default_engine(&tpl.id, self.beta_mode).into();
+                        new_bot.engine = "codex".into();
+                        new_bot.model = crate::model_policy::default_model(&tpl.id,self.beta_mode).into();
                         if !caller_bot_id.is_empty() {
                             new_bot.created_by = format!("bot:{caller_bot_id}");
                         }
@@ -3599,6 +3602,8 @@ impl BotFleetStore {
                 let from_model = b.model.clone();
                 let from_thinking = b.thinking_effort.clone();
                 if let Some(m) = body.get("model").and_then(Value::as_str) {
+                    crate::model_policy::validate_model(m.trim(),self.beta_mode)?;
+                    if b.model != m.trim() {b.active_session_id.clear();b.session_ids.clear();}
                     b.model = m.trim().to_string();
                 }
                 if let Some(eng) = body.get("engine").and_then(Value::as_str) {

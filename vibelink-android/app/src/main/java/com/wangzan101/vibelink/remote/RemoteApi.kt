@@ -22,7 +22,7 @@ object RemoteApi {
         val title: String,
         val model: String,
         val updated: Long,
-        val agent: String = "opencode",
+        val agent: String = "codex",
         val device: String = "",
         val cwd: String = "",
         /** opencode 的 /api/session/active 里正在跑的会话（老 agent 不带这个字段，默认 false）。 */
@@ -312,13 +312,6 @@ object RemoteApi {
             "$base?cursor=" + URLEncoder.encode(cursor, "UTF-8")
         }
         val root = get(hub, token, path)
-        if (agent == "deepseek") {
-            val messages = root.optJSONArray("messages") ?: return MessagesPage(emptyList(), null)
-            return MessagesPage((0 until messages.length()).mapNotNull { i ->
-                val o = messages.optJSONObject(i) ?: return@mapNotNull null
-                Message(role = o.optString("role"), text = o.optString("text"), reasoning = o.optString("reasoning"), at = o.optLong("at"), id = o.optString("id"), started = o.optLong("started"))
-            }, null)
-        }
         val arr = root.optJSONArray("data") ?: return MessagesPage(emptyList(), null)
         val list = (0 until arr.length()).mapNotNull { i ->
             val o = arr.optJSONObject(i) ?: return@mapNotNull null
@@ -474,22 +467,24 @@ object RemoteApi {
         session: String,
         text: String,
         files: List<JSONObject> = emptyList(),
-        agent: String = "opencode",
+        agent: String = "codex",
         cwd: String = "",
         botId: String = "",
         thinkingEffort: String = "",
         isolationMode: String = "",
+        model: String = "",
     ): JSONObject {
         val body = JSONObject().put("text", text).put("agent", agent)
         if (cwd.isNotBlank()) body.put("cwd", cwd)
         if (botId.isNotBlank()) body.put("botId", botId)
         if (thinkingEffort.isNotBlank()) body.put("thinkingEffort", thinkingEffort)
         if (isolationMode.isNotBlank()) body.put("isolationMode", isolationMode)
+        if (model.isNotEmpty()) body.put("model", model)
         if (files.isNotEmpty()) body.put("files", org.json.JSONArray(files))
         return post(hub, token, "/api/sessions/$device/$session/prompt", body)
     }
 
-    fun interrupt(hub: String, token: String, device: String, session: String, agent: String = "opencode") {
+    fun interrupt(hub: String, token: String, device: String, session: String, agent: String = "codex") {
         val body = JSONObject().put("agent", agent)
         post(hub, token, "/api/sessions/$device/$session/interrupt", body)
     }
@@ -505,6 +500,7 @@ object RemoteApi {
         botId: String = "",
         thinkingEffort: String = "",
         isolationMode: String = "",
+        model: String = "",
     ): Session {
         val body = JSONObject()
             .put("agent", agent)
@@ -513,6 +509,7 @@ object RemoteApi {
         if (botId.isNotBlank()) body.put("botId", botId)
         if (thinkingEffort.isNotBlank()) body.put("thinkingEffort", thinkingEffort)
         if (isolationMode.isNotBlank()) body.put("isolationMode", isolationMode)
+        if (model.isNotEmpty()) body.put("model", model)
         if (files.isNotEmpty()) body.put("files", org.json.JSONArray(files))
         val res = post(hub, token, "/api/sessions/$device/create", body)
         val id = res.optString("id").ifBlank { error("创建会话失败: 未返回会话 ID") }

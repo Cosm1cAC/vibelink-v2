@@ -11,18 +11,19 @@ $tokenFile = Join-Path $DataRoot 'dev/token.txt'
 $headers = @{ 'x-mesh-token' = (Get-Content -LiteralPath $tokenFile -Raw).Trim() }
 $bot = Invoke-RestMethod -Uri "$Hub/api/bots/$([uri]::EscapeDataString($BotId))" -Headers $headers
 if ($bot.bot) { $bot = $bot.bot }
-if ($bot.engine -ne 'deepseek') { throw 'Dispatch target must be a DeepSeek Bot' }
+if ($bot.engine -ne 'codex' -or $bot.model -ne 'auto/deepseek-v4.1-flash') { throw 'Dispatch target must be a DeepSeek Bot' }
 $prompt = Get-Content -LiteralPath $PromptFile -Raw -Encoding utf8
-$body = @{ agent = 'deepseek'; botId = $BotId; cwd = $bot.cwd; text = $prompt } | ConvertTo-Json -Depth 8
+$body = @{ agent = 'codex'; botId = $BotId; cwd = $bot.cwd; text = $prompt } | ConvertTo-Json -Depth 8
 $session = Invoke-RestMethod -Method Post -Uri "$Hub/api/sessions/pc/create" -Headers $headers -ContentType 'application/json; charset=utf-8' -Body ([Text.Encoding]::UTF8.GetBytes($body))
 $deadline = [datetime]::UtcNow.AddSeconds($TimeoutSeconds)
 do {
     Start-Sleep -Seconds 2
-    $messages = Invoke-RestMethod -Uri "$Hub/api/sessions/pc/deepseek/$($session.id)/messages" -Headers $headers
-    if (-not $messages.running) {
-        $reply = @($messages.messages | Where-Object role -eq 'assistant') | Select-Object -Last 1
-        if (-not $reply) { throw 'Bot completed without a reply' }
-        $reply.text
+    $messages = Invoke-RestMethod -Uri "$Hub/api/sessions/pc/codex/$($session.id)/messages" -Headers $headers
+    if ($messages.data) {
+        $reply = @($messages.data | Where-Object type -eq 'assistant') | Select-Object -Last 1
+        if (-not $reply) { continue }
+        if (-not $reply.time.completed) { continue }
+        @($reply.content | Where-Object type -eq 'text' | ForEach-Object text) -join "`n"
         exit 0
     }
 } while ([datetime]::UtcNow -lt $deadline)

@@ -5,6 +5,7 @@
 //!   VIBELINK_TOKEN=<hub token>
 //!   VIBELINK_DEVICE=laptop
 mod agents;
+mod codex_runtime;
 mod subscription_policy;
 mod pty_and_worktree;
 mod roots;
@@ -500,6 +501,14 @@ fn to_json(s: String) -> Result<serde_json::Value, String> {
 }
 
 fn handle_session_request(kind: &str, payload: &serde_json::Value, data: &std::path::Path) -> Result<serde_json::Value, String> {
+    if kind.starts_with("codex.runtime.") && payload.get("codexRuntime").is_none() {return Err("Runtime binding required".into());}
+    let normalized=kind.strip_prefix("codex.runtime.").map(|name|format!("codex.{name}"));
+    let kind=normalized.as_deref().unwrap_or(kind);
+    let runtime = codex_runtime::Runtime::parse(payload)?;
+    codex_runtime::with(runtime, || handle_scoped_session_request(kind,payload,data))
+}
+
+fn handle_scoped_session_request(kind: &str, payload: &serde_json::Value, data: &std::path::Path) -> Result<serde_json::Value, String> {
     let sid = payload.get("session").and_then(|x| x.as_str()).unwrap_or("").to_string();
     let text = payload.get("text").and_then(|x| x.as_str()).unwrap_or("");
     let cwd = payload.get("cwd").and_then(|x| x.as_str()).unwrap_or("");
@@ -512,11 +521,7 @@ fn handle_session_request(kind: &str, payload: &serde_json::Value, data: &std::p
         return Err("Runtime disabled: use official Codex CLI or DeepSeek API".into());
     }
     match kind {
-        "sessions.list" => {
-            let listed = open(&|c| c.list()).and_then(to_json);
-            let active = open(&|c| c.active()).and_then(to_json).ok();
-            Ok(build_sessions(listed, active))
-        }
+        "sessions.list" | "codex.list" => Ok(serde_json::json!({"agents":[{"id":"codex","name":"Codex","sessions":agents::codex_sessions()}]})),
         // hub 的委派任务用它判断一轮是否跑完：{ running: bool, known: bool }
         "session.status" => {
             let agent = payload.get("agent").and_then(|x| x.as_str()).unwrap_or("");
@@ -532,12 +537,16 @@ fn handle_session_request(kind: &str, payload: &serde_json::Value, data: &std::p
         }
         "codex.messages" => agents::codex_messages(&sid, cursor),
         "codex.prompt" => {
-            let (eff_cwd, eff_text) = agents::prepare_session_request(cwd, text, payload);
+            let runtime = codex_runtime::current();
+            let isolated_cwd = if runtime.beta { runtime.prepare()?; runtime.workspace().to_string_lossy().to_string() } else { cwd.to_string() };
+            let (eff_cwd, eff_text) = if runtime.beta { (isolated_cwd, if text.is_empty(){String::new()}else{format!("{}\n\n{}",payload.pointer("/botContext/systemPrompt").and_then(serde_json::Value::as_str).unwrap_or(""),text)}) } else { agents::prepare_session_request(&isolated_cwd, text, payload) };
             agents::codex_prompt(&sid, &eff_text, if eff_cwd.is_empty() { None } else { Some(eff_cwd.as_str()) }, payload.get("files"))
         }
         "codex.interrupt" => agents::codex_interrupt(&sid),
         "codex.create" => {
-            let (eff_cwd, eff_text) = agents::prepare_session_request(cwd, text, payload);
+            let runtime = codex_runtime::current();
+            let isolated_cwd = if runtime.beta { runtime.prepare()?; runtime.workspace().to_string_lossy().to_string() } else { cwd.to_string() };
+            let (eff_cwd, eff_text) = if runtime.beta { (isolated_cwd, if text.is_empty(){String::new()}else{format!("{}\n\n{}",payload.pointer("/botContext/systemPrompt").and_then(serde_json::Value::as_str).unwrap_or(""),text)}) } else { agents::prepare_session_request(&isolated_cwd, text, payload) };
             agents::codex_create(&eff_cwd, &eff_text, payload.get("files"))
         }
         "claude.messages" => agents::claude_messages(&sid, cursor),
@@ -1073,3 +1082,6 @@ fn _now(_: u64) {
 
 
 
+
+#[cfg(test)]
+mod gateway_smoke;

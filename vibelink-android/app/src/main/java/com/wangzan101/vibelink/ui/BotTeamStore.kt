@@ -121,6 +121,7 @@ data class BotFriend(
     val department: String,
     val lifecycle: BotLifecycle,
     val engine: String,
+    val model: String = "",
     val device: String = "pc",
     val cwd: String = "D:\\AI\\VibeLink",
     /** 对外协作名片（How other bots see it in `<bot_directory>`） */
@@ -998,7 +999,8 @@ object BotTeamStore {
             jobTitle = tpl.jobTitle,
             department = tpl.department,
             lifecycle = tpl.lifecycle,
-            engine = BotModelPolicy.defaultEngine(tpl.id),
+            engine = "codex",
+            model = BotModelPolicy.defaultModel(tpl.id),
             device = "pc",
             cwd = cwd,
             publicDescription = tpl.publicDescription,
@@ -1213,12 +1215,13 @@ object BotTeamStore {
                 .putBoolean(KEY_CLEAN_STALE_SESSIONS_V7, true)
                 .apply()
         }
-        if (!p.getBoolean("model_policy_v8", false)) {
+        if (!p.getBoolean("model_policy_v10", false)) {
             val upgraded = readBotsFromPrefs(context).map { old ->
                 val tpl = TEMPLATES.firstOrNull { it.id == old.templateId }
                 val engine = BotModelPolicy.defaultEngine(old.templateId)
                 old.copy(
                     engine = engine,
+                    model = BotModelPolicy.defaultModel(old.templateId),
                     name = if (isDefaultOrLegacyBotName(old.name)) tpl?.defaultName ?: old.jobTitle else old.name,
                     avatar = if (old.avatar.startsWith("preset:")) "" else old.avatar,
                     publicDescription = tpl?.publicDescription ?: old.publicDescription,
@@ -1228,7 +1231,7 @@ object BotTeamStore {
                 ).also { AgentPrefs.setAvatar(context, it.id, it.avatar) }
             }
             writeBotsToPrefs(context, upgraded)
-            p.edit().putBoolean("model_policy_v8", true).apply()
+            p.edit().putBoolean("model_policy_v10", true).apply()
         }
         if (!initialized) {
             initialized = true
@@ -1466,7 +1469,7 @@ object BotTeamStore {
                     put("department", bot.department)
                     put("description", cleanDesc)
                     put("system_prompt", cleanPrompt)
-                    put("model", bot.engine)
+                    put("model", bot.model)
                     put("thinking_effort", bot.thinkingEffort)
                     put("approval_mode", bot.approvalMode)
                     put("isolation_mode", bot.isolationMode)
@@ -1493,6 +1496,7 @@ object BotTeamStore {
                     put("department", bot.department)
                     put("lifecycle", bot.lifecycle.name)
                     put("engine", bot.engine)
+                    put("model", bot.model)
                     put("thinkingEffort", bot.thinkingEffort)
                     put("isolationMode", bot.isolationMode)
                     put("approvalMode", bot.approvalMode)
@@ -1767,7 +1771,7 @@ object BotTeamStore {
         val lcStr = o.optString("lifecycle", "PROJECT")
         val lifecycle = if (lcStr == "MANAGEMENT") BotLifecycle.MANAGEMENT else BotLifecycle.PROJECT
         val parsedEngine = BotModelPolicy.normalize(o.optString("engine"), o.optString("templateId"))
-        val parsedModel = o.optString("model", "")
+        val parsedModel = BotModelPolicy.normalizeModel(o.optString("model"), o.optString("templateId"), o.has("model"))
         val rawName = o.optString("name").trim()
         val parsedName = if (parsedEngine.equals("antigravity", ignoreCase = true) && rawName == "Grok") {
             "Gemini"
@@ -1803,6 +1807,7 @@ object BotTeamStore {
             department = parsedDept,
             lifecycle = lifecycle,
             engine = parsedEngine,
+            model = parsedModel,
             device = o.optString("device", "pc"),
             cwd = o.optString("cwd", "D:\\AI\\VibeLink"),
             publicDescription = parsedPublicDesc,
@@ -1821,8 +1826,8 @@ object BotTeamStore {
             defaultRoutines = routines,
             openWork = openWork,
             memories = memories,
-            activeSessionId = if (parsedEngine == o.optString("engine")) o.optString("activeSessionId") else "",
-            sessionIds = if (parsedEngine == o.optString("engine")) sIds else emptyList(),
+            activeSessionId = if (parsedEngine == o.optString("engine") && parsedModel == o.optString("model")) o.optString("activeSessionId") else "",
+            sessionIds = if (parsedEngine == o.optString("engine") && parsedModel == o.optString("model")) sIds else emptyList(),
             archived = o.optBoolean("archived", false),
             lastText = o.optString("lastText"),
             lastAt = o.optLong("lastAt"),
@@ -1839,6 +1844,7 @@ object BotTeamStore {
             put("department", b.department)
             put("lifecycle", b.lifecycle.name)
             put("engine", b.engine)
+            put("model", b.model)
             put("device", b.device)
             put("cwd", b.cwd)
             put("publicDescription", b.publicDescription)
@@ -1978,10 +1984,13 @@ object BotTeamStore {
      * 新增或修改 Bot 好友，并将新昵称、新职位、新引擎、新头像实时同步到所有群聊摘要与历史消息中。
      */
     fun upsertBot(context: Context, bot: BotFriend) {
+        val previous = getBot(context, bot.id)
         val normalized = bot.copy(
             name = bot.name.trim().ifBlank { bot.jobTitle },
             avatar = bot.avatar.trim(),
             engine = BotModelPolicy.requireEngine(bot.engine),
+            activeSessionId = if (previous != null && (previous.engine != bot.engine || previous.model != bot.model)) "" else bot.activeSessionId,
+            sessionIds = if (previous != null && (previous.engine != bot.engine || previous.model != bot.model)) emptyList() else bot.sessionIds,
         )
         AgentPrefs.setAvatar(context, normalized.id, normalized.avatar)
         val all = listBots(context, includeArchived = true).toMutableList()
@@ -2418,6 +2427,7 @@ object BotTeamStore {
                     token = token,
                     device = latestBot.device.ifBlank { "pc" },
                     agent = engine,
+                    model = latestBot.model,
                     cwd = latestBot.cwd,
                     text = "",
                     botId = latestBot.id,
@@ -2707,6 +2717,7 @@ object BotTeamStore {
                 session = sessionId,
                 text = fullPrompt,
                 agent = engine,
+                model = liveBot.model,
                 cwd = liveBot.cwd,
                 files = files,
                 botId = liveBot.id,

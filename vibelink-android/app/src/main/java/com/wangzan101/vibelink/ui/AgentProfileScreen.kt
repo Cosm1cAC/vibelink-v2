@@ -874,7 +874,7 @@ fun AgentProfileScreen(
             .distinct()
             .take(5)
         NewRemoteSessionDialog(
-            initialAgent = if (targetEngine in BotModelPolicy.engines.toSet()) targetEngine else "deepseek",
+            initialAgent = if (targetEngine in BotModelPolicy.engines.toSet()) targetEngine else "codex",
             initialDevice = currentBot?.device ?: sessions.firstOrNull()?.device ?: "pc",
             initialCwd = currentBot?.cwd ?: recentCwds.firstOrNull() ?: "D:\\AI\\VibeLink",
             recentCwds = recentCwds,

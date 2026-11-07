@@ -15,7 +15,9 @@ use serde_json::{json, Value};
 mod approvals;
 mod auth;
 mod bots;
-mod deepseek;
+mod model_gateway;
+mod model_usage;
+mod agent_sessions;
 mod model_policy;
 use tower::ServiceExt;
 mod policy;
@@ -51,9 +53,12 @@ struct App {
     data: PathBuf,
     store: Mutex<Store>,
     policy: Mutex<policy::Policy>,
-    sessions: Mutex<SessionPlane>,
+    sessions: Arc<Mutex<SessionPlane>>,
     http: reqwest::Client,
-    deepseek: deepseek::Runtime,
+    bindings: agent_sessions::Sessions,
+    usage: Arc<model_usage::UsageStore>,
+    grants: Arc<model_gateway::Grants>,
+    magpie: String,
     tenant_id: Option<String>,
     tenant_apps: Mutex<HashMap<String, Shared>>,
 }
@@ -166,6 +171,12 @@ async fn auth_mw(State(app): State<Shared>, mut req: Request, next: Next) -> Res
         return next.run(req).await;
     }
     let presented = auth::presented_token(req.headers(), req.uri().query());
+    if path.starts_with("/api/llm/") {
+        if let Some(identity) = presented.as_deref().and_then(|t|app.grants.verify(t)) {
+            req.extensions_mut().insert(identity);
+            return next.run(req).await;
+        }
+    }
     let Some(ctx) = presented.as_deref().and_then(|t| app.auth.verify(t)) else {
         return (StatusCode::UNAUTHORIZED, Json(json!({"error": "unauthorized"}))).into_response();
     };
@@ -188,8 +199,8 @@ async fn auth_mw(State(app): State<Shared>, mut req: Request, next: Next) -> Res
                     auth: app.auth.clone(), tenants: app.tenants.clone(), beta_mode: true,
                     bots: bots::BotFleetStore::load_for_edition(dir.clone(), true),
                     approvals: approvals::ApprovalGate::load(dir.clone()), voice: voice::VoiceService::load(dir.clone()),
-                    deepseek: deepseek::Runtime::load(dir.clone()), tenant_id: Some(tid.clone()), data: dir.clone(), store: Mutex::new(load(&dir)),
-                    policy: Mutex::new(load_policy(&dir)), sessions: Mutex::new(SessionPlane::default()),
+                    bindings: agent_sessions::Sessions::load(dir.clone()), usage: app.usage.clone(), grants: app.grants.clone(), magpie: app.magpie.clone(), tenant_id: Some(tid.clone()), data: dir.clone(), store: Mutex::new(load(&dir)),
+                    policy: Mutex::new(load_policy(&dir)), sessions: app.sessions.clone(),
                     http: app.http.clone(), tenant_apps: Mutex::new(HashMap::new()),
                 })
             }).clone()
@@ -206,7 +217,7 @@ async fn auth_mw(State(app): State<Shared>, mut req: Request, next: Next) -> Res
 fn tenant_route_allowed(path: &str) -> bool {
     path == "/api/bots" || path.starts_with("/api/bots/") || path == "/api/bot-groups" || path.starts_with("/api/bot-groups/")
         || path.starts_with("/api/sessions/") || path.starts_with("/api/session/")
-        || path.starts_with("/api/llm/") || path == "/api/beta/quota" || path == "/api/devices"
+        || path.starts_with("/api/llm/") || path == "/api/usage" || path == "/api/beta/quota" || path == "/api/devices"
 }
 
 /// CONNECT 网关的鉴权：X-Mesh-Token 必须是 admin / client 作用域。
@@ -629,15 +640,38 @@ async fn put_config(State(app): State<Shared>, Path(name): Path<String>, body: S
 
 /// Queue a request for the device's agent and wait for its reply.
 async fn call_agent(app: &Shared, device: &str, kind: &str, payload: Value, secs: u64) -> Result<Value, String> {
-    if kind.starts_with("deepseek.") {
-        if kind == "deepseek.prompt" || (kind == "deepseek.create" && payload["text"].as_str().is_some_and(|s| !s.is_empty())) {
-            if let Some(tid) = &app.tenant_id { app.tenants.check_and_consume_quota(tid, payload.to_string().len() as u64)?; }
-        }
-        return deepseek::dispatch(app, kind, payload).await;
+    if kind.starts_with("scheduler.") && app.beta_mode {
+        return Err("Public Bot schedules require metered Hub execution and are currently paused".into());
     }
-    if app.beta_mode { return Err("Public beta cannot access development CLI or workspace resources".into()); }
-    if kind.starts_with("antigravity.") || kind.starts_with("claude.") || kind.starts_with("opencode.") {
-        return Err("This model runtime is disabled; use Codex official CLI or DeepSeek API".into());
+    if kind == "scheduler.action" && payload["action"] == "create"
+        && payload["botId"].as_str().is_some_and(|id| !id.is_empty()) {
+        return Err("Bot schedules paused until renewable per-user model grants are supported".into());
+    }
+
+    let mut payload = payload;
+    let mut binding = None;
+    let mut old_session = String::new();
+    let mut actual_device = device.to_string();
+    if kind.starts_with("codex.") || kind == "sessions.list" {
+        let sid = payload["session"].as_str().unwrap_or("").to_string();
+        let stored = app.bindings.get(&sid);
+        if app.beta_mode && !sid.is_empty() && stored.is_none() { return Err("Session is not bound to this tenant's agent".into()); }
+        let b = match stored {Some(b)=>b,None=>agent_sessions::new_binding(app,device,&payload)?};
+        if !sid.is_empty() && payload["model"].as_str().is_some_and(|m|m!=b.model) {return Err("Session model is bound; create a new session to change it".into());}
+        if b.agent != "codex" { return Err("Session agent mismatch".into()); }
+        if let Some(bot) = payload["botId"].as_str().and_then(|id|app.bots.get_bot(id)) {
+            if !sid.is_empty() && (bot.id != b.bot_id || bot.model != b.model) { return Err("Session model/Bot binding mismatch; create a new session".into()); }
+        }
+        if let Some(caller) = payload.get("meterIdentity").filter(|v|!v.is_null()) {
+            let caller: model_usage::Identity = serde_json::from_value(caller.clone()).map_err(|_|"Invalid identity")?;
+            if !sid.is_empty() && caller.user_id != b.owner.user_id { return Err("Session belongs to another user".into()); }
+        }
+        actual_device = b.device.clone();
+        payload["codexRuntime"] = agent_sessions::runtime(app,&b,matches!(kind,"codex.create"|"codex.prompt"));
+        if !sid.is_empty() {payload["session"] = json!(b.id);old_session=sid;}
+        if kind=="codex.create" || kind=="codex.prompt" {binding=Some(b);}
+    } else if app.beta_mode || kind.starts_with("antigravity.") || kind.starts_with("claude.") || kind.starts_with("opencode.") {
+        return Err("This runtime or development resource is unavailable".into());
     }
     let (id, rx) = {
         let mut s = app.sessions.lock().unwrap();
@@ -646,13 +680,22 @@ async fn call_agent(app: &Shared, device: &str, kind: &str, payload: Value, secs
         let (tx, rx) = tokio::sync::oneshot::channel();
         s.waiters.insert(id.clone(), tx);
         s.queue
-            .entry(device.to_string())
+            .entry(actual_device.to_string())
             .or_default()
-            .push(json!({ "id": id, "kind": kind, "payload": payload }));
+            .push(json!({ "id": id, "kind": if kind.starts_with("codex.") {format!("codex.runtime.{}",kind.trim_start_matches("codex."))} else {kind.into()}, "payload": payload }));
         (id, rx)
     };
     match tokio::time::timeout(std::time::Duration::from_secs(secs), rx).await {
-        Ok(Ok(Ok(v))) => Ok(v),
+        Ok(Ok(Ok(mut v))) => {
+            if let Some(mut b) = binding {
+                b.id = v["id"].as_str().unwrap_or(&old_session).to_string();
+                if !b.id.is_empty() {
+                    v["agent"]=json!("codex");v["model"]=json!(b.model);v["device"]=json!(b.device);
+                    app.bindings.bind(&old_session,b);
+                }
+            }
+            Ok(v)
+        },
         Ok(Ok(Err(e))) => Err(e),
         Ok(Err(_)) => Err("agent disconnected".into()),
         Err(_) => {
@@ -715,18 +758,32 @@ async fn sessions_list(State(app): State<Shared>, Query(q): Query<HashMap<String
 }
 
 /// 所有 agent 的会话（opencode / Codex / Claude / Antigravity），手机端先选 agent 再进会话。
-async fn sessions_all(State(app): State<Shared>, Query(q): Query<HashMap<String, String>>) -> Response {
+async fn sessions_all(State(app): State<Shared>, Query(q): Query<HashMap<String, String>>, ctx: Option<axum::Extension<auth::AuthCtx>>) -> Response {
     let device = q.get("device").cloned().unwrap_or_default();
     if device.is_empty() {
         return session_error("device required".into());
     }
-    let mut agents = vec![app.deepseek.list()];
-    if !app.beta_mode {
-        if let Ok(v) = call_agent(&app, &device, "sessions.list", json!({}), 15).await {
-            if let Some(list) = v["agents"].as_array() { agents.extend(list.iter().filter(|a| a["id"] == "codex").cloned()); }
+    let caller = agent_sessions::caller(ctx.as_ref().map(|c| &c.0));
+    let bindings = app.bindings.list().into_iter().filter(|b| {
+        caller["userId"].as_str().is_none_or(|id| id == b.owner.user_id)
+    });
+    let mut sessions = Vec::new();
+    let mut scopes = std::collections::HashSet::new();
+    for binding in bindings {
+        if !scopes.insert(binding.scope.clone()) {continue;}
+        let payload=json!({"model":binding.model,"meterIdentity":binding.owner,"codexRuntime":agent_sessions::runtime(&app,&binding,false)});
+        // List against the binding's profile, including GPT and DeepSeek Codex homes.
+        let mut payload=payload;payload["session"]=json!(binding.id);
+        if let Ok(v)=call_agent(&app,&binding.device,"codex.list",payload,8).await {
+            if let Some(list)=v.pointer("/agents/0/sessions").and_then(Value::as_array){sessions.extend(list.iter().cloned().map(|mut session|{session["model"]=json!(binding.model);session["device"]=json!(binding.device);session}));}
         }
     }
-    Json(json!({"agents": agents})).into_response()
+    if scopes.is_empty() && !app.beta_mode {
+        if let Ok(v)=call_agent(&app,&device,"codex.list",json!({"meterIdentity":caller}),8).await {
+            if let Some(list)=v.pointer("/agents/0/sessions").and_then(Value::as_array){sessions.extend(list.iter().cloned());}
+        }
+    }
+    Json(json!({"agents":[{"id":"codex","name":"Codex","sessions":sessions}]})).into_response()
 }
 
 /// 按 agent 取消息：opencode 走本地服务，Codex/Claude 读各自的 jsonl。
@@ -734,14 +791,15 @@ async fn session_messages_by_agent(
     State(app): State<Shared>,
     Path((dev, agent, sid)): Path<(String, String, String)>,
     Query(q): Query<HashMap<String, String>>,
+    ctx: Option<axum::Extension<auth::AuthCtx>>,
 ) -> Response {
     let kind = match agent.as_str() {
-        "deepseek" | "codex" => format!("{agent}.messages"),
+        "codex" => format!("{agent}.messages"),
         other => return session_error(format!("unknown agent {other}")),
     };
     // 只把 cursor 传下去；opencode 的 cursor 不能和 order 同时出现，order 由 agent 决定
     let cursor = q.get("cursor").cloned().unwrap_or_default();
-    match call_agent(&app, &dev, &kind, json!({ "session": sid, "cursor": cursor }), 15).await {
+    match call_agent(&app, &dev, &kind, json!({ "session": sid, "cursor": cursor, "meterIdentity": agent_sessions::caller(ctx.as_ref().map(|c| &c.0)) }), 15).await {
         Ok(v) => Json(v).into_response(),
         Err(e) => session_error(e),
     }
@@ -756,12 +814,12 @@ async fn session_messages(State(app): State<Shared>, Path((dev, sid)): Path<(Str
 fn normalize_agent_kind(agent: Option<&str>, sid: &str) -> Result<String, String> {
     let a = agent.unwrap_or("").trim();
     match a {
-        "deepseek" | "codex" => Ok(a.to_string()),
+        "codex" => Ok(a.to_string()),
         "" => {
             if sid.starts_with("ses_") {
-                Ok("deepseek".to_string())
+                Ok("codex".to_string())
             } else {
-                Ok("deepseek".to_string())
+                Ok("codex".to_string())
             }
         }
         other => Err(format!("unknown agent {other}")),
@@ -771,11 +829,12 @@ fn normalize_agent_kind(agent: Option<&str>, sid: &str) -> Result<String, String
 async fn session_create(
     State(app): State<Shared>,
     Path(dev): Path<String>,
+    ctx: Option<axum::Extension<auth::AuthCtx>>,
     Json(body): Json<Value>,
 ) -> Response {
-    let agent = body.get("agent").and_then(|v| v.as_str()).unwrap_or("deepseek").trim().to_string();
+    let agent = body.get("agent").and_then(|v| v.as_str()).unwrap_or("codex").trim().to_string();
     let kind = match agent.as_str() {
-        "deepseek" | "codex" => format!("{agent}.create"),
+        "codex" => format!("{agent}.create"),
         other => return session_error(format!("unknown agent {other}")),
     };
     let cwd = body.get("cwd").and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -790,6 +849,8 @@ async fn session_create(
         if bot.engine != agent { return (StatusCode::BAD_REQUEST, Json(json!({"error": "Bot runtime binding mismatch"}))).into_response(); }
     }
     let mut payload = json!({ "cwd": cwd, "text": text });
+    payload["meterIdentity"] = agent_sessions::caller(ctx.as_ref().map(|c|&c.0));
+    if let Some(model)=body.get("model") {payload["model"]=model.clone();}
     if !bot_id.is_empty() {
         payload["botId"] = json!(bot_id);
         if let Some(bot_ctx) = app.bots.build_bot_context_prompt(&bot_id) {
@@ -831,6 +892,7 @@ async fn session_create(
 async fn session_prompt(
     State(app): State<Shared>,
     Path((dev, sid)): Path<(String, String)>,
+    ctx: Option<axum::Extension<auth::AuthCtx>>,
     Json(body): Json<Value>,
 ) -> Response {
     let text = body.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -848,6 +910,8 @@ async fn session_prompt(
     };
     let kind = format!("{agent}.prompt");
     let mut payload = json!({ "session": sid, "text": text });
+    payload["meterIdentity"] = agent_sessions::caller(ctx.as_ref().map(|c|&c.0));
+    if let Some(model)=body.get("model") {payload["model"]=model.clone();}
     if let Some(bot_id) = body.get("botId").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
         payload["botId"] = json!(bot_id);
         if let Some(bot_ctx) = app.bots.build_bot_context_prompt(bot_id) {
@@ -1499,6 +1563,7 @@ async fn voice_call_turn_post(State(app): State<Shared>, Json(body): Json<Value>
 async fn session_interrupt(
     State(app): State<Shared>,
     Path((dev, sid)): Path<(String, String)>,
+    ctx: Option<axum::Extension<auth::AuthCtx>>,
     body: Option<Json<Value>>,
 ) -> Response {
     let req_agent = body
@@ -1509,7 +1574,7 @@ async fn session_interrupt(
         Err(e) => return session_error(e),
     };
     let kind = format!("{agent}.interrupt");
-    match call_agent(&app, &dev, &kind, json!({ "session": sid }), 6).await {
+    match call_agent(&app, &dev, &kind, json!({ "session": sid, "meterIdentity": agent_sessions::caller(ctx.as_ref().map(|c| &c.0)) }), 6).await {
         Ok(v) => Json(v).into_response(),
         Err(e) => session_error(e),
     }
@@ -1630,46 +1695,6 @@ async fn tcp_exit_gateway(app: Shared) {
             let r = tokio::io::copy_bidirectional(&mut sock, &mut up).await;
             println!("[hub] exit {target} closed: {r:?}");
         });
-    }
-}
-
-// ---------------- Direct DeepSeek API (subscription models never enter this path) ----------------
-async fn llm_proxy(State(app): State<Shared>, Path(rest): Path<String>, req: Request) -> Response {
-    let rest = rest.strip_prefix("v1/").unwrap_or(&rest);
-    let config = match deepseek::Config::load(app.beta_mode) {
-        Ok(config) => config,
-        Err(e) => return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": e}))).into_response(),
-    };
-    if rest == "models" && req.method() == axum::http::Method::GET {
-        return Json(json!({"object":"list", "data":[{"id":config.model,"object":"model","owned_by":"deepseek"}]})).into_response();
-    }
-    if rest != "chat/completions" || req.method() != axum::http::Method::POST {
-        return (StatusCode::FORBIDDEN, Json(json!({"error":"Only DeepSeek chat completions are available"}))).into_response();
-    }
-    let tid = req.extensions().get::<auth::AuthCtx>().and_then(|c| tenants::extract_tenant_id(&c.name).map(str::to_string));
-    let bytes = match axum::body::to_bytes(req.into_body(), 8 * 1024 * 1024).await {
-        Ok(b) => b, Err(_) => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
-    };
-    let mut payload = match serde_json::from_slice::<Value>(&bytes) {
-        Ok(Value::Object(map)) => Value::Object(map),
-        _ => return (StatusCode::BAD_REQUEST, Json(json!({"error":"JSON object required"}))).into_response(),
-    };
-    if let Some(model) = payload["model"].as_str() {
-        if model != config.model { return (StatusCode::FORBIDDEN, Json(json!({"error":"Model is not available on this DeepSeek channel"}))).into_response(); }
-    }
-    if let Some(tid) = tid {
-        if let Err(e) = app.tenants.check_and_consume_quota(&tid, bytes.len() as u64) {
-            return (StatusCode::TOO_MANY_REQUESTS, Json(json!({"error":e}))).into_response();
-        }
-    }
-    payload["model"] = json!(config.model);
-    match deepseek::client().post("https://api.deepseek.com/chat/completions").bearer_auth(&config.key).json(&payload).send().await {
-        Ok(resp) => {
-            let mut builder = Response::builder().status(resp.status());
-            if let Some(ct) = resp.headers().get(axum::http::header::CONTENT_TYPE) { builder = builder.header(axum::http::header::CONTENT_TYPE, ct); }
-            builder.body(Body::from_stream(resp.bytes_stream())).unwrap_or_else(|_| StatusCode::BAD_GATEWAY.into_response())
-        }
-        Err(_) => (StatusCode::BAD_GATEWAY, Json(json!({"error":"DeepSeek API unreachable"}))).into_response(),
     }
 }
 
@@ -2136,21 +2161,26 @@ async fn beta_activate_post(State(app): State<Shared>, Json(body): Json<Value>) 
     let code = body.get("code").and_then(|v| v.as_str()).unwrap_or("");
     let device = body.get("device").and_then(|v| v.as_str()).unwrap_or("mobile");
     match app.tenants.activate(code, device) {
-        Ok(t) => Json(json!({
+        Ok(t) => {
+            let identity=model_usage::Identity{user_id:t.tenant_id.clone(),label:t.label.clone(),beta:true};
+            let usage=app.usage.summary(&identity,&model_usage::day_at(now_ms()));
+            let mut response=json!({
             "ok": true,
             "tenantId": t.tenant_id,
             "label": t.label,
             "token": t.client_token,
             "agentToken": t.agent_token,
             "hubUrl": "https://hub.vibelink.cloud",
-            "model": "deepseek-flash",
+            "model": model_policy::DEEPSEEK_MODEL,
             "modelDisplayName": "DeepSeek V4.1 Flash (内测免费赠送)",
             "dailyLimitRequests": t.daily_limit_requests,
             "usedRequests": t.used_requests,
             "dailyLimitChars": t.daily_limit_chars,
             "usedChars": t.used_chars,
-        }))
-        .into_response(),
+        });
+        for field in ["usedRequests","dailyLimitRequests","usedChars","dailyLimitChars","totalTokens","inputTokens","outputTokens","cachedTokens","estimatedTokens","dailyLimitTokens"] {response[field]=usage[field].clone();}
+        Json(response).into_response()
+        },
         Err(e) => (StatusCode::FORBIDDEN, Json(json!({"ok": false, "error": e}))).into_response(),
     }
 }
@@ -2162,28 +2192,35 @@ async fn beta_quota_get(
     let Some(axum::Extension(c)) = ctx else {
         return (StatusCode::UNAUTHORIZED, Json(json!({"error": "unauthorized"}))).into_response();
     };
-    if let Some(tid) = tenants::extract_tenant_id(&c.name) {
-        if let Some(info) = app.tenants.quota_info(tid) {
-            return Json(info).into_response();
-        }
-    }
-    Json(json!({
-        "tenantId": "owner",
-        "label": "开发者全量通道",
-        "model": "deepseek-flash",
-        "modelDisplayName": "DeepSeek V4.1 Flash",
-        "usedRequests": 0,
-        "dailyLimitRequests": 999999,
-    }))
-    .into_response()
+    let identity=model_gateway::identity(&c);
+    let mut data=app.usage.summary(&identity,&model_usage::day_at(now_ms()));
+    data["tenantId"]=json!(identity.user_id);
+    Json(data).into_response()
 }
 
 async fn beta_tenants_get(State(app): State<Shared>) -> Response {
     Json(json!({
         "betaMode": app.beta_mode,
-        "tenants": app.tenants.list_summary(),
+        "tenants": app.tenants.list_summary().into_iter().map(|mut row|{
+            let identity=model_usage::Identity{user_id:row["tenantId"].as_str().unwrap_or("").into(),label:row["label"].as_str().unwrap_or("").into(),beta:true};
+            let usage=app.usage.summary(&identity,&model_usage::day_at(now_ms()));
+            if let Some(object)=usage.as_object(){for(k,v)in object{row[k]=v.clone();}}row
+        }).collect::<Vec<_>>(),
     }))
     .into_response()
+}
+
+async fn usage_self(State(app): State<Shared>, axum::Extension(ctx):axum::Extension<auth::AuthCtx>) -> Json<Value> {
+    Json(app.usage.summary(&model_gateway::identity(&ctx), &model_usage::day_at(now_ms())))
+}
+async fn usage_users(State(app):State<Shared>, Query(q):Query<HashMap<String,String>>) -> Json<Value> {
+    Json(app.usage.users(q.get("day").map(String::as_str).unwrap_or(&model_usage::day_at(now_ms()))))
+}
+async fn usage_requests(State(app):State<Shared>) -> Json<Value> {Json(app.usage.recent())}
+async fn usage_limits(State(app):State<Shared>, Json(body):Json<Value>) -> Response {
+    let result=serde_json::from_value::<model_usage::Limits>(body["limits"].clone()).map_err(|e|e.to_string())
+        .and_then(|limits|app.usage.set_limits(body["userId"].as_str().unwrap_or(""),limits));
+    match result {Ok(())=>Json(json!({"ok":true})).into_response(),Err(e)=>(StatusCode::BAD_REQUEST,Json(json!({"error":e}))).into_response()}
 }
 
 #[tokio::main]
@@ -2214,19 +2251,24 @@ async fn main() {
         bots: bots_store,
         approvals: approvals_gate,
         voice: voice_svc,
-        deepseek: deepseek::Runtime::load(data.clone()),
+        bindings: agent_sessions::Sessions::load(data.clone()),
+        usage: Arc::new(model_usage::UsageStore::load(data.clone()).expect("load model usage ledger")),
+        grants: Arc::new(model_gateway::Grants::default()),
+        magpie: model_gateway::upstream(),
         tenant_id: None,
         tenant_apps: Mutex::new(HashMap::new()),
         data: data.clone(),
         store: Mutex::new(store),
         policy: Mutex::new(load_policy(&data)),
-        sessions: Mutex::new(SessionPlane::default()),
+        sessions: Arc::new(Mutex::new(SessionPlane::default())),
         http: reqwest::Client::builder()
             .no_proxy()
             .connect_timeout(std::time::Duration::from_secs(5))
             .build()
             .unwrap_or_default(),
     });
+
+    app.usage.import_legacy(app.tenants.list_summary()).expect("migrate tenant usage");
 
     let router = api_router(app.clone()).layer(middleware::from_fn_with_state(app.clone(), auth_mw));
 
@@ -2268,7 +2310,7 @@ fn api_router(app: Shared) -> Router {
         .route("/api/config/{name}", get(get_config).post(put_config))
         .route("/phone/{name}", get(phone))
         .route("/api/apk/latest", get(apk_latest))
-        .route("/api/llm/{*rest}", any(llm_proxy))
+        .route("/api/llm/{*rest}", any(model_gateway::proxy))
         .route("/api/device-link/{*rest}", any(cindy_device_link_proxy))
         .route("/api/cindy/join-link", get(cindy_join_link_get).post(cindy_join_link_post))
         .route("/api/agent/latest", get(agent_latest))
@@ -2316,6 +2358,10 @@ fn api_router(app: Shared) -> Router {
         .route("/api/beta/activate", post(beta_activate_post))
         .route("/api/beta/quota", get(beta_quota_get))
         .route("/api/beta/tenants", get(beta_tenants_get))
+        .route("/api/usage", get(usage_self))
+        .route("/api/usage/users", get(usage_users))
+        .route("/api/usage/requests", get(usage_requests))
+        .route("/api/usage/limits", post(usage_limits))
         .route("/apk", get(apk_short))
         .route("/apk/{name}", get(apk_file))
         .layer(DefaultBodyLimit::max(64 * 1024 * 1024))

@@ -40,7 +40,11 @@ pub struct BetaTenantStore {
 
 /// 计算北京时间 (UTC+8) 的日期字符串 YYYY-MM-DD，用于每日零点自动重置免费额度
 fn current_day_utc8() -> String {
-    let secs = (now_ms() / 1000) + 8 * 3600;
+    day_utc8(now_ms())
+}
+
+pub(crate) fn day_utc8(ms: u64) -> String {
+    let secs = (ms / 1000) + 8 * 3600;
     let days = secs / 86400;
     // Civil date from days since 1970-01-01 (Howard Hinnant algorithm)
     let z = days as i64 + 719468;
@@ -74,7 +78,7 @@ impl BetaTenantStore {
                 if existing_ids.contains(&tid) {
                     continue;
                 }
-                let suffix = &random_token()[..6].to_ascii_uppercase();
+                let suffix = &random_token()[..24].to_ascii_uppercase();
                 let short_code = format!("VLK-BETA-{idx:02}");
                 let invite_code = format!("VLK-BETA-{idx:02}-{suffix}");
                 tenants.push(BetaTenant {
@@ -134,7 +138,7 @@ impl BetaTenantStore {
         let today = current_day_utc8();
         let mut list = self.inner.lock().unwrap();
         let Some(t) = list.iter_mut().find(|t| {
-            t.invite_code.eq_ignore_ascii_case(&clean) || t.short_code.eq_ignore_ascii_case(&clean)
+            t.invite_code.eq_ignore_ascii_case(&clean)
         }) else {
             return Err("内测邀请码无效，请核对后重试");
         };
@@ -153,54 +157,6 @@ impl BetaTenantStore {
         drop(list);
         self.persist();
         Ok(cloned)
-    }
-
-    pub fn check_and_consume_quota(&self, tenant_id: &str, chars: u64) -> Result<(u64, u64), String> {
-        let today = current_day_utc8();
-        let mut list = self.inner.lock().unwrap();
-        let Some(t) = list.iter_mut().find(|t| t.tenant_id == tenant_id) else {
-            return Ok((0, 999999));
-        };
-        if t.used_day != today {
-            t.used_day = today;
-            t.used_requests = 0;
-            t.used_chars = 0;
-        }
-        if t.used_requests >= t.daily_limit_requests || t.used_chars >= t.daily_limit_chars {
-            return Err(format!(
-                "今日内测赠送 DeepSeek 免费额度已用完（{}/{} 次），明日 00:00 自动恢复；您也可在「设置 › 模型」中配置自己的 API Key。",
-                t.used_requests, t.daily_limit_requests
-            ));
-        }
-        t.used_requests += 1;
-        t.used_chars = t.used_chars.saturating_add(chars);
-        let used = t.used_requests;
-        let limit = t.daily_limit_requests;
-        drop(list);
-        self.persist();
-        Ok((used, limit))
-    }
-
-    pub fn quota_info(&self, tenant_id: &str) -> Option<Value> {
-        let today = current_day_utc8();
-        let mut list = self.inner.lock().unwrap();
-        let t = list.iter_mut().find(|t| t.tenant_id == tenant_id)?;
-        if t.used_day != today {
-            t.used_day = today;
-            t.used_requests = 0;
-            t.used_chars = 0;
-        }
-        Some(json!({
-            "tenantId": t.tenant_id,
-            "label": t.label,
-            "model": crate::model_policy::DEEPSEEK_MODEL,
-            "modelDisplayName": "DeepSeek V4.1 Flash (内测免费赠送)",
-            "day": t.used_day,
-            "usedRequests": t.used_requests,
-            "dailyLimitRequests": t.daily_limit_requests,
-            "usedChars": t.used_chars,
-            "dailyLimitChars": t.daily_limit_chars,
-        }))
     }
 
     pub fn list_summary(&self) -> Vec<Value> {

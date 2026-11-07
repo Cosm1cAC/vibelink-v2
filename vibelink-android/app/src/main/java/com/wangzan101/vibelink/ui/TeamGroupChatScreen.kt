@@ -323,7 +323,7 @@ fun TeamGroupChatScreen(
                 if (hub.isNotBlank() && token.isNotBlank()) {
                     for (pending in pendingTargets) {
                         val bot = BotTeamStore.getBot(ctx, pending.senderId)
-                        val engine = pending.senderEngine.ifBlank { bot?.engine ?: "deepseek" }
+                        val engine = pending.senderEngine.ifBlank { bot?.engine ?: "codex" }
                         val device = bot?.device?.ifBlank { "pc" } ?: "pc"
                         val sid = pending.linkedSessionId.ifBlank { bot?.activeSessionId.orEmpty() }
                         if (sid.isBlank()) continue
@@ -410,7 +410,7 @@ fun TeamGroupChatScreen(
                     for (hist in backfillTargets) {
                         backfilledMsgIds.add(hist.id)
                         val bot = BotTeamStore.getBot(ctx, hist.senderId)
-                        val engine = hist.senderEngine.ifBlank { bot?.engine ?: "deepseek" }
+                        val engine = hist.senderEngine.ifBlank { bot?.engine ?: "codex" }
                         val device = bot?.device?.ifBlank { "pc" } ?: "pc"
                         val sid = hist.linkedSessionId
                         val cached = RemoteSessionCache.getCachedMessages(ctx, sid).first
@@ -1931,6 +1931,7 @@ fun CreateOrEditBotDialog(
     }
     var templateId by remember { mutableStateOf(initialBot?.templateId ?: selectedTemplate.id) }
     var engine by remember { mutableStateOf(initialBot?.engine ?: BotModelPolicy.defaultEngine(selectedTemplate.id)) }
+    var model by remember { mutableStateOf(initialBot?.model ?: BotModelPolicy.defaultModel(selectedTemplate.id)) }
     var name by remember {
         mutableStateOf(
             initialBot?.name?.ifBlank { BotTeamStore.defaultModelNameForEngine(engine) }
@@ -2137,7 +2138,8 @@ fun CreateOrEditBotDialog(
                                             jobTitle = jobTitle,
                                             department = department,
                                             lifecycle = lifecycle,
-                                            engine = engine,
+                                            engine = "codex",
+                        model = model,
                                             cwd = cwd,
                                             publicDescription = publicDescription,
                                             rolePrompt = rolePrompt,
@@ -2191,24 +2193,24 @@ fun CreateOrEditBotDialog(
                 }
                 Text(selectedTemplate.summary, style = VibeLinkType.Hint, color = c.ink3)
 
-                Text("运行模型 · 独立于职位模板、名称和头像", style = VibeLinkType.Label, color = c.ink3)
+                Text("运行模型 · 默认 agent：Codex 官方 CLI", style = VibeLinkType.Label, color = c.ink3)
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    BotModelPolicy.engines.forEach { eng ->
-                        val active = engine == eng
+                    BotModelPolicy.models.forEach { selectedModel ->
+                        val active = model == selectedModel
                         Box(
                             Modifier
                                 .clip(VibeLinkShapes.Pill)
                                 .background(if (active) c.ink else c.fill)
                                 .clickable {
-                                    engine = eng
+                                    model = selectedModel
                                 }
                                 .padding(horizontal = 12.dp, vertical = 6.dp),
                         ) {
                             Text(
-                                BotModelPolicy.label(eng),
+                                BotModelPolicy.modelLabel(selectedModel),
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Medium,
                                 color = if (active) c.bg else c.ink,
@@ -2350,7 +2352,7 @@ fun CreateOrEditBotDialog(
                 // 自定义 Bot 头像选择器（默认绑定底层模型四宫格 AI 拟人头像，支持相册上传自定义头像）
                 BotAvatarPickerSection(
                     currentAvatar = avatar,
-                    engine = engine,
+                    engine = "codex",
                     name = name,
                     onAvatarChange = { avatar = it },
                 )
@@ -2661,9 +2663,10 @@ fun CreateOrEditBotDialog(
                         jobTitle = jobTitle.ifBlank { "工程师" },
                         department = department,
                         lifecycle = lifecycle,
-                        engine = engine,
-                        activeSessionId = if (initialBot?.engine == engine) initialBot.activeSessionId else "",
-                        sessionIds = if (initialBot?.engine == engine) initialBot.sessionIds else emptyList(),
+                        engine = "codex",
+                        model = model,
+                        activeSessionId = if (initialBot?.engine == engine && initialBot.model == model) initialBot.activeSessionId else "",
+                        sessionIds = if (initialBot?.engine == engine && initialBot.model == model) initialBot.sessionIds else emptyList(),
                         cwd = cwd,
                         publicDescription = publicDescription,
                         rolePrompt = rolePrompt,
@@ -2687,9 +2690,10 @@ fun CreateOrEditBotDialog(
                         jobTitle = jobTitle.ifBlank { "工程师" },
                         department = department,
                         lifecycle = lifecycle,
-                        engine = engine,
-                        activeSessionId = if (initialBot?.engine == engine) initialBot.activeSessionId else "",
-                        sessionIds = if (initialBot?.engine == engine) initialBot.sessionIds else emptyList(),
+                        engine = "codex",
+                        model = model,
+                        activeSessionId = if (initialBot?.engine == engine && initialBot.model == model) initialBot.activeSessionId else "",
+                        sessionIds = if (initialBot?.engine == engine && initialBot.model == model) initialBot.sessionIds else emptyList(),
                         cwd = cwd,
                         publicDescription = publicDescription,
                         rolePrompt = rolePrompt,

@@ -1277,6 +1277,8 @@ fun AgentChatScreen(
                                 text = promptText,
                                 files = filesToSend.map { it.toJson() },
                                 agent = targetSession.agent,
+                                botId = botFriend?.id.orEmpty(),
+                                model = botFriend?.model.orEmpty(),
                                 cwd = targetSession.cwd,
                             )
                         }
@@ -1601,7 +1603,7 @@ fun AgentChatScreen(
 
     if (showNewSessionDialog) {
         NewRemoteSessionDialog(
-            initialAgent = if (effectiveEngine in BotModelPolicy.engines.toSet()) effectiveEngine else "deepseek",
+            initialAgent = if (effectiveEngine in BotModelPolicy.engines.toSet()) effectiveEngine else "codex",
             initialDevice = effectiveDevice,
             initialCwd = effectiveCwd,
             recentCwds = recentCwds,
@@ -1635,7 +1637,7 @@ fun AgentChatScreen(
  */
 @Composable
 fun NewRemoteSessionDialog(
-    initialAgent: String = "deepseek",
+    initialAgent: String = "codex",
     initialDevice: String = "pc",
     initialCwd: String = "C:\\Users\\22771\\Desktop\\项目\\VibeLink",
     recentCwds: List<String> = emptyList(),

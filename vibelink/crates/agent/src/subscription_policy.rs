@@ -10,8 +10,8 @@ pub fn cli_home() -> PathBuf {
         .join("codex")
 }
 
-pub fn prepare_codex() -> Result<(), String> {
-    let dir = cli_home();
+pub fn prepare_codex() -> Result<(), String> { prepare_codex_in(&cli_home()) }
+pub fn prepare_codex_in(dir: &std::path::Path) -> Result<(), String> {
     fs::create_dir_all(&dir).map_err(|_| "Cannot create isolated Codex CLI home")?;
     let auth = dir.join("auth.json");
     if !auth.exists() {
@@ -45,8 +45,14 @@ pub fn prepare_codex() -> Result<(), String> {
 }
 
 pub fn validate_project(cwd: &str) -> Result<(), String> {
+    let user_home=std::env::var(if cfg!(windows){"USERPROFILE"}else{"HOME"}).unwrap_or_default();
     for dir in std::path::Path::new(cwd).ancestors() {
+        if dir == std::path::Path::new(&user_home) {break;}
         if let Ok(config) = fs::read_to_string(dir.join(".codex/config.toml")) {
+            if crate::codex_runtime::current().beta {
+                return Err("Public workspaces cannot override Codex configuration".into());
+            }
+
             if [
                 "base_url",
                 "model_provider",
@@ -66,6 +72,16 @@ pub fn validate_project(cwd: &str) -> Result<(), String> {
 
 pub fn configure_codex(cmd: &mut Command) {
     cmd.env("CODEX_HOME", cli_home());
+    clear_overrides(cmd);
+    cmd.args([
+        "-c",
+        "model_provider=\"openai\"",
+        "-c",
+        "forced_login_method=\"chatgpt\"",
+    ]);
+}
+
+pub fn clear_overrides(cmd: &mut Command) {
     for key in [
         "OPENAI_BASE_URL",
         "OPENAI_API_BASE",
@@ -84,12 +100,6 @@ pub fn configure_codex(cmd: &mut Command) {
     ] {
         cmd.env_remove(key);
     }
-    cmd.args([
-        "-c",
-        "model_provider=\"openai\"",
-        "-c",
-        "forced_login_method=\"chatgpt\"",
-    ]);
 }
 
 #[cfg(test)]

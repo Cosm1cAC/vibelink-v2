@@ -1,5 +1,6 @@
 package com.wangzan101.vibelink.ui
 
+import com.wangzan101.vibelink.remote.RemoteApi
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -117,6 +118,15 @@ fun HomeScreen(
     var betaActivating by remember { mutableStateOf(false) }
     var betaError by remember { mutableStateOf<String?>(null) }
     var betaQuotaText by remember { mutableStateOf(com.wangzan101.vibelink.remote.RemoteStore.betaLabel(ctx)) }
+    LaunchedEffect(Unit) {
+        if (com.wangzan101.vibelink.BuildConfig.IS_BETA_EDITION && com.wangzan101.vibelink.remote.RemoteStore.isPaired(ctx)) {
+            val quota = withContext(Dispatchers.IO) {
+                runCatching { RemoteApi.betaQuota(com.wangzan101.vibelink.remote.RemoteStore.hub(ctx), com.wangzan101.vibelink.remote.RemoteStore.token(ctx)) }.getOrNull()
+            }
+            if (quota != null) betaQuotaText = "今日调用 ${quota.optLong("usedRequests")}/${quota.optLong("dailyLimitRequests")} 次 · ${quota.optLong("totalTokens")} tokens"
+        }
+    }
+
     val homeScope = rememberCoroutineScope()
 
     // 扫一扫：扫到 vibelink://pair 就交给 PairInbox，VibeLinkRoot 会打开远程会话页弹「连接到 xx？」
@@ -243,7 +253,7 @@ fun HomeScreen(
                             text = { Text("⚡ 新建底层远程编码会话") },
                             onClick = {
                                 showPlusMenu = false
-                                newSessionAgent = "deepseek"
+                                newSessionAgent = "codex"
                             },
                         )
                     }
@@ -427,7 +437,7 @@ fun HomeScreen(
                         SectionSmallHeader(
                             title = "本机助理与底层 Agent 引擎 (${visibleContacts.size})",
                             actionText = "+ 新建会话",
-                            onAction = { newSessionAgent = "deepseek" },
+                            onAction = { newSessionAgent = "codex" },
                         )
                     }
                     items(visibleContacts, key = { "eng_" + it.id }) { contact ->
@@ -570,7 +580,7 @@ fun HomeScreen(
                                     label,
                                 )
                                 com.wangzan101.vibelink.settings.Preconfigure.onPaired(ctx)
-                                betaQuotaText = "$label (今日已用 $used/$limit 次)"
+                                betaQuotaText = "$label (今日调用 $used/$limit 次 · ${json.optLong("totalTokens")} tokens)"
                                 showBetaInviteDialog = false
                                 tick++
                                 android.widget.Toast.makeText(

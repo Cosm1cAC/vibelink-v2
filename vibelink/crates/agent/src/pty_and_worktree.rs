@@ -946,6 +946,6 @@ mod tests {
     fn worktree_resolution_respects_isolation_mode() {
         let base = env!("CARGO_MANIFEST_DIR");
         let shared = resolve_bot_cwd(base, "bot-test", "shared");
-        assert!(!shared.contains(".vibelink-worktrees"));
+        assert_eq!(shared, clamp_cwd(base, &default_workspace_cwd()));
     }
 }
