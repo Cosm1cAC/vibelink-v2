@@ -1,0 +1,1 @@
+Search the App and website knowledge when you are not sure which app or site something is, or whether VibeLink knows it. Narrow it with kind app or site. You get up to 10 matches as {name, display, kind, description}; read one with knowledge_read.

@@ -8,9 +8,11 @@ vibelink-protocol = { path = "../protocol" }
 serde.workspace = true
 serde_json.workspace = true
 axum = "0.8"
+hyper = "1"
+hyper-util = { version = "0.1", features = ["tokio"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time", "net", "io-util"] }
-# 只用来转发到本机 magpie（明文 HTTP），所以不要 TLS，省一堆依赖
-reqwest = { version = "0.12", default-features = false, features = ["stream"] }
+if-addrs = "0.13"
+qrcodegen = "1.8"
+reqwest = { version = "0.12", default-features = false, features = ["stream", "json", "rustls-tls"] }
 
-
-
+tower = { version = "0.5", features = ["util"] }

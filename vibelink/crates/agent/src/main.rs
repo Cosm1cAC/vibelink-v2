@@ -1,9 +1,14 @@
+#![cfg_attr(windows, windows_subsystem = "windows")]
 //! mesh agent - heartbeat + whitelisted actions. No async runtime, ~5 MB RSS.
 //!
 //!   VIBELINK_HUB=http://192.168.137.1:18995
 //!   VIBELINK_TOKEN=<hub token>
 //!   VIBELINK_DEVICE=laptop
 mod agents;
+mod subscription_policy;
+mod pty_and_worktree;
+mod roots;
+mod schedule;
 mod opencode;
 
 use vibelink_protocol::{now_ms, DeviceReport, Latency, MemInfo, ProxyState};
@@ -12,11 +17,12 @@ use std::{
     io::{Read, Write},
     net::{IpAddr, SocketAddr, TcpStream, ToSocketAddrs},
     process::{Command, Stdio},
+    sync::OnceLock,
     thread::{self, sleep},
     time::{Duration, Instant},
 };
 
-const AGENT_VERSION: &str = "0.2.5";
+const AGENT_VERSION: &str = "0.2.8";
 const PUSH: Duration = Duration::from_secs(5);
 const SLOW: Duration = Duration::from_secs(30);
 
@@ -95,8 +101,18 @@ fn dechunk(s: &str) -> String {
 }
 
 // ---------------- collectors ----------------
+fn no_window_cmd(program: &str) -> Command {
+    let mut c = Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        c.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    c
+}
+
 fn run(cmd: &str, args: &[&str]) -> String {
-    Command::new(cmd)
+    no_window_cmd(cmd)
         .args(args)
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
@@ -227,7 +243,7 @@ $t=Add-Type -MemberDefinition $sig -Name MeshWininet -Namespace Mesh -PassThru
 [void]$t::InternetSetOption([IntPtr]::Zero,39,[IntPtr]::Zero,0)
 [void]$t::InternetSetOption([IntPtr]::Zero,37,[IntPtr]::Zero,0)
 "#;
-    let _ = Command::new(WIN_PS)
+    let _ = no_window_cmd(WIN_PS)
         .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script])
         .output();
 }
@@ -235,14 +251,14 @@ $t=Add-Type -MemberDefinition $sig -Name MeshWininet -Namespace Mesh -PassThru
 fn set_proxy(server: &str) -> Result<String, String> {
     if cfg!(windows) {
         let key = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings";
-        let a = Command::new("reg")
+        let a = no_window_cmd("reg")
             .args(["add", key, "/v", "ProxyServer", "/t", "REG_SZ", "/d", server, "/f"])
             .output()
             .map_err(|e| e.to_string())?;
         if !a.status.success() {
             return Err(String::from_utf8_lossy(&a.stderr).to_string());
         }
-        let b = Command::new("reg")
+        let b = no_window_cmd("reg")
             .args(["add", key, "/v", "ProxyEnable", "/t", "REG_DWORD", "/d", "1", "/f"])
             .output()
             .map_err(|e| e.to_string())?;
@@ -284,7 +300,7 @@ fn set_proxy(server: &str) -> Result<String, String> {
 fn clear_proxy() -> Result<String, String> {
     if cfg!(windows) {
         let key = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings";
-        let a = Command::new("reg")
+        let a = no_window_cmd("reg")
             .args(["add", key, "/v", "ProxyEnable", "/t", "REG_DWORD", "/d", "0", "/f"])
             .output()
             .map_err(|e| e.to_string())?;
@@ -335,9 +351,9 @@ fn restart_service(name: &str) -> Result<String, String> {
     }
 
     if cfg!(windows) {
-        let _ = Command::new("schtasks").args(["/End", "/TN", name]).output();
+        let _ = no_window_cmd("schtasks").args(["/End", "/TN", name]).output();
         sleep(Duration::from_millis(1500));
-        let out = Command::new("schtasks").args(["/Run", "/TN", name]).output().map_err(|e| e.to_string())?;
+        let out = no_window_cmd("schtasks").args(["/Run", "/TN", name]).output().map_err(|e| e.to_string())?;
         return if out.status.success() {
             Ok(format!("restarted {name}"))
         } else {
@@ -483,70 +499,207 @@ fn to_json(s: String) -> Result<serde_json::Value, String> {
     serde_json::from_str(&s).map_err(|e| format!("bad json from opencode: {e}"))
 }
 
+fn handle_session_request(kind: &str, payload: &serde_json::Value, data: &std::path::Path) -> Result<serde_json::Value, String> {
+    let sid = payload.get("session").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let text = payload.get("text").and_then(|x| x.as_str()).unwrap_or("");
+    let cwd = payload.get("cwd").and_then(|x| x.as_str()).unwrap_or("");
+    let cursor = payload.get("cursor").and_then(|x| x.as_str()).unwrap_or("");
+    let open = |f: &dyn Fn(&opencode::Client) -> Result<String, String>| {
+        let c = opencode::Client::ensure(data)?;
+        f(&c)
+    };
+    if kind.starts_with("antigravity.") || kind.starts_with("claude.") || kind.starts_with("opencode.") {
+        return Err("Runtime disabled: use official Codex CLI or DeepSeek API".into());
+    }
+    match kind {
+        "sessions.list" => {
+            let listed = open(&|c| c.list()).and_then(to_json);
+            let active = open(&|c| c.active()).and_then(to_json).ok();
+            Ok(build_sessions(listed, active))
+        }
+        // hub 的委派任务用它判断一轮是否跑完：{ running: bool, known: bool }
+        "session.status" => {
+            let agent = payload.get("agent").and_then(|x| x.as_str()).unwrap_or("");
+            if agent == "opencode" {
+                let active = open(&|c| c.active()).and_then(to_json)?;
+                let running = active.as_object().map(|o| o.contains_key(&sid)).unwrap_or(false)
+                    || active.as_array().map(|a| a.iter().any(|v| v.as_str() == Some(sid.as_str()))).unwrap_or(false);
+                Ok(serde_json::json!({ "running": running, "known": true }))
+            } else {
+                let live = agents::live_running(&sid);
+                Ok(serde_json::json!({ "running": live.unwrap_or(false), "known": live.is_some() }))
+            }
+        }
+        "codex.messages" => agents::codex_messages(&sid, cursor),
+        "codex.prompt" => {
+            let (eff_cwd, eff_text) = agents::prepare_session_request(cwd, text, payload);
+            agents::codex_prompt(&sid, &eff_text, if eff_cwd.is_empty() { None } else { Some(eff_cwd.as_str()) }, payload.get("files"))
+        }
+        "codex.interrupt" => agents::codex_interrupt(&sid),
+        "codex.create" => {
+            let (eff_cwd, eff_text) = agents::prepare_session_request(cwd, text, payload);
+            agents::codex_create(&eff_cwd, &eff_text, payload.get("files"))
+        }
+        "claude.messages" => agents::claude_messages(&sid, cursor),
+        "claude.prompt" => {
+            let (eff_cwd, eff_text) = agents::prepare_session_request(cwd, text, payload);
+            agents::claude_prompt(&sid, &eff_text, if eff_cwd.is_empty() { None } else { Some(eff_cwd.as_str()) }, payload.get("files"))
+        }
+        "claude.interrupt" => agents::claude_interrupt(&sid),
+        "claude.create" => {
+            let (eff_cwd, eff_text) = agents::prepare_session_request(cwd, text, payload);
+            agents::claude_create(&eff_cwd, &eff_text, payload.get("files"))
+        }
+        "antigravity.messages" => agents::antigravity_messages(&sid, cursor),
+        "antigravity.prompt" => {
+            let (eff_cwd, eff_text) = agents::prepare_session_request(cwd, text, payload);
+            agents::antigravity_prompt(&sid, &eff_text, if eff_cwd.is_empty() { None } else { Some(eff_cwd.as_str()) }, payload.get("files"))
+        }
+        "antigravity.interrupt" => agents::antigravity_interrupt(&sid),
+        "antigravity.create" => {
+            let (eff_cwd, eff_text) = agents::prepare_session_request(cwd, text, payload);
+            agents::antigravity_create(&eff_cwd, &eff_text, payload.get("files"))
+        }
+        "desktop.frame" => {
+            let w = payload.get("width").and_then(|x| x.as_u64()).unwrap_or(1280) as u32;
+            let last_hash = payload.get("lastHash").and_then(|x| x.as_str());
+            agents::desktop_frame_with_hash(w, last_hash)
+        }
+        "desktop.input" => agents::desktop_input(payload),
+        "desktop.lease" => Ok(agents::desktop_lease(payload)),
+        "terminal.list" => Ok(pty_and_worktree::terminal_list()),
+        "terminal.action" => pty_and_worktree::terminal_action(payload),
+        "worktree.list" => {
+            let repo = payload.get("repoPath").or_else(|| payload.get("cwd")).and_then(|x| x.as_str());
+            Ok(pty_and_worktree::worktree_list(repo))
+        }
+        "worktree.action" => pty_and_worktree::worktree_action(payload),
+        "scheduler.list" => Ok(agents::scheduler_list()),
+        "scheduler.action" => agents::scheduler_action(payload),
+        "plugins.list" => Ok(agents::plugins_list()),
+        "plugins.action" => agents::plugins_action(payload),
+        "workspace.tree" => {
+            let depth = payload.get("depth").and_then(|x| x.as_u64()).unwrap_or(2) as usize;
+            agents::workspace_tree(cwd, depth)
+        }
+        "workspace.read" => {
+            let fpath = payload.get("path").and_then(|x| x.as_str()).unwrap_or("");
+            agents::workspace_read(fpath)
+        }
+        "workspace.upload" => {
+            let into_sub = payload.get("subdir").and_then(|x| x.as_bool()).unwrap_or(false);
+            agents::workspace_upload(cwd, payload.get("files"), into_sub)
+        }
+        "workspace.git" => agents::workspace_git(cwd),
+        "opencode.list" => open(&|c| c.list()).and_then(to_json),
+        "opencode.messages" => {
+            let cursor = payload.get("cursor").and_then(|x| x.as_str()).unwrap_or("");
+            open(&|c| c.messages(&sid, if cursor.is_empty() { None } else { Some(cursor) })).and_then(to_json)
+        }
+        "opencode.prompt" => {
+            let (eff_cwd, eff_text) = agents::prepare_session_request(cwd, text, payload);
+            let files = payload.get("files").cloned();
+            let saved = agents::save_uploaded_files(&eff_cwd, files.as_ref(), true);
+            let mut text2 = if eff_text.trim().is_empty() && !saved.is_empty() {
+                "请查看并处理我上传的文件。".to_string()
+            } else {
+                eff_text
+            };
+            if !saved.is_empty() {
+                let paths: Vec<String> = saved
+                    .iter()
+                    .map(|(p, name, mime, _)| format!("- {name} ({mime}): `{p}`"))
+                    .collect();
+                text2 = format!("{text2}\n\n[Uploaded Workspace Files]:\n{}", paths.join("\n"));
+            }
+            let sid2 = sid.clone();
+            let data2 = data.to_path_buf();
+            let inline_files = files.filter(|f| f.to_string().len() < 16_000);
+            // 后台发给 opencode，立刻返回给手机，避免阻塞
+            thread::spawn(move || {
+                if let Ok(c) = opencode::Client::ensure(&data2) {
+                    let _ = c.prompt(&sid2, &text2, inline_files.as_ref());
+                }
+            });
+            Ok(serde_json::json!({ "ok": true, "id": sid }))
+        }
+        "opencode.interrupt" => open(&|c| c.interrupt(&sid)).and_then(to_json),
+        "opencode.create" => {
+            let (eff_cwd, eff_text) = agents::prepare_session_request(cwd, text, payload);
+            let title = if text.trim().is_empty() {
+                "新 opencode 会话".to_string()
+            } else {
+                agents::trim_title(text, 60)
+            };
+            // 和其他引擎一样夹在工作区白名单里
+            let cwd_c = crate::roots::clamp_cwd(&eff_cwd, "");
+            let cwd = cwd_c.as_str();
+            let raw = open(&|c| c.create(cwd, &title)).and_then(to_json)?;
+            let new_id = raw
+                .pointer("/data/id")
+                .or_else(|| raw.get("id"))
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            if new_id.is_empty() {
+                return Err(format!("opencode.create returned no id: {raw}"));
+            }
+            let dir = raw
+                .pointer("/data/location/directory")
+                .and_then(|x| x.as_str())
+                .unwrap_or(cwd)
+                .to_string();
+            if !eff_text.trim().is_empty() {
+                let id_for_prompt = new_id.clone();
+                let text_for_prompt = eff_text;
+                let data2 = data.to_path_buf();
+                thread::spawn(move || {
+                    if let Ok(c) = opencode::Client::ensure(&data2) {
+                        let _ = c.prompt(&id_for_prompt, &text_for_prompt, None);
+                    }
+                });
+            }
+            Ok(serde_json::json!({
+                "id": new_id,
+                "agent": "opencode",
+                "cwd": dir,
+                "title": title,
+                "running": !text.trim().is_empty(),
+            }))
+        }
+        other => Err(format!("unknown kind {other}")),
+    }
+}
+
 fn session_worker(base: String, token: String, device: String) {
     let Ok(ep) = parse_endpoint(&base) else { return };
     let data = data_dir();
-    let mut client: Option<opencode::Client> = None;
-    let mut client_err: Option<String> = None;
     loop {
         let path = format!("/api/agent/session-requests?device={}", urlencode(&device));
         if let Ok((200, body)) = http_call(&ep, "GET", &path, &token, None) {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&body) {
                 if let Some(list) = v.get("requests").and_then(|r| r.as_array()) {
-                    for req in list {
-                        let id = req.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
-                        let kind = req.get("kind").and_then(|x| x.as_str()).unwrap_or("").to_string();
-                        let payload = req.get("payload").cloned().unwrap_or(serde_json::json!({}));
-
-                        if client.is_none() {
-                            match opencode::Client::ensure(&data) {
-                                Ok(c) => {
-                                    client = Some(c);
-                                    client_err = None;
-                                }
-                                Err(e) => client_err = Some(e),
-                            }
-                        }
-                        let sid = payload.get("session").and_then(|x| x.as_str()).unwrap_or("").to_string();
-                        let open = |f: &dyn Fn(&opencode::Client) -> Result<String, String>| match client.as_ref() {
-                            Some(c) => f(c),
-                            None => Err(client_err
-                                .clone()
-                                .unwrap_or_else(|| "opencode server unavailable".to_string())),
-                        };
-                        let res = match kind.as_str() {
-                            "sessions.list" => {
-                                let listed = open(&|c| c.list()).and_then(to_json);
-                                // active 失败不影响会话列表，running 全部为 false
-                                let active = open(&|c| c.active()).and_then(to_json).ok();
-                                Ok(build_sessions(listed, active))
-                            }
-                            "codex.messages" => agents::codex_messages(&sid),
-                            "claude.messages" => agents::claude_messages(&sid),
-                            "opencode.list" => open(&|c| c.list()).and_then(to_json),
-                            "opencode.messages" => {
-                                let cursor = payload.get("cursor").and_then(|x| x.as_str()).unwrap_or("");
-                                open(&|c| c.messages(&sid, if cursor.is_empty() { None } else { Some(cursor) }))
-                                    .and_then(to_json)
-                            }
-                            "opencode.prompt" => {
-                                let text = payload.get("text").and_then(|x| x.as_str()).unwrap_or("");
-                                let files = payload.get("files").cloned();
-                                open(&|c| c.prompt(&sid, text, files.as_ref())).and_then(to_json)
-                            }
-                            "opencode.interrupt" => open(&|c| c.interrupt(&sid)).and_then(to_json),
-                            other => Err(format!("unknown kind {other}")),
-                        };
-                        let result = match res {
-                            Ok(v) => serde_json::json!({ "id": id, "ok": true, "payload": v }),
-                            Err(e) => serde_json::json!({ "id": id, "ok": false, "error": e }),
-                        };
-                        let _ = http_call(&ep, "POST", "/api/agent/session-result", &token, Some(&result.to_string()));
+                    for req in list.clone() {
+                        let base2 = base.clone();
+                        let token2 = token.clone();
+                        let data2 = data.clone();
+                        thread::spawn(move || {
+                            let Ok(ep2) = parse_endpoint(&base2) else { return };
+                            let id = req.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                            let kind = req.get("kind").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                            let payload = req.get("payload").cloned().unwrap_or(serde_json::json!({}));
+                            let res = handle_session_request(&kind, &payload, &data2);
+                            let result = match res {
+                                Ok(v) => serde_json::json!({ "id": id, "ok": true, "payload": v }),
+                                Err(e) => serde_json::json!({ "id": id, "ok": false, "error": e }),
+                            };
+                            let _ = http_call(&ep2, "POST", "/api/agent/session-result", &token2, Some(&result.to_string()));
+                        });
                     }
                 }
             }
         }
-        sleep(Duration::from_millis(500));
+        sleep(Duration::from_millis(400));
     }
 }
 // ---------------- self update ----------------
@@ -595,7 +748,7 @@ fn self_update_check(ep: &Endpoint, token: &str) {
         return;
     };
     let version = v.get("version").and_then(|x| x.as_str()).unwrap_or("");
-    if version.is_empty() || version == AGENT_VERSION {
+    if version.is_empty() || version <= AGENT_VERSION {
         return;
     }
     let file = v.get("path").and_then(|x| x.as_str()).unwrap_or("");
@@ -674,7 +827,7 @@ schtasks /run /tn VibelinkAgent >nul 2>&1\r\n\
 if not errorlevel 1 goto done\r\n\
 start /b \"\" \"%EXE%\"\r\n\
 :done\r\n\
-del \"%~f0\"\r\n",
+del \"%~f0\" & exit /b 0\r\n",
             exe = exe.display(),
             new = new.display(),
             pid = pid
@@ -684,7 +837,7 @@ del \"%~f0\"\r\n",
         {
             use std::os::windows::process::CommandExt;
             Command::new("cmd")
-                .args(["/c", "start", "/min", "", &script.to_string_lossy()])
+                .args(["/c", &script.to_string_lossy()])
                 .creation_flags(0x0800_0000)
                 .spawn()
                 .map_err(|e| e.to_string())?;
@@ -725,10 +878,38 @@ fn update_worker(base: String, token: String) {
 }
 
 // ---------------- main loop ----------------
+fn ensure_single_instance() {
+    #[cfg(windows)]
+    unsafe {
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn CreateMutexW(
+                lp_mutex_attributes: *const std::ffi::c_void,
+                b_initial_owner: i32,
+                lp_name: *const u16,
+            ) -> isize;
+            fn GetLastError() -> u32;
+        }
+        let name: Vec<u16> = "Local\\VibelinkAgentSingleton\0".encode_utf16().collect();
+        let h = CreateMutexW(std::ptr::null(), 1, name.as_ptr());
+        if h != 0 && GetLastError() == 183 {
+            // ERROR_ALREADY_EXISTS = 183：已有实例在运行，直接退出避免双实例并发轮询与刷屏
+            std::process::exit(0);
+        }
+    }
+}
+
 fn main() {
+    ensure_single_instance();
     let base = std::env::var("VIBELINK_HUB").unwrap_or_else(|_| "http://127.0.0.1:18995".into());
     let token = std::env::var("VIBELINK_TOKEN").unwrap_or_default();
-    let device = std::env::var("VIBELINK_DEVICE").unwrap_or_else(|_| hostname().to_lowercase());
+    let device = std::env::var("VIBELINK_DEVICE").unwrap_or_else(|_| {
+        if base.contains("127.0.0.1") || base.contains("localhost") {
+            "pc".into()
+        } else {
+            hostname().to_lowercase()
+        }
+    });
     if token.is_empty() {
         eprintln!("[agent] VIBELINK_TOKEN is required");
         std::process::exit(1);
@@ -749,6 +930,8 @@ fn main() {
         let token3 = token.clone();
         thread::spawn(move || update_worker(base3, token3));
     }
+    // 定时任务按时自动执行（以前只能手动「立即执行」）
+    thread::spawn(schedule::worker);
 
     let mut last_slow = Instant::now() - SLOW;
     let mut cached_gw: Option<String> = None;
@@ -841,17 +1024,25 @@ fn main() {
 }
 
 fn hostname() -> String {
-    std::env::var("COMPUTERNAME")
-        .or_else(|_| std::env::var("HOSTNAME"))
-        .unwrap_or_else(|_| run("hostname", &[]).trim().to_string())
+    static HOST: OnceLock<String> = OnceLock::new();
+    HOST.get_or_init(|| {
+        std::env::var("COMPUTERNAME")
+            .or_else(|_| std::env::var("HOSTNAME"))
+            .unwrap_or_else(|_| run("hostname", &[]).trim().to_string())
+    })
+    .clone()
 }
 
 fn os_version() -> String {
-    if cfg!(windows) {
-        run("cmd", &["/c", "ver"]).trim().to_string()
-    } else {
-        run("uname", &["-r"]).trim().to_string()
-    }
+    static VER: OnceLock<String> = OnceLock::new();
+    VER.get_or_init(|| {
+        if cfg!(windows) {
+            run("cmd", &["/c", "ver"]).trim().to_string()
+        } else {
+            run("uname", &["-r"]).trim().to_string()
+        }
+    })
+    .clone()
 }
 
 fn urlencode(s: &str) -> String {

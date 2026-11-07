@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="color_clash_light">#0A7CFF</color>
+    <color name="color_clash_dark">#3D97FF</color>
+    <color name="color_system_ui_overlay">#50000000</color>
+    <color name="color_light_background">#FFF7F7F8</color>
+    <color name="color_dark_background">#FF0E0E10</color>
+    <color name="color_dark_surface">#FF1A1A1D</color>
+    <color name="color_light_clash_stopped">#FF2C303A</color>
+    <color name="color_light_control_disabled">#FFD3D5DC</color>
+    <color name="color_dark_control_disabled">#FF6C6D75</color>
+    <color name="color_error">#FFE5483D</color>
+</resources>

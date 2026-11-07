@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  仅为生成 BR.value / BR.updatedAt / BR.updating 常量。
+  data binding 的 BR 只收录布局 <variable>，而 CMA 的 Kotlin @Bindable 属性
+  没有经过 kapt，缺这三个 id 会导致生成的 BindingImpl 编译失败。
+  本布局不渲染（0dp），仅参与 data binding 编译。
+-->
+<layout xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <data>
+
+        <variable
+            name="value"
+            type="java.lang.Object" />
+
+        <variable
+            name="updatedAt"
+            type="long" />
+
+        <variable
+            name="updating"
+            type="boolean" />
+    </data>
+
+    <FrameLayout
+        android:layout_width="0dp"
+        android:layout_height="0dp" />
+
+</layout>

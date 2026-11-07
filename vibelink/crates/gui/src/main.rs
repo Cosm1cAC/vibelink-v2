@@ -1,6 +1,8 @@
 //! mesh GUI - egui desktop panel (Windows/macOS), talks to the hub over plain HTTP.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod pair;
+
 use eframe::egui::{self, Align2, Color32, FontId, Stroke};
 use vibelink_protocol::{ConfigInfo, Device, Event};
 use serde::{Deserialize, Serialize};
@@ -223,6 +225,12 @@ fn http_post(ep: (&str, u16), path: &str, token: &str, body: &str, ctype: &str) 
     Ok(text)
 }
 
+/// 同 [`http_post`]，但只返回响应体（不含状态行和头）。
+fn http_post_body(ep: (&str, u16), path: &str, token: &str, body: &str, ctype: &str) -> Result<String, String> {
+    let text = http_post(ep, path, token, body, ctype)?;
+    Ok(text.split_once("\r\n\r\n").map(|(_, b)| b.to_string()).unwrap_or_default())
+}
+
 #[derive(Deserialize)]
 struct DevicesResp {
     devices: Vec<Device>,
@@ -306,6 +314,7 @@ struct App {
     tooltip: String,
     ts: TailscaleInfo,
     ts_shared: Arc<Mutex<TailscaleInfo>>,
+    pair: pair::PairWindow,
 }
 
 const SERVICES: &[&str] = &["WProxy", "WProxyHysteria", "PcProxyFailover", "PcLanGateway", "PhoneConfigHttp", "VibelinkAgent"];
@@ -384,6 +393,7 @@ impl App {
             tooltip: String::new(),
             ts: TailscaleInfo::default(),
             ts_shared,
+            pair: pair::PairWindow::default(),
         }
     }
 
@@ -466,6 +476,10 @@ impl eframe::App for App {
                     }
                     if ui.button("配置").clicked() {
                         self.show_configs = !self.show_configs;
+                    }
+                    if ui.button("📱 连接手机").clicked() {
+                        let s = self.settings.lock().unwrap().clone();
+                        self.pair.toggle(&s);
                     }
                     if ui.button("自愈").clicked() {
                         self.show_policy = !self.show_policy;
@@ -605,6 +619,8 @@ impl eframe::App for App {
         let ctx = ui.ctx().clone();
         self.configs_window(&ctx);
         self.policy_window(&ctx);
+        let s = self.settings.lock().unwrap().clone();
+        self.pair.show(&ctx, &s);
     }
 }
 
@@ -999,7 +1015,36 @@ fn make_icon_rgba(size: u32) -> Vec<u8> {
 }
 
 fn main() -> Result<(), eframe::Error> {
+    let standalone = std::env::args().any(|a| a == "--standalone-egui");
     let minimized = std::env::args().any(|a| a == "--minimized");
+    if !standalone {
+        let start_script = [
+            r"D:\AI\VibeLink\cindy\start-cindy.ps1",
+            r"C:\Users\22771\Desktop\项目\VibeLink\cindy\start-cindy.ps1",
+            r"C:\Users\22771\Desktop\项目\proxy-stack\cindy\start-cindy.ps1",
+        ]
+        .into_iter()
+        .map(std::path::PathBuf::from)
+        .find(|p| p.exists());
+        if let Some(start_script) = start_script {
+            let mut cmd = std::process::Command::new("powershell.exe");
+            cmd.args([
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                &start_script.to_string_lossy(),
+            ]);
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                cmd.creation_flags(0x0800_0000);
+            }
+            if cmd.spawn().is_ok() {
+                return Ok(());
+            }
+        }
+    }
     let (w, h) = std::env::var("VIBELINK_SIZE")
         .ok()
         .and_then(|s| {

@@ -76,11 +76,21 @@ impl Client {
     }
 
     fn api(&self, method: &str, path: &str, body: Option<&str>) -> Result<String, String> {
+        self.api_in_dir(method, path, body, None)
+    }
+
+    fn api_in_dir(&self, method: &str, path: &str, body: Option<&str>, cwd: Option<&str>) -> Result<String, String> {
         let exe = find_exe().ok_or("opencode.exe not found")?;
         let mut cmd = Command::new(exe);
         cmd.args(["api", method, path]);
         if let Some(b) = body {
             cmd.args(["--data", b]);
+        }
+        if let Some(dir) = cwd.filter(|d| !d.trim().is_empty()) {
+            let p = std::path::Path::new(dir);
+            if p.is_dir() {
+                cmd.current_dir(p);
+            }
         }
         #[cfg(windows)]
         {
@@ -94,6 +104,17 @@ impl Client {
             return Err(if err.is_empty() { stdout } else { err });
         }
         Ok(String::from_utf8_lossy(&out.stdout).to_string())
+    }
+
+    pub fn create(&self, cwd: &str, title: &str) -> Result<String, String> {
+        let mut body = serde_json::json!({});
+        if !title.trim().is_empty() {
+            body["title"] = serde_json::Value::String(title.trim().to_string());
+        }
+        if !cwd.trim().is_empty() {
+            body["location"] = serde_json::json!({ "directory": cwd.trim() });
+        }
+        self.api_in_dir("POST", "/api/session", Some(&body.to_string()), Some(cwd))
     }
 
     pub fn list(&self) -> Result<String, String> {
