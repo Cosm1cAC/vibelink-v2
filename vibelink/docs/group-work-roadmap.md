@@ -72,6 +72,7 @@ Windows 内测工具可只读访问宿主发现的 PowerShell 7/Python 安装叶
 - 内测版同样完成真实写入、只读审校、主脑验收及双服务重启追问。7 步、16 次上游请求、229,591 tokens，缓存 186,496，缺失用量 0。使用限制读取/MXC、独立用户目录和按任务计量；临时服务均已停止。
 - 从开发版真实任务的停止后数据生成 SQLite 快照：1 条 Work、摘要及 integrity 校验通过，未切换生产存储。
 - Android 1.6.1（92）两版各 50 项聚焦测试及签名 release 构建通过，已发布内网开发通道/公网内测通道。资料页模型取 Bot 配置，昵称与 Agent 分开；只显示本 Bot 绑定会话，从资料页创建会话携带本 Bot/模型，角色默认模型不覆盖用户手选值。
+- 生产已滚动替换：开发/内测 Hub 0.3.0，PC 开发/内测及 Mac Agent 0.4.0 均在线；原二进制与启动配置保留回退，两平台 Agent 更新清单已发布。旧内测内置输入字节限额已调整为 12,000,000，token 日额度保持 1,500,000，自定义额度不覆盖。
 
 ## 第三阶段：统一 Cindy 桌面入口与通知
 
@@ -80,6 +81,8 @@ Windows 内测工具可只读访问宿主发现的 PowerShell 7/Python 安装叶
 - Cindy 桌面读取同一 Hub Work/消息投影，提供计划、执行细节、追问、取消、验收视图。
 - 复用 Cindy 原有 group/session/plan/outbox 组件与本地执行能力，通过 adapter 接入 Hub；不另外维护第二套权威任务账本，不依赖 Cindy 云端登录才能完成本地任务。
 - 外部渠道发送采用持久 outbox、确定消息键、投递结果和失败重试；收件 ACK 与任务完成独立。
+- 先补开发版跨端授权合同：手机配对 token 当前主体为 `client_<tokenId>`，桌面 Main 管理 token 为 `owner`。桌面受控代办必须保留原 Work 的计量主体并记录实际操作者，不能由 renderer 传入 `meterIdentity` 或复制手机凭据。内测继续以同一 tenant 为主体，不能跨租户代办。
+- 最小落点是独立的 typed HubWork adapter、Main/preload 白名单桥、renderer 的 Hub 任务镜像 store/视图和独立 outbox；复用现有桌面桥与去重模式，不能把 Hub Work 送进 Cindy 原 bot-group 执行器再执行一次。outbox 命名空间包含 Hub 地址、版别和主体，稳定 requestId 对应不可变输入。
 
 验收：手机、桌面看到相同 Work/Step/会话；任一端重启不重复派发；通知失败不把任务当完成或生成重复任务。
 
