@@ -1,0 +1,509 @@
+diff --git a/apps/desktop/forge.config.ts b/apps/desktop/forge.config.ts
+index 4da653f8..a50a4a90 100644
+--- a/apps/desktop/forge.config.ts
++++ b/apps/desktop/forge.config.ts
+@@ -2031,7 +2031,12 @@ const config: ForgeConfig = {
+       },
+     ],
+   },
+-  rebuildConfig: {},
++  // Windows node-pty already ships N-API prebuilds. Recompiling it in the fused
++  // developer shell unnecessarily requires optional Visual Studio Spectre libs.
++  // SQLite remains ABI-specific and continues through the normal rebuild path.
++  rebuildConfig: process.env.CINDY_VIBELINK_EMBEDDED === '1' && process.platform === 'win32'
++    ? { onlyModules: ['better-sqlite3'] }
++    : {},
+   hooks: {
+     // Builds cindy-updater.exe before electron-packager copies resources/ into
+     // the package — guarantees the shipped updater matches HEAD.
+diff --git a/apps/desktop/src/main/appSessionState.ts b/apps/desktop/src/main/appSessionState.ts
+index 95247ade..f3c44c94 100644
+--- a/apps/desktop/src/main/appSessionState.ts
++++ b/apps/desktop/src/main/appSessionState.ts
+@@ -52,7 +52,9 @@ interface PersistedAppSessionSettings {
+ }
+ 
+ const log = createLogger('appSessionState');
+-const DEFAULTS: PersistedAppSessionSettings = { activeMode: 'signed-out' };
++const DEFAULTS: PersistedAppSessionSettings = {
++  activeMode: process.env.CINDY_VIBELINK_EMBEDDED === '1' ? 'local' : 'signed-out',
++};
+ 
+ function settingsFilePath(): string {
+   return path.join(app.getPath('userData'), 'app-session.json');
+diff --git a/apps/desktop/src/main/bootstrap-electron.ts b/apps/desktop/src/main/bootstrap-electron.ts
+index b842bf8d..aa6be63a 100644
+--- a/apps/desktop/src/main/bootstrap-electron.ts
++++ b/apps/desktop/src/main/bootstrap-electron.ts
+@@ -97,6 +97,7 @@ import {
+   WINDOW_BACKDROP_MATERIAL_CHANGED_CHANNEL,
+ } from '../shared/windowBackdrop.js';
+ import { isAllowedBillingMailtoRequest } from '../shared/billing.js';
++import { createRequire } from 'node:module';
+ import path from 'node:path';
+ import fs from 'node:fs';
+ import { textFilePreviewResult, TEXT_PREVIEW_LIMIT_MB } from './text-file-preview';
+@@ -631,6 +632,7 @@ import {
+   handleDeviceLinkSystemResume,
+   getControllerName,
+   revokeController,
++  restartDeviceLinkForRelayChange,
+ } from './device-link';
+ import { closeSharedTasksBeforeLogout } from './device-link/sharedTaskRuntime.js';
+ import { closeSharedTasksBeforeAccountHandover } from './device-link/sharedTaskAccountBoundary.js';
+@@ -4565,6 +4567,20 @@ function parseOptionalDeviceLinkDeviceId(value: unknown): string | null | undefi
+ }
+ 
+ const registerIpcHandlers = () => {
++  ipcMain.handle('vibelink:request', async (event, kind: unknown, payload: unknown) => {
++    assertTrustedAppRendererEvent(event);
++    if (process.env.CINDY_VIBELINK_EMBEDDED !== '1') throw new Error('VibeLink desktop mode is not enabled');
++    if (kind !== 'state' && kind !== 'action') throw new Error('Unsupported VibeLink request');
++    if (kind === 'action' && (!payload || typeof payload !== 'object' || Array.isArray(payload))) throw new Error('Invalid VibeLink action');
++    const body = kind === 'action' ? JSON.stringify(payload) : undefined;
++    if (body && Buffer.byteLength(body) > 512 * 1024) throw new Error('VibeLink action is too large');
++    const response = await fetch(`http://127.0.0.1:5174/api/vibelink/${kind}`, {
++      method: kind === 'state' ? 'GET' : 'POST',
++      ...(body ? { headers: { 'Content-Type': 'application/json' }, body } : {}),
++      signal: AbortSignal.timeout(10000),
++    });
++    return { ok: response.ok, status: response.status, data: await response.json() };
++  });
+   ipcMain.handle('database-size-warning:get-settings', (event) => {
+     assertTrustedAppRendererEvent(event);
+     const state = readDatabaseSizeWarningSettingsState();
+@@ -9463,6 +9479,25 @@ app.on('ready', async () => {
+   registerCindyMediaProtocolHandler();
+   registerMcpAppProtocol();
+ 
++  // 融合版（vibelink）本机服务：127.0.0.1:5174 提供渲染层静态文件与
++  // vibelink 控制台 API。只在融合模式下启动；源码见 src/main/vibelink/embeddedServer.cjs，
++  // 由 vite.main.config.ts 原样拷到 .vite/build/vibelink-embedded-server.js，运行时再 require。
++  if (process.env.CINDY_VIBELINK_EMBEDDED === '1') {
++    try {
++      const runtimeRequire = createRequire(typeof __filename === 'string' ? __filename : import.meta.url);
++      const { startEmbeddedRendererAndVibeLinkServer } = runtimeRequire('./vibelink-embedded-server.js') as {
++        startEmbeddedRendererAndVibeLinkServer: (opts: { rendererRoot: string; pdfjsRoot: string; port: number }) => unknown;
++      };
++      startEmbeddedRendererAndVibeLinkServer({
++        rendererRoot: path.join(__dirname, '../renderer/main_window'),
++        pdfjsRoot: path.resolve(__dirname, '../../../../node_modules/pdfjs-dist'),
++        port: 5174,
++      });
++    } catch (err) {
++      console.error('[vibelink-embedded-server] init error:', err);
++    }
++  }
++
+   // Inject a Content-Security-Policy response header onto the app's own
+   // top-level document (defaultSession mainFrame) before any window loads.
+   // Blocks an XSS from escalating to preload privileges via inline / eval
+@@ -10148,6 +10183,9 @@ app.on('ready', async () => {
+   registerProviderShareIpc();
+   // 自建中转服务(docs/self-hosted-relay-plan.md):本机中转与加入别的中转。
+   registerSelfHostedRelayIpc();
++  if (process.env.CINDY_LOCAL_RELAY_SECRETS_PATH || process.env.CINDY_LOCAL_RELAY_URL) {
++    void authManager.enterLocalMode().then(() => restartDeviceLinkForRelayChange()).catch((err) => console.error('[local-relay-bootstrap]', err));
++  }
+   registerProviderGroupIpc({ reshare: providerGroupReshare });
+   registerProviderGroupRemoteHandler({ onGroupChanged: () => providerGroupReshare.kick('group') });
+   registerProviderGroupReshare();
+diff --git a/apps/desktop/src/main/maker-host/__tests__/piNativeSubscriptionForwarding.test.ts b/apps/desktop/src/main/maker-host/__tests__/piNativeSubscriptionForwarding.test.ts
+index c0eb9547..acc54d98 100644
+--- a/apps/desktop/src/main/maker-host/__tests__/piNativeSubscriptionForwarding.test.ts
++++ b/apps/desktop/src/main/maker-host/__tests__/piNativeSubscriptionForwarding.test.ts
+@@ -60,6 +60,7 @@ vi.mock('../logger-adapter.js', () => ({
+ 
+ import {
+   getPiNativeSubscriptionHandler,
++  getResponsesBridgeHandler,
+   type PiNativeSubscriptionHandlerDeps,
+ } from '../anthropic-responses-bridge-host.js';
+ import { buildUserProvider } from '@cindy/model-providers';
+@@ -1234,3 +1235,33 @@ it('records a shared native request once by its requested model and preserves st
+     expect(record).toHaveBeenCalledExactlyOnceWith({ model: 'astra', inputTokens: 20, outputTokens: 8, cacheReadTokens: 100, cacheCreateTokens: 0 });
+   } finally { binding.release(); setCustomProviders([]); }
+ });
++it('VibeLink refuses subscription proxy dispatch before reading credentials or opening network', async () => {
++  vi.stubEnv('CINDY_VIBELINK_EMBEDDED', '1');
++  const injected = deps();
++  const res = responseRecorder();
++  try {
++    await getPiNativeSubscriptionHandler('openai', 'vibelink-denied', injected)({
++      rawBody: Buffer.from('{"model":"gpt-6.1-sol","input":[]}'),
++      parsedBody: { model: 'gpt-6.1-sol', input: [] },
++      ctx: { method: 'POST', url: '/codex/responses', headers: {} }, res,
++    } as never);
++    expect(res.status).toBe(403);
++    expect(injected.getChatgptAuth).not.toHaveBeenCalled();
++    expect(injected.fetch).not.toHaveBeenCalled();
++    expect(Buffer.concat(res.chunks).toString()).toContain('official_cli_required');
++  } finally { vi.unstubAllEnvs(); }
++});
++
++it('VibeLink translation bridge returns a local denial without constructing subscription auth', async () => {
++  vi.stubEnv('CINDY_VIBELINK_EMBEDDED', '1');
++  const fetch = vi.fn(() => { throw new Error('Subscription proxy must not open a network request'); });
++  vi.stubGlobal('fetch', fetch);
++  try {
++    const res = responseRecorder();
++    const handler = getResponsesBridgeHandler('openai');
++    await handler!.handle({ res, parsedBody: { model: 'chatgpt/gpt-6.1-sol' }, ctx: { method: 'POST', url: '/v1/messages', headers: {} } } as never);
++    expect(res.status).toBe(403);
++    expect(Buffer.concat(res.chunks).toString()).toContain('official_cli_required');
++    expect(fetch).not.toHaveBeenCalled();
++  } finally { vi.unstubAllEnvs(); vi.unstubAllGlobals(); }
++});
+diff --git a/apps/desktop/src/main/maker-host/anthropic-responses-bridge-host.ts b/apps/desktop/src/main/maker-host/anthropic-responses-bridge-host.ts
+index 40fadc5f..4b6f61b1 100644
+--- a/apps/desktop/src/main/maker-host/anthropic-responses-bridge-host.ts
++++ b/apps/desktop/src/main/maker-host/anthropic-responses-bridge-host.ts
+@@ -270,6 +270,7 @@ function throwIfOwnerBoundDispatchUnsafe(scopeAtStart: string): void {
+ 
+ /** 经 adapter 判连接态 → 读 codex-home/auth.json → 必要时刷新 → 返回 token 与可选 account id。 */
+ export async function getChatgptBridgeAuth(providerId = 'openai'): Promise<{ accessToken: string; accountId: string | null }> {
++  if (process.env.CINDY_VIBELINK_EMBEDDED === '1') throw new Error('official_cli_required: use the official Codex agent for GPT subscriptions');
+   const scopeAtStart = activeOwnerScopeKey();
+   throwIfOwnerBoundDispatchUnsafe(scopeAtStart);
+   if (providerId !== 'openai') {
+@@ -316,6 +317,11 @@ export async function getChatgptBridgeAuth(providerId = 'openai'): Promise<{ acc
+   return _authCache;
+ }
+ 
++function refuseVibeLinkSubscriptionProxy(res: Pick<import('node:http').ServerResponse, 'writeHead' | 'end'>): void {
++  res.writeHead(403, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
++  res.end(JSON.stringify({ type: 'error', error: { type: 'permission_error', code: 'official_cli_required', message: 'VibeLink subscriptions require the official model CLI; subscription translation proxies are disabled.' } }));
++}
++
+ /** A deferred child request must revalidate both credential and authorization at dispatch/retry. */
+ export async function getChatgptBridgeAuthForDispatch(providerId = 'openai'): Promise<{
+   accessToken: string; accountId: string | null; canDispatch(): boolean;
+@@ -407,6 +413,15 @@ function xaiProviderConfig(providerId = 'xai'): BridgeProviderConfig {
+  * 据此 passthrough(fail-open),不反复重试刷日志。
+  */
+ export function getResponsesBridgeHandler(providerId = 'openai'): ResponsesBridgeHandler | null {
++  if (process.env.CINDY_VIBELINK_EMBEDDED === '1') {
++    // Keep xAI independent; never construct the combined default handler that
++    // also contains an OpenAI subscription provider.
++    if (providerId === 'xai' || isXaiSubscriptionProviderId(providerId)) {
++      return createResponsesHandler({ providers: [xaiProviderConfig(providerId)], logger: log, fetchImpl: outboundFetch });
++    }
++    return { handle: async ({ res }) => refuseVibeLinkSubscriptionProxy(res) };
++  }
++
+   if (providerId !== 'xai' && isXaiSubscriptionProviderId(providerId)) {
+     return createResponsesHandler({ providers: [xaiProviderConfig(providerId)], logger: log, fetchImpl: outboundFetch });
+   }
+@@ -741,6 +756,11 @@ export function getPiNativeSubscriptionHandler(
+   deps: PiNativeSubscriptionHandlerDeps = defaultPiNativeSubscriptionHandlerDeps,
+ ): LocalRequestHandler {
+   return async ({ rawBody, parsedBody, ctx, res }) => {
++    if (process.env.CINDY_VIBELINK_EMBEDDED === '1' &&
++        (providerId === 'openai' || isOpenAiSubscriptionProviderId(providerId) || /^(claude|anthropic|gemini|google)(?:[-_/]|$)/i.test(providerId))) {
++      refuseVibeLinkSubscriptionProxy(res);
++      return;
++    }
+     const upstream = piNativeUpstream(providerId, ctx.url);
+     if (ctx.method !== 'POST' || !upstream) {
+       res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' });
+diff --git a/apps/desktop/src/main/maker-host/index.ts b/apps/desktop/src/main/maker-host/index.ts
+index 658cb444..5d1e01b4 100644
+--- a/apps/desktop/src/main/maker-host/index.ts
++++ b/apps/desktop/src/main/maker-host/index.ts
+@@ -1,3 +1,4 @@
++import { nativeCodexSubscriptionSpawn } from './vibelink-subscription-policy.js';
+ import { refreshInstalledPluginApps } from '../cindy-brain/index.js';
+ import { configureSessionModelInterfaceStorage, sessionModelInterface } from './session-model-interface.js';
+ import { readGeneratedImageEpoch } from '../cindy-media/generatedImageStorage';
+@@ -2007,6 +2008,36 @@ export function getMaker(): Maker {
+               ? 'provider-oauth'
+               : 'env-key';
+         const useOAuthBearer = authInjection === 'oauth-bearer';
++        const nativeSubscription = await nativeCodexSubscriptionSpawn(credentialMode, mcpExtraArgs, mcpExtraEnv, {
++          context: ctx,
++          prepareContextCatalog: async (nativeContext) => {
++            const catalog = getDesktopSelectableCatalog();
++            const source = resolveDesktopModelContextProviderId(catalog, 'codex', nativeContext.customContextProviderId, nativeContext.customContextModel);
++            return prepareCodexCustomContextCatalog({
++              binaryPath: codexPath,
++              codexHome: effectiveCodexHome,
++              modelId: nativeContext.customContextModel,
++              contextWindow: nativeContext.customContextWindow,
++              modelIds: catalog.providers.find(provider => provider.id === source)?.models.codex?.map(model => model.id),
++              resolveCompactionPct: (id) => resolveModelCompactionPct(getDesktopSelectableCatalog(), 'codex', source, id),
++              resolveContextWindow: (nativeModelId) =>
++                (source ? readModelContextLimit('codex', source, nativeModelId) : null)
++                ?? resolveModelDefaultContextWindow(catalog, 'codex', source, nativeModelId),
++            });
++          },
++        });
++        if (nativeSubscription) {
++          return {
++            ...nativeSubscription,
++            ...(buildSessionMcpConfig ? { buildSessionMcpConfig } : {}),
++            codexBrowserUseAvailable: browserCompanionSpawnConfig.codexBrowserUseAvailable,
++            ...(browserCompanion?.status === 'ready' ? {
++              codexBrowserUseVersion: browserCompanion.version,
++              codexBrowserUseStartupTimeoutMs: browserCompanion.startupTimeoutMs,
++            } : {}),
++          };
++        }
++
+         if (!usesIsolatedProxy) {
+           setCodexProxyAuthInjection(authInjection);
+           await broadcastCodexRuntimeRoute();
+diff --git a/apps/desktop/src/preload/preload.ts b/apps/desktop/src/preload/preload.ts
+index 3e3b5507..a0ba9e15 100644
+--- a/apps/desktop/src/preload/preload.ts
++++ b/apps/desktop/src/preload/preload.ts
+@@ -1114,6 +1114,10 @@ const readMicrophonePermissionSnapshot = createMicrophonePermissionSnapshot();
+ const voiceInputDataSnapshot = createVoiceInputDataSnapshot();
+ 
+ contextBridge.exposeInMainWorld('electronAPI', {
++  vibelink: {
++    request: (kind: import('../shared/vibelinkDesktop').VibeLinkRequestKind, payload?: Record<string, unknown>) =>
++      ipcRenderer.invoke('vibelink:request', kind, payload),
++  },
+   localAgent: {
+     onConfirmation: (listener: (request: import('../shared/localAgent').LocalAgentConfirmation) => void): (() => void) => {
+       const receive = (_event: Electron.IpcRendererEvent, request: import('../shared/localAgent').LocalAgentConfirmation) => listener(request);
+diff --git a/apps/desktop/src/renderer/components/branding/ThemeBrandLockup.tsx b/apps/desktop/src/renderer/components/branding/ThemeBrandLockup.tsx
+index 177bd8c4..cc46a7ab 100644
+--- a/apps/desktop/src/renderer/components/branding/ThemeBrandLockup.tsx
++++ b/apps/desktop/src/renderer/components/branding/ThemeBrandLockup.tsx
+@@ -1,24 +1,13 @@
+ import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+-import { BRAND_NAME } from '@cindy/maker-shared/branding';
+-
+ import headImageDark from '@/assets/head-image-dark.png';
+ import headImageLight from '@/assets/head-image-light.png';
+-import { logoDark, logoLight } from '@/hooks/useBrandLogo';
+ import { cn } from '@/lib/utils';
+ import type { Theme, ThemeBrandAsset } from '@/themes/types';
+ 
+-/**
+- * ThemeBrandLockup — 新建对话页与设置预览共用的品牌锁定组件。
+- *
+- * 布局跟随 2026-07 新设计固定为 50px icon + 110×37.5px logo。
+- * 本地主题只替换素材，不提供尺寸配置；loader 提供的透明像素边界会在
+- * 这里无损裁掉画布留白，原始文件不会被改写。
+- */
+-
+ export const BRAND_ICON_SIZE = 50;
+-export const BRAND_LOGO_WIDTH = 110;
++export const BRAND_LOGO_WIDTH = 138;
+ export const BRAND_LOGO_HEIGHT = 37.5;
+-export const BRAND_LOCKUP_GAP = 9;
++export const BRAND_LOCKUP_GAP = 10;
+ 
+ interface CroppedAssetImageProps {
+   asset: ThemeBrandAsset;
+@@ -87,25 +76,25 @@ export interface ThemeBrandLockupProps {
+ export function ThemeBrandLockup({ theme, className, testId }: ThemeBrandLockupProps) {
+   const dark = isDarkTheme(theme);
+   const defaultIcon: ThemeBrandAsset = { src: dark ? headImageDark : headImageLight };
+-  const defaultLogo: ThemeBrandAsset = { src: dark ? logoDark : logoLight };
+   const customIcon = theme?.brand?.icon;
+-  const customLogo = theme?.brand?.logo;
+   const [iconFailed, setIconFailed] = useState(false);
+-  const [logoFailed, setLogoFailed] = useState(false);
+ 
+   useEffect(() => setIconFailed(false), [customIcon, defaultIcon.src]);
+-  useEffect(() => setLogoFailed(false), [customLogo, defaultLogo.src]);
++  useEffect(() => {
++    if (document.title !== 'VibeLink') {
++      document.title = 'VibeLink';
++    }
++  }, []);
+ 
+   const icon = customIcon && !iconFailed ? customIcon : defaultIcon;
+-  const logo = customLogo && !logoFailed ? customLogo : defaultLogo;
+   const iconIsCustom = icon === customIcon;
+ 
+   return (
+-    <div data-testid={testId} className={cn('flex h-[50px] items-center gap-[9px]', className)}>
++    <div data-testid={testId} className={cn('flex h-[50px] items-center gap-[11px] select-none', className)}>
+       <span
+         data-testid={testId ? `${testId}-icon` : undefined}
+         className={cn(
+-          'pointer-events-none relative h-[50px] w-[50px] shrink-0 select-none overflow-hidden rounded-full',
++          'pointer-events-none relative h-[46px] w-[46px] shrink-0 select-none overflow-hidden rounded-full',
+           iconIsCustom && 'border border-[var(--border-default)] bg-[var(--surface-elevated)]',
+         )}
+         style={{ filter: 'drop-shadow(0 2px 3.65px rgba(0, 0, 0, 0.15))' }}
+@@ -121,16 +110,11 @@ export function ThemeBrandLockup({ theme, className, testId }: ThemeBrandLockupP
+       </span>
+       <span
+         data-testid={testId ? `${testId}-logo` : undefined}
+-        className="relative h-[37.5px] w-[110px] shrink-0 overflow-hidden"
++        className="flex items-baseline gap-1 font-extrabold tracking-tight text-[29px] leading-none text-[var(--text-primary)]"
++        style={{ fontFamily: 'system-ui, -apple-system, "Segoe UI", sans-serif' }}
+       >
+-        <CroppedAssetImage
+-          asset={logo}
+-          boxWidth={BRAND_LOGO_WIDTH}
+-          boxHeight={BRAND_LOGO_HEIGHT}
+-          fit="contain"
+-          alt={BRAND_NAME}
+-          onError={() => setLogoFailed(true)}
+-        />
++        <span>VIBELINK</span>
++        <span className="inline-block h-[7px] w-[7px] rounded-sm bg-[#10B981]" />
+       </span>
+     </div>
+   );
+diff --git a/apps/desktop/src/renderer/components/sidebar/SidebarTopNav.tsx b/apps/desktop/src/renderer/components/sidebar/SidebarTopNav.tsx
+index ec5535b1..4b2ccb52 100644
+--- a/apps/desktop/src/renderer/components/sidebar/SidebarTopNav.tsx
++++ b/apps/desktop/src/renderer/components/sidebar/SidebarTopNav.tsx
+@@ -597,8 +597,7 @@ export function SidebarTopNav({
+       )}
+     >
+       {showPinned && (
+-        /* 1. 新建 —— 图标 15/1.8 + meta 灰:与项目行的文件夹图标同规格同色
+-          (2026-07 用户定稿,对齐 Codex;文字仍用 foreground)。 */
++        <>
+         <button onClick={handleNew} className={ROW_CLASS} aria-label={t('ccAgent.layout.new')}>
+           <CirclePlus
+             size={15}
+@@ -607,6 +606,11 @@ export function SidebarTopNav({
+           />
+           <span className="leading-none">{t('ccAgent.layout.new')}</span>
+         </button>
++        <button onClick={() => navigate('/vibelink')} className={cn(ROW_CLASS, location.pathname === '/vibelink' && ROW_ACTIVE_CLASS)} aria-label="设备与连接">
++          <span className="shrink-0 inline-block rounded-full" style={{ width: 9, height: 9, background: '#34D399', marginLeft: 3, marginRight: 3 }} />
++          <span className="leading-none">设备与连接</span>
++        </button>
++        </>
+       )}
+       {showScrollable &&
+         (customizing ? (
+diff --git a/apps/desktop/src/renderer/router.tsx b/apps/desktop/src/renderer/router.tsx
+index 9b7757f5..2d17b193 100644
+--- a/apps/desktop/src/renderer/router.tsx
++++ b/apps/desktop/src/renderer/router.tsx
+@@ -1,6 +1,7 @@
+ import { RemoteBotSessionView } from '@/features/bots/RemoteBotSessionView';
+ import { createHashRouter, Navigate } from 'react-router-dom';
+ 
++import { VibeLinkControlCenter } from '@/features/vibelink/VibeLinkControlCenter';
+ import { MainLayout } from '@/components/layout/MainLayout';
+ import { MainEntryRedirect } from '@/components/layout/MainEntryRedirect';
+ import { RouteErrorFallback } from '@/components/error/RouteErrorFallback';
+@@ -93,6 +94,7 @@ export const router = createHashRouter([
+                 errorElement: <RouteErrorFallback variant="section" />,
+                 children: [
+                   { index: true, element: <MainEntryRedirect /> },
++                  { path: 'vibelink', element: <VibeLinkControlCenter embedded fullHeight /> },
+                   {
+                     path: 'cc-agent',
+                     element: <CCAgentFeatureLayout />,
+diff --git a/apps/desktop/src/renderer/vite-env.d.ts b/apps/desktop/src/renderer/vite-env.d.ts
+index fff86817..e2b28102 100644
+--- a/apps/desktop/src/renderer/vite-env.d.ts
++++ b/apps/desktop/src/renderer/vite-env.d.ts
+@@ -1156,6 +1156,7 @@ type ElectronLocalDbSessionListUsageOptions = Omit<
+ };
+ 
+ interface ElectronAPI {
++  vibelink?: import('../shared/vibelinkDesktop').VibeLinkDesktopBridge;
+   performanceTrace: import('../shared/performanceTrace').PerformanceTraceAPI;
+   localAgent: import('../shared/localAgent').LocalAgentSettingsApi;
+   botMarket: import('../shared/botMarket').BotMarketApi;
+diff --git a/apps/desktop/vite.main.config.ts b/apps/desktop/vite.main.config.ts
+index 12672af3..c01d5685 100644
+--- a/apps/desktop/vite.main.config.ts
++++ b/apps/desktop/vite.main.config.ts
+@@ -1,3 +1,4 @@
++import fs from 'node:fs';
+ import path from 'node:path';
+ import { fileURLToPath } from 'node:url';
+ import { defineConfig, loadEnv } from 'vite';
+@@ -5,6 +6,18 @@ import { desktopClientBuildEnv } from '../../scripts/shared/client-endpoint-buil
+ import { cindyRuntimeSourcePlugin } from './cindy-runtime-source';
+ 
+ const configDir = path.dirname(fileURLToPath(import.meta.url));
++
++// 融合版本机服务（见 src/main/bootstrap-electron.ts）：主进程运行时 require('./vibelink-embedded-server.js')，
++// 所以原样作为构建产物发出，不进 bundle。
++function vibelinkEmbeddedServerPlugin() {
++  const source = path.resolve(configDir, 'src/main/vibelink/embeddedServer.cjs');
++  return {
++    name: 'vibelink-embedded-server',
++    generateBundle(this: { emitFile(file: { type: 'asset'; fileName: string; source: string }): string }) {
++      this.emitFile({ type: 'asset', fileName: 'vibelink-embedded-server.js', source: fs.readFileSync(source, 'utf8') });
++    },
++  };
++}
+ // 登录 scenario fixtures 的生产空 stub(implementation-plan Step 0 WHAT4 生产排除
+ // 双保险之 build-time 层;check-login-production-guard.mjs 以 sentinel 双断言校验)。
+ const loginFixturesStub = path.resolve(
+@@ -34,7 +47,11 @@ export default defineConfig(({ mode }) => {
+       ? (process.env[key] ?? '')
+       : (allEnv[key] ?? '');
+   return {
+-    plugins: [cindyRuntimeSourcePlugin(path.resolve(configDir, '../..'), mode === 'development')],
++    logLevel: process.env.CINDY_VIBELINK_EMBEDDED === '1' ? 'warn' : undefined,
++    plugins: [
++      cindyRuntimeSourcePlugin(path.resolve(configDir, '../..'), mode === 'development'),
++      vibelinkEmbeddedServerPlugin(),
++    ],
+     resolve: {
+       // 仅 fixtures 生产排除条件(v6.17 允许范围):production 构建把
+       // '@cindy/auth-client/fixtures' 整模块替换为空 stub,dev 构建保留真模块。
+diff --git a/scripts/restart-desktop-remote.mjs b/scripts/restart-desktop-remote.mjs
+index 23def523..c33661cd 100644
+--- a/scripts/restart-desktop-remote.mjs
++++ b/scripts/restart-desktop-remote.mjs
+@@ -29,7 +29,8 @@ const rootDir = path.resolve(__dirname, '..');
+ const gracefulTimeoutMs = 3000;
+ const forceTimeoutMs = 5000;
+ const pollIntervalMs = 150;
+-const startupReadyTimeoutMs = 120_000;
++// The fused cold build includes Cindy's workspace and all native worker bundles.
++const startupReadyTimeoutMs = process.env.CINDY_VIBELINK_EMBEDDED === '1' ? 600_000 : 120_000;
+ export const ISOLATED_AUTH_LAUNCH_PROOF_FILE = '.isolated-auth-launch-proof.json';
+ const isolatedAuthLaunchProofTtlMs = 10 * 60_000;
+ const forceKillLabel = process.platform === 'win32' ? 'taskkill /F /T' : 'kill -9';
+@@ -980,6 +981,9 @@ function devEnvEntries(env) {
+     // --region 经 CINDY_AUTH_REGION 注入 dev-remote-env / Forge / Vite，同一个值
+     // 同时决定区域身份与 --endpoints-cdn 的自举 CDN 基址。
+     ['CINDY_AUTH_REGION', env.CINDY_AUTH_REGION],
++    // Fusion is an explicit launch mode, never a global account migration.
++    ['CINDY_VIBELINK_EMBEDDED', env.CINDY_VIBELINK_EMBEDDED],
++    ['VIBELINK_HUB', env.VIBELINK_HUB],
+     ['XDT_VOICE_INPUT_RECORD', env.XDT_VOICE_INPUT_RECORD],
+     // 登录 scenario harness(dev-only 状态遍历,implementation-plan Step 0):
+     // XDT_LOGIN_SCENARIO 由 authManager 消费(附录 A 值域);
+@@ -1060,20 +1064,28 @@ export function devEnvPrefix(env = process.env, platform = process.platform) {
+ 
+ function launchInSystemTerminal(mode) {
+   if (process.platform === 'win32') {
+-    const command = `cd /d ${cmdDoubleQuote(rootDir)} && ${devEnvPrefix()}${packageManagerCommand(mode)}`;
++    const fusion = process.env.CINDY_VIBELINK_EMBEDDED === '1';
++    const logPath = desktopDevTerminalLogPath();
++    if (fusion) {
++      fs.mkdirSync(path.dirname(logPath), { recursive: true });
++      fs.writeFileSync(logPath, '');
++    }
++    const command = `cd /d ${cmdDoubleQuote(rootDir)} && ${devEnvPrefix()}${packageManagerCommand(mode)}`
++      + (fusion ? ` > ${cmdDoubleQuote(logPath)} 2>&1` : '');
+     const script = [
+       "Start-Process -FilePath 'cmd.exe'",
+       `-ArgumentList @('/c', ${psSingleQuote(command)})`,
+       `-WorkingDirectory ${psSingleQuote(rootDir)}`,
++      ...(fusion ? ['-WindowStyle Hidden'] : []),
+     ].join(' ');
+     const result = run('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script], {
+       stdio: 'inherit',
+-      windowsHide: false,
++      windowsHide: fusion,
+     });
+     if (result.status !== 0) {
+       throw new Error(`Failed to open cmd window (exit ${result.status ?? 1})`);
+     }
+-    console.log(`==> Opened desktop ${mode} dev in a new cmd window.`);
++    console.log(fusion ? `==> Started fused desktop in background; log: ${logPath}` : `==> Opened desktop ${mode} dev in a new cmd window.`);
+     return;
+   }
+ 
