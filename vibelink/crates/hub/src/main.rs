@@ -14,6 +14,7 @@ use vibelink_protocol::{now_ms, Command, ConfigInfo, Device, DeviceReport, Event
 use serde_json::{json, Value};
 mod approvals;
 mod auth;
+mod login;
 mod bots;
 mod group_work;
 mod work_mandate;
@@ -34,7 +35,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-const VERSION: &str = "0.3.0";
+const VERSION: &str = "0.4.0";
 const OFFLINE_AFTER_MS: u64 = 20_000;
 const EVENT_CAP: usize = 500;
 
@@ -48,6 +49,7 @@ pub(crate) struct Store {
 
 struct App {
     pub(crate) auth: Arc<auth::Auth>,
+    logins:Arc<login::Logins>,
     pub(crate) tenants: Arc<tenants::BetaTenantStore>,
     pub(crate) beta_mode: bool,
     pub(crate) bots: bots::BotFleetStore,
@@ -216,7 +218,7 @@ fn tenant_app(app:&Shared,tid:&str)->Result<Shared,String> {
     if let Some(a)=cache.get(tid){return Ok(a.clone());}
     let dir=app.data.join("tenants").join(tid);
     let tenant=Arc::new(App {
-        auth:app.auth.clone(),tenants:app.tenants.clone(),beta_mode:true,
+        auth:app.auth.clone(),logins:app.logins.clone(),tenants:app.tenants.clone(),beta_mode:true,
         work:group_work::WorkStore::load(dir.clone())?,
         leases:app.leases.clone(),
         bots:bots::BotFleetStore::load_for_edition(dir.clone(),true),
@@ -231,6 +233,7 @@ fn tenant_route_allowed(path: &str) -> bool {
     path == "/api/bots" || path.starts_with("/api/bots/") || path == "/api/bot-groups" || path.starts_with("/api/bot-groups/")
         || path.starts_with("/api/sessions/") || path.starts_with("/api/session/")
         || path.starts_with("/api/llm/") || path == "/api/usage" || path == "/api/beta/quota" || path == "/api/devices"
+        || matches!(path,"/api/auth/me"|"/api/auth/session"|"/api/auth/logout"|"/api/auth/qr/confirm")
 }
 
 /// CONNECT 网关的鉴权：X-Mesh-Token 必须是 admin / client 作用域。
@@ -285,6 +288,7 @@ async fn tokens_rotate_admin(State(app): State<Shared>) -> Response {
 }
 
 async fn pair_start(State(app): State<Shared>, body: Option<Json<Value>>) -> Response {
+    if app.beta_mode {return (StatusCode::FORBIDDEN,Json(json!({"error":"内测版请使用登录页的内测码或账号扫码登录"}))).into_response();}
     let name = body
         .as_ref()
         .and_then(|b| b.get("name").and_then(|v| v.as_str()).map(|s| s.to_string()))
@@ -407,6 +411,7 @@ async fn health(State(app): State<Shared>) -> Json<Value> {
     });
     v["policyTicks"] = json!(policy::ticks());
     v["groupWork"] = json!({"version":2,"durable":true,"agentMinVersion":"0.4.0"});
+    v["login"] = json!({"version":1,"issuer":app.auth.issuer(),"edition":if app.beta_mode{"beta"}else{"dev"}});
     Json(v)
 }
 
@@ -2342,6 +2347,7 @@ async fn main() {
     let voice_svc = voice::VoiceService::load(data.clone());
     let app = Arc::new(App {
         auth: Arc::new(auth),
+        logins:Arc::new(login::Logins::default()),
         tenants: Arc::new(tenants_store),
         beta_mode,
         bots: bots_store,
@@ -2394,6 +2400,7 @@ async fn main() {
 fn api_router(app: Shared) -> Router {
     Router::new()
         .route("/api/health", get(health))
+        .merge(login::routes())
         .route("/api/tokens", get(tokens_list).post(tokens_issue))
         .route("/api/tokens/rotate-admin", post(tokens_rotate_admin))
         .route("/api/tokens/{id}", axum::routing::delete(tokens_revoke))

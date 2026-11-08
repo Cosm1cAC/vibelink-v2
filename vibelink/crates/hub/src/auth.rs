@@ -155,6 +155,7 @@ pub fn required(method: &str, path: &str) -> Need {
     let get = method.eq_ignore_ascii_case("GET") || method.eq_ignore_ascii_case("HEAD");
     // 公开：健康检查、配对兑换、内测邀请码激活、安装包与 agent 二进制（都不含秘密）、Cindy 中继（自带设备证书校验）
     if path == "/api/health"
+        || (post && matches!(path,"/api/auth/beta"|"/api/auth/qr/start"|"/api/auth/qr/scan"|"/api/auth/qr/poll"|"/api/auth/qr/ack"))
         || (post && (path == "/api/pair" || path == "/api/pair/scan" || path == "/api/beta/activate"))
         || (get && (path == "/apk" || path.starts_with("/apk/") || path == "/api/apk/latest"))
         || (get && (path == "/api/agent/latest" || path.starts_with("/agent/")))
@@ -220,6 +221,12 @@ pub struct TokenRecord {
     pub last_used_at: u64,
     #[serde(default)]
     pub revoked: bool,
+    #[serde(default)]
+    pub principal_id: Option<String>,
+    #[serde(default)]
+    pub principal_label: Option<String>,
+    #[serde(default)]
+    pub expires_at: u64,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -238,6 +245,10 @@ pub struct AuthCtx {
     pub scope: Scope,
     pub token_id: String,
     pub name: String,
+    pub principal_id: Option<String>,
+    pub principal_label: Option<String>,
+    pub expires_at: u64,
+    fingerprint: String,
 }
 
 struct PairCode {
@@ -264,6 +275,7 @@ pub struct Auth {
     dir: PathBuf,
     admin_hash: Mutex<String>,
     inner: Mutex<Inner>,
+    issuer: String,
 }
 
 /// 过渡期：旧 token 的哈希（`data/legacy-gateway.sha256`）。只在 CONNECT 网关（局域网 / tailnet，
@@ -288,6 +300,19 @@ const FAIL_LIMIT: usize = 200;
 impl Auth {
     /// 读 `token.txt`（没有就生成随机管理员 token）和 `tokens.json`。
     pub fn load(dir: PathBuf) -> (Auth, String) {
+        fs::create_dir_all(&dir).expect("create auth directory");
+        let issuer_file=dir.join("auth-issuer.txt");
+        let issuer=match fs::read_to_string(&issuer_file) {
+            Ok(value)=>value.trim().to_string(),
+            Err(error) if error.kind()==std::io::ErrorKind::NotFound=>{
+                use std::io::Write;
+                let value=format!("hub_{}",&random_token()[..24]);
+                let mut file=fs::OpenOptions::new().write(true).create_new(true).open(&issuer_file).expect("create persistent login issuer");
+                file.write_all(value.as_bytes()).and_then(|_|file.sync_all()).expect("persist login issuer");value
+            },
+            Err(_)=>panic!("cannot read persistent login issuer"),
+        };
+        assert!(issuer.len()==28&&issuer.starts_with("hub_")&&issuer[4..].bytes().all(|b|b.is_ascii_hexdigit()),"invalid persistent login issuer");
         let token_file = dir.join("token.txt");
         let admin = match fs::read_to_string(&token_file) {
             Ok(t) if !t.trim().is_empty() => t.trim().to_string(),
@@ -306,9 +331,11 @@ impl Auth {
             dir,
             admin_hash: Mutex::new(hash_token(&admin)),
             inner: Mutex::new(Inner { tokens, ..Default::default() }),
+            issuer,
         };
         (auth, admin)
     }
+    pub fn issuer(&self)->&str {&self.issuer}
 
     fn persist(&self, inner: &Inner) {
         let file = TokenFile { tokens: inner.tokens.clone() };
@@ -334,17 +361,17 @@ impl Auth {
         }
         let h = hash_token(presented);
         if *self.admin_hash.lock().unwrap() == h {
-            return Some(AuthCtx { scope: Scope::Admin, token_id: "admin".into(), name: "admin".into() });
+            return Some(AuthCtx { scope: Scope::Admin, token_id: "admin".into(), name: "admin".into(), principal_id:Some("owner".into()), principal_label:Some("本机工作区".into()), expires_at:0,fingerprint:h });
         }
         let mut inner = self.inner.lock().unwrap();
         let now = now_ms();
-        let found = inner.tokens.iter_mut().find(|t| !t.revoked && t.hash == h).map(|t| {
+        let found = inner.tokens.iter_mut().find(|t| !t.revoked && t.hash == h && (t.expires_at==0 || t.expires_at>now)).map(|t| {
             // last_used 只记到分钟级，避免每个请求都写盘
             let stale = now.saturating_sub(t.last_used_at) > 60_000;
             if stale {
                 t.last_used_at = now;
             }
-            (AuthCtx { scope: t.scope, token_id: t.id.clone(), name: t.name.clone() }, stale)
+            (AuthCtx { scope: t.scope, token_id: t.id.clone(), name: t.name.clone(),principal_id:t.principal_id.clone(),principal_label:t.principal_label.clone(),expires_at:t.expires_at,fingerprint:h.clone() }, stale)
         });
         let (ctx, stale) = found?;
         if stale {
@@ -369,6 +396,7 @@ impl Auth {
             created_at: now_ms(),
             last_used_at: 0,
             revoked: false,
+            principal_id:None,principal_label:None,expires_at:0,
         };
         let view = to_view(&rec);
         let mut inner = self.inner.lock().unwrap();
@@ -398,6 +426,7 @@ impl Auth {
             created_at: now_ms(),
             last_used_at: 0,
             revoked: false,
+            principal_id:None,principal_label:None,expires_at:0,
         });
         self.persist(&inner);
     }
@@ -423,6 +452,7 @@ impl Auth {
 
     /// 换一个新的管理员 token，写回 token.txt，返回明文。
     pub fn rotate_admin(&self) -> String {
+        let _sessions=self.inner.lock().unwrap();
         let t = random_token();
         let _ = fs::write(self.dir.join("token.txt"), &t);
         *self.admin_hash.lock().unwrap() = hash_token(&t);
@@ -510,9 +540,68 @@ impl Auth {
             name_hint = c.name_hint;
         }
         let name = if name.trim().is_empty() { name_hint } else { name.to_string() };
-        let issued = self.issue(&name, Scope::Client);
+        let issued = self.issue_session(&name,"owner","本机工作区")
+            .map_err(|_|"无法保存登录会话，请重试")?;
         self.inner.lock().unwrap().pair_done.push(PairDone { id: pair_id, name: issued.0.name.clone(), at: now });
         Ok(issued)
+    }
+
+    /// New device credentials share a server-selected principal, never a caller-supplied user ID.
+    pub fn issue_session(&self,name:&str,principal:&str,label:&str)->Result<(TokenView,String),String> {
+        let mut inner=self.inner.lock().unwrap();self.mint_session(&mut inner,name,principal,label)
+    }
+    pub fn issue_derived_session(&self,source:&AuthCtx,name:&str,label:&str)->Result<(TokenView,String),String> {
+        let mut inner=self.inner.lock().unwrap();
+        let active=if source.scope==Scope::Admin {*self.admin_hash.lock().unwrap()==source.fingerprint}
+            else {inner.tokens.iter().any(|t|t.id==source.token_id&&t.hash==source.fingerprint&&!t.revoked&&(t.expires_at==0||t.expires_at>now_ms()))};
+        if !active||!allows(source.scope,Need::Client){return Err("登录凭据已失效".into());}
+        let principal=crate::model_gateway::identity(source).user_id;
+        self.mint_session(&mut inner,name,&principal,label)
+    }
+    fn mint_session(&self,inner:&mut Inner,name:&str,principal:&str,label:&str)->Result<(TokenView,String),String> {
+        let name=sanitize_name(name);
+        if principal.is_empty()||principal.len()>160||!principal.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'_'||b==b'-') {
+            return Err("Invalid login principal".into());
+        }
+        // Legacy routing encodes tenancy in a trusted token name. Device labels
+        // must never claim another tenant when creating a new device credential.
+        if crate::tenants::extract_tenant_id(&name).is_some_and(|tenant|tenant!=principal) {
+            return Err("Device name cannot select a different account".into());
+        }
+        if inner.tokens.iter().filter(|t|t.principal_id.as_deref()==Some(principal)&&!t.revoked&&t.expires_at>now_ms()).count()>=64 {
+            return Err("此账号的登录设备过多，请先退出不使用的设备".into());
+        }
+        let plain=random_token();
+        let rec=TokenRecord{id:format!("ss_{}",&random_token()[..24]),name,scope:Scope::Client,
+            hash:hash_token(&plain),created_at:now_ms(),last_used_at:0,revoked:false,principal_id:Some(principal.into()),principal_label:Some(label.into()),expires_at:now_ms()+30*24*60*60_000};
+        let view=to_view(&rec);
+        let previous=inner.tokens.clone();
+        inner.tokens.retain(|t|t.expires_at==0||(!t.revoked&&t.expires_at>now_ms()));
+        inner.tokens.push(rec);
+        if let Err(error)=self.persist_checked(inner) {inner.tokens=previous;return Err(error);}
+        Ok((view,plain))
+    }
+    fn persist_checked(&self,inner:&Inner)->Result<(),String> {
+        use std::io::Write;
+        fs::create_dir_all(&self.dir).map_err(|e|e.to_string())?;
+        let bytes=serde_json::to_vec(&TokenFile{tokens:inner.tokens.clone()}).map_err(|e|e.to_string())?;
+        let tmp=self.dir.join("tokens.json.tmp");
+        let mut file=fs::File::create(&tmp).map_err(|e|e.to_string())?;
+        file.write_all(&bytes).and_then(|_|file.sync_all()).map_err(|e|e.to_string())?;drop(file);
+        fs::rename(tmp,self.dir.join("tokens.json")).map_err(|e|e.to_string())
+    }
+    pub fn source_active(&self,ctx:&AuthCtx)->bool {
+        if ctx.scope==Scope::Admin {return *self.admin_hash.lock().unwrap()==ctx.fingerprint;}
+        self.inner.lock().unwrap().tokens.iter().any(|t|t.id==ctx.token_id&&t.hash==ctx.fingerprint&&!t.revoked&&(t.expires_at==0||t.expires_at>now_ms()))
+    }
+    pub fn logout(&self,ctx:&AuthCtx)->Result<(),String> {
+        if ctx.scope!=Scope::Client {return Err("请先建立设备登录会话".into());}
+        let mut inner=self.inner.lock().unwrap();
+        let index=inner.tokens.iter().position(|t|t.id==ctx.token_id&&t.hash==ctx.fingerprint).ok_or("Session not found")?;
+        if inner.tokens[index].expires_at==0 {return Err("旧共享凭据不能作为单设备退出，请先升级登录会话".into());}
+        inner.tokens[index].revoked=true;
+        if let Err(error)=self.persist_checked(&inner) {inner.tokens[index].revoked=false;return Err(error);}
+        Ok(())
     }
 }
 
@@ -719,6 +808,18 @@ mod tests {
         }
         assert!(auth.redeem(&s2, "phone2").is_ok());
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn device_expiry_is_enforced_after_restart_and_failed_disk_writes_never_mint_a_session() {
+        let dir=temp_dir("session-expiry");let (auth,_)=Auth::load(dir.clone());
+        let (view,token)=auth.issue_session("Phone","owner","Workspace").unwrap();
+        {let mut inner=auth.inner.lock().unwrap();inner.tokens.iter_mut().find(|t|t.id==view.id).unwrap().expires_at=now_ms()-1;auth.persist_checked(&inner).unwrap();}
+        assert!(auth.verify(&token).is_none());let (reload,_)=Auth::load(dir.clone());assert!(reload.verify(&token).is_none());
+        fs::create_dir(dir.join("tokens.json.tmp")).unwrap();
+        assert!(auth.issue_session("Phone","owner","Workspace").is_err());
+        assert_eq!(auth.list().len(),1);
+        let _=fs::remove_dir_all(dir);
     }
 
     #[test]

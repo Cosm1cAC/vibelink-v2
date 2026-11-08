@@ -81,7 +81,7 @@ Windows 内测工具可只读访问宿主发现的 PowerShell 7/Python 安装叶
 - Cindy 桌面读取同一 Hub Work/消息投影，提供计划、执行细节、追问、取消、验收视图。
 - 复用 Cindy 原有 group/session/plan/outbox 组件与本地执行能力，通过 adapter 接入 Hub；不另外维护第二套权威任务账本，不依赖 Cindy 云端登录才能完成本地任务。
 - 外部渠道发送采用持久 outbox、确定消息键、投递结果和失败重试；收件 ACK 与任务完成独立。
-- 先补开发版跨端授权合同：手机配对 token 当前主体为 `client_<tokenId>`，桌面 Main 管理 token 为 `owner`。桌面受控代办必须保留原 Work 的计量主体并记录实际操作者，不能由 renderer 传入 `meterIdentity` 或复制手机凭据。内测继续以同一 tenant 为主体，不能跨租户代办。
+- 先完成[统一登录](login-system.md)：手机确认桌面登录时为同一主体签发独立设备会话，旧手机 `client_<tokenId>` 主体保留，新本机配对归 `owner`，内测继续以同一 tenant 为主体。桌面可用同主体的会话操作原 Work，无需伪造 `meterIdentity`、复制手机凭据或隐式管理员代办。
 - 最小落点是独立的 typed HubWork adapter、Main/preload 白名单桥、renderer 的 Hub 任务镜像 store/视图和独立 outbox；复用现有桌面桥与去重模式，不能把 Hub Work 送进 Cindy 原 bot-group 执行器再执行一次。outbox 命名空间包含 Hub 地址、版别和主体，稳定 requestId 对应不可变输入。
 
 验收：手机、桌面看到相同 Work/Step/会话；任一端重启不重复派发；通知失败不把任务当完成或生成重复任务。

@@ -7,6 +7,7 @@ pub(super) fn fixture() -> (PathBuf, Shared, String) {
     let tenants = tenants::BetaTenantStore::load(dir.clone(), &auth);
     let app = Arc::new(App {
         auth: Arc::new(auth),
+        logins:Arc::new(login::Logins::default()),
         tenants: Arc::new(tenants),
         beta_mode: false,
         bots: bots::BotFleetStore::load(dir.clone()),
@@ -106,7 +107,7 @@ async fn predictable_seat_labels_cannot_be_used_to_impersonate_users() {
     fs::remove_dir_all(dir).unwrap();
 }
 
-async fn request(
+pub(super) async fn request(
     app: Shared,
     token: &str,
     method: Method,

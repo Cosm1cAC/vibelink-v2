@@ -52,14 +52,14 @@ impl Grants {
 pub fn identity(ctx: &auth::AuthCtx) -> Identity {
     let tenant = crate::tenants::extract_tenant_id(&ctx.name);
     Identity {
-        user_id: tenant.map(str::to_string).unwrap_or_else(|| {
+        user_id: ctx.principal_id.clone().or_else(||tenant.map(str::to_string)).unwrap_or_else(|| {
             if ctx.scope == auth::Scope::Admin {
                 "owner".into()
             } else {
                 format!("client_{}", ctx.token_id)
             }
         }),
-        label: ctx.name.clone(),
+        label: ctx.principal_label.clone().unwrap_or_else(||ctx.name.clone()),
         beta: tenant.is_some(),
     }
 }
