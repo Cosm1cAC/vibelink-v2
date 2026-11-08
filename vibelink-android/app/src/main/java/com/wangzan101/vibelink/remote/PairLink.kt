@@ -15,7 +15,8 @@ data class PairLink(val secret: String, val host: String, val urls: List<String>
 
         fun parse(raw: String?): PairLink? {
             val text = raw?.trim().orEmpty()
-            if (!text.startsWith("$SCHEME://pair", ignoreCase = true)) return null
+            val uri = runCatching { java.net.URI(text) }.getOrNull() ?: return null
+            if (!uri.scheme.equals(SCHEME, true) || !uri.host.equals("pair", true) || !uri.path.isNullOrEmpty() || uri.userInfo != null || uri.fragment != null) return null
             val query = text.substringAfter('?', "")
             if (query.isEmpty()) return null
             var secret = ""
@@ -28,10 +29,8 @@ data class PairLink(val secret: String, val host: String, val urls: List<String>
                     "s" -> secret = value.trim()
                     "n" -> host = value.filter { it.isLetterOrDigit() || it in "-_." }.take(40)
                     "u" -> {
-                        val u = value.trim().trimEnd('/')
-                        val ok = (u.startsWith("http://") || u.startsWith("https://")) &&
-                            u.length < 200 && u.none { it.isWhitespace() }
-                        if (ok && u !in urls) urls += u
+                        val u = LoginPolicy.normalizedOrigin(value)
+                        if (u != null && u.length < 200 && u !in urls) urls += u
                     }
                 }
             }

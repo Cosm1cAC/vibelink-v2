@@ -63,11 +63,14 @@ object RemoteSessionCache {
     private val memMessages = ConcurrentHashMap<String, List<RemoteApi.Message>>()
     private val memNextCursor = ConcurrentHashMap<String, String>()
 
+    private fun cacheKey(context: Context, key: String) = RemoteStore.accountScope(context) + ":" + key
+    fun clearMemory() { memSessions.clear(); memMessages.clear(); memNextCursor.clear() }
+
     private fun prefs(context: Context) =
-        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        RemoteStore.scopedPreferences(context, PREF_NAME)
 
     fun getCachedSessions(context: Context, engineId: String): List<RemoteApi.Session> {
-        memSessions[engineId]?.takeIf { it.isNotEmpty() }?.let { return it }
+        memSessions[cacheKey(context, engineId)]?.takeIf { it.isNotEmpty() }?.let { return it }
         val raw = prefs(context).getString(KEY_SESSIONS_PREFIX + engineId, null) ?: return emptyList()
         val parsed = runCatching {
             val arr = JSONArray(raw)
@@ -86,7 +89,7 @@ object RemoteSessionCache {
             }
         }.getOrDefault(emptyList())
         if (parsed.isNotEmpty()) {
-            memSessions[engineId] = parsed
+            memSessions[cacheKey(context, engineId)] = parsed
         }
         return parsed
     }
@@ -94,7 +97,7 @@ object RemoteSessionCache {
     fun putCachedSessions(context: Context, engineId: String, sessions: List<RemoteApi.Session>) {
         if (sessions.isEmpty()) return
         val trimmed = sessions.take(60)
-        memSessions[engineId] = trimmed
+        memSessions[cacheKey(context, engineId)] = trimmed
         runCatching {
             val arr = JSONArray()
             trimmed.forEach { s ->
@@ -117,8 +120,8 @@ object RemoteSessionCache {
 
     fun getCachedMessages(context: Context, sessionId: String): Pair<List<RemoteApi.Message>, String?> {
         if (sessionId.isBlank()) return emptyList<RemoteApi.Message>() to null
-        memMessages[sessionId]?.takeIf { it.isNotEmpty() }?.let { cached ->
-            return cached to memNextCursor[sessionId]?.takeIf { it.isNotBlank() }
+        memMessages[cacheKey(context, sessionId)]?.takeIf { it.isNotEmpty() }?.let { cached ->
+            return cached to memNextCursor[cacheKey(context, sessionId)]?.takeIf { it.isNotBlank() }
         }
         val p = prefs(context)
         val raw = p.getString(KEY_MSGS_PREFIX + sessionId, null) ?: return emptyList<RemoteApi.Message>() to null
@@ -172,8 +175,8 @@ object RemoteSessionCache {
             }
         }.getOrDefault(emptyList())
         if (parsed.isNotEmpty()) {
-            memMessages[sessionId] = parsed
-            if (cursor != null) memNextCursor[sessionId] = cursor
+            memMessages[cacheKey(context, sessionId)] = parsed
+            if (cursor != null) memNextCursor[cacheKey(context, sessionId)] = cursor
         }
         return parsed to cursor
     }
@@ -188,9 +191,9 @@ object RemoteSessionCache {
         val clean = messages.filterNot { it.id.startsWith("local-assistant-") }
         if (clean.isEmpty()) return
         val trimmed = clean.takeLast(60)
-        memMessages[sessionId] = trimmed
+        memMessages[cacheKey(context, sessionId)] = trimmed
         if (nextCursor != null) {
-            memNextCursor[sessionId] = nextCursor
+            memNextCursor[cacheKey(context, sessionId)] = nextCursor
         }
         runCatching {
             val p = prefs(context)
@@ -274,7 +277,7 @@ object RemoteSessionCache {
             .distinctBy { it.id }
             .take(6)
         for (s in targets) {
-            if (memMessages.containsKey(s.id)) continue
+            if (memMessages.containsKey(cacheKey(context, s.id))) continue
             runCatching {
                 val page = RemoteApi.messagesPage(hub, token, s.device.ifBlank { "pc" }, s.agent, s.id)
                 if (page.messages.isNotEmpty()) {
@@ -370,7 +373,7 @@ private const val AGENT_CACHE_KEY = "agents"
 
 /** 上一次成功拿到的远程 agent。离线时列表里仍然保留，只是 online=false。 */
 fun readAgentCache(context: Context): List<AgentContact> {
-    val raw = context.getSharedPreferences(AGENT_CACHE, Context.MODE_PRIVATE)
+    val raw = RemoteStore.scopedPreferences(context, AGENT_CACHE)
         .getString(AGENT_CACHE_KEY, null) ?: return emptyList()
     return runCatching {
         val arr = JSONArray(raw)
@@ -409,7 +412,7 @@ fun writeAgentCache(context: Context, list: List<AgentContact>) {
             },
         )
     }
-    context.getSharedPreferences(AGENT_CACHE, Context.MODE_PRIVATE).edit()
+    RemoteStore.scopedPreferences(context, AGENT_CACHE).edit()
         .putString(AGENT_CACHE_KEY, arr.toString()).apply()
 }
 

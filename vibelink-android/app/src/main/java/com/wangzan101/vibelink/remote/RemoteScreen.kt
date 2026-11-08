@@ -116,6 +116,7 @@ import com.wangzan101.vibelink.ui.components.PageBackground
 import com.wangzan101.vibelink.ui.components.PageScaffold
 import com.wangzan101.vibelink.ui.components.RowValue
 import com.wangzan101.vibelink.ui.components.TopBar
+import com.wangzan101.vibelink.ui.components.VibeLinkButton
 import com.wangzan101.vibelink.ui.theme.VibeLinkIcons
 import com.wangzan101.vibelink.ui.theme.VibeLinkTheme
 import com.wangzan101.vibelink.ui.theme.VibeLinkType
@@ -134,7 +135,7 @@ import java.util.Locale
  * 不再是一行纯文本。
  */
 @Composable
-fun RemoteScreen(onBack: () -> Unit) {
+fun RemoteScreen(onBack: () -> Unit, onLogin: () -> Unit = onBack) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val c = VibeLinkTheme.colors
@@ -352,27 +353,7 @@ fun RemoteScreen(onBack: () -> Unit) {
         }
 
         when (stage) {
-            0 -> PairSetup(
-                hub, onHub = { hub = it },
-                token = token,
-                onToken = { token = it },
-                onManualConnect = {
-                    RemoteStore.save(ctx, hub, token)
-                    com.wangzan101.vibelink.settings.Preconfigure.onPaired(ctx)
-                    com.wangzan101.vibelink.clash.ClashSeed.reseed(ctx)
-                    loadDevices()
-                },
-                onPaired = { h, t, link, host ->
-                    hub = h
-                    token = t
-                    RemoteStore.savePaired(ctx, h, t, link, host)
-                    com.wangzan101.vibelink.settings.Preconfigure.onPaired(ctx)
-                    com.wangzan101.vibelink.clash.ClashSeed.reseed(ctx)
-                    Toast.makeText(ctx, "已连接 ${host.ifBlank { "电脑" }}", Toast.LENGTH_SHORT).show()
-                    stage = 1
-                    loadDevices()
-                },
-            )
+            0 -> VibeLinkButton("登录与连接管理", onLogin, Modifier.fillMaxWidth().padding(16.dp))
 
             1 -> {
                 GroupLabel("智能体")
@@ -389,7 +370,7 @@ fun RemoteScreen(onBack: () -> Unit) {
                 GroupCard {
                     RowCell("刷新", "重新问一次 hub") { loadAgents(devices) }
                     Hairline()
-                    RowCell("扫码重新连接", RemoteStore.hostName(ctx).ifBlank { RemoteStore.hub(ctx) }) { stage = 0 }
+                    RowCell("登录与连接管理", RemoteStore.hostName(ctx).ifBlank { RemoteStore.hub(ctx) }) { onLogin() }
                 }
             }
 

@@ -180,8 +180,12 @@ open class VibeLinkApp : Application(), WebOwner, SandboxOwner, TaskEnvironment.
             com.wangzan101.vibelink.about.UpdateChecker(
                 java.io.File(filesDir, "update-v1.json"),
                 BuildConfig.VERSION_NAME,
-                releaseApi = { com.wangzan101.vibelink.about.VibeLinkLinks.latestReleaseApi(com.wangzan101.vibelink.remote.RemoteStore.hub(this)) },
-                publicFallback = com.wangzan101.vibelink.remote.RemoteApi.candidates(com.wangzan101.vibelink.remote.RemoteStore.hub(this))
+                releaseApi = { com.wangzan101.vibelink.about.VibeLinkLinks.latestReleaseApi(
+                    com.wangzan101.vibelink.remote.LoginPolicy.allowedUrls(listOf(com.wangzan101.vibelink.remote.RemoteStore.hub(this)), false)
+                        .firstOrNull() ?: com.wangzan101.vibelink.remote.RemoteStore.DEFAULT_HUB) },
+                publicFallback = com.wangzan101.vibelink.remote.LoginPolicy.allowedUrls(
+                    com.wangzan101.vibelink.remote.RemoteApi.candidates(com.wangzan101.vibelink.remote.RemoteStore.hub(this)), false)
+                    .ifEmpty { listOf(com.wangzan101.vibelink.remote.RemoteStore.DEFAULT_HUB) }
                     .map { com.wangzan101.vibelink.about.VibeLinkLinks.latestReleaseApi(it) },
                 githubFallback = emptyList(),
             )
@@ -300,7 +304,7 @@ open class VibeLinkApp : Application(), WebOwner, SandboxOwner, TaskEnvironment.
         }
         // 网络代理：启动先按上次的设置生效；自动模式再从 hub 里找一次出口
         Net.init(this)
-        com.wangzan101.vibelink.ui.GroupWorkStore.recoverPending(this)
+        com.wangzan101.vibelink.remote.AuthStore.boot(this)
         if (ProxyStore.mode(this) == ProxyStore.Mode.Auto) {
             scope.launch(Dispatchers.IO) {
                 ProxyStore.refreshAuto(this@VibeLinkApp)

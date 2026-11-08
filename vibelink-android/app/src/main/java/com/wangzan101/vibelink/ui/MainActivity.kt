@@ -88,7 +88,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         requestedConversation = intent.getStringExtra(EXTRA_OPEN_CONVERSATION)
         // 系统相机扫到 vibelink://pair 拉起来的：交给远程会话页弹确认（不在这里做任何网络请求）
-        if (savedInstanceState == null) com.wangzan101.vibelink.remote.PairInbox.offer(intent?.dataString)
+        if (savedInstanceState == null) com.wangzan101.vibelink.remote.LoginQrInbox.offer(intent?.dataString)
         monitor = SystemStatusMonitor(this, PhoneServices.of(this).shellControl)
         val store = ProviderStore.get(this)
         setContent {
@@ -105,7 +105,7 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         requestedConversation = intent.getStringExtra(EXTRA_OPEN_CONVERSATION)
-        com.wangzan101.vibelink.remote.PairInbox.offer(intent.dataString)
+        com.wangzan101.vibelink.remote.LoginQrInbox.offer(intent.dataString)
         requestVpnConsentIfAsked(intent)
     }
 
@@ -221,6 +221,33 @@ internal fun <T> firstThatStarts(candidates: List<T>, start: (T) -> Boolean): Bo
 @Composable
 private fun VibeLinkRoot(store: ProviderStore, monitor: SystemStatusMonitor, activityFix: (Fix) -> Unit,
     requestedConversation: String?, onConversationOpened: () -> Unit) {
+    val context = LocalContext.current
+    val auth by com.wangzan101.vibelink.remote.AuthStore.state.collectAsState()
+    val pair by com.wangzan101.vibelink.remote.PairInbox.pending.collectAsState()
+    val login by com.wangzan101.vibelink.remote.LoginQrInbox.pending.collectAsState()
+    var accountPage by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(Unit) { com.wangzan101.vibelink.remote.AuthStore.boot(context) }
+    LaunchedEffect(pair, login) { if (pair != null || login != null) accountPage = true }
+    val ready = auth as? com.wangzan101.vibelink.remote.LoginState.Ready
+    val credentialPresent = com.wangzan101.vibelink.remote.RemoteStore.token(context).isNotBlank()
+    val authorized = AuthGatePresentation.canShowProtected(ready?.session,
+        com.wangzan101.vibelink.remote.RemoteStore.session(context), credentialPresent, System.currentTimeMillis())
+    LaunchedEffect(ready, credentialPresent) {
+        if (ready != null && !credentialPresent) com.wangzan101.vibelink.remote.AuthStore.credentialUnavailable(context)
+    }
+    if (!authorized || accountPage) {
+        LoginScreen(onContinue = { accountPage = false }, onBack = if (authorized) ({ accountPage = false }) else null)
+        return
+    }
+    androidx.compose.runtime.key(ready!!.session.subjectKey(com.wangzan101.vibelink.remote.RemoteStore.hub(context))) {
+        VibeLinkAuthenticatedRoot(store, monitor, activityFix, requestedConversation, onConversationOpened,
+            onOpenAccount = { accountPage = true })
+    }
+}
+
+@Composable
+private fun VibeLinkAuthenticatedRoot(store: ProviderStore, monitor: SystemStatusMonitor, activityFix: (Fix) -> Unit,
+    requestedConversation: String?, onConversationOpened: () -> Unit, onOpenAccount: () -> Unit) {
     val nav = rememberNavStack()
     // 从设置页「重新配对」进来时先回到配对一步
     var setupRepair by rememberSaveable { mutableStateOf(false) }
@@ -264,9 +291,6 @@ private fun VibeLinkRoot(store: ProviderStore, monitor: SystemStatusMonitor, act
     val phoneSetup = remember { PhoneServices.of(context).setupPrompt }
     val openMemory by memoryRuntime.openRequest.collectAsState()
     LaunchedEffect(openMemory) { if (openMemory != null) nav.push(Route.Memory) }
-    // 扫了 vibelink 配对二维码：打开远程会话页，那里弹「连接到 xx？」
-    val pairLink by com.wangzan101.vibelink.remote.PairInbox.pending.collectAsState()
-    LaunchedEffect(pairLink) { if (pairLink != null) nav.push(Route.Remote) }
     // 使用 Mika 时按需进入：欢迎 → 配置模型 → 手机操作；首页不触发。
     val onboardingState = remember { OnboardingState(context) }
     fun onboardingInputs() = Onboarding.Inputs(
@@ -306,6 +330,7 @@ private fun VibeLinkRoot(store: ProviderStore, monitor: SystemStatusMonitor, act
     }
     when (nav.current) {
         Route.Home -> HomeScreen(
+            onOpenAccount = onOpenAccount,
             onOpenVibeLink = { nav.openChat() },
             onOpenAgent = { agent ->
                 selectedAgent = agent
@@ -401,10 +426,6 @@ private fun VibeLinkRoot(store: ProviderStore, monitor: SystemStatusMonitor, act
             update = updateState,
             onUpdate = { updateState.update?.let { com.wangzan101.vibelink.about.ApkUpdater.startWithToasts(context, it.downloadUrl) } },
             onRemote = { nav.push(Route.Remote) },
-            onBetaActivated = {
-                onboardingState.markModelSetupDone()
-                goOnboarding(Onboarding.next(OnboardingStep.Model, onboardingInputs()))
-            },
         )
         Route.ModelSetup -> {
             val inOnboarding = onboarding == OnboardingStep.Model
@@ -433,7 +454,7 @@ private fun VibeLinkRoot(store: ProviderStore, monitor: SystemStatusMonitor, act
                 },
             )
         }
-        Route.Remote -> RemoteScreen(onBack = back)
+        Route.Remote -> RemoteScreen(onBack = back, onLogin = onOpenAccount)
         Route.Proxy -> ProxyScreen(onBack = back)
         Route.Chat -> screenStates.SaveableStateProvider(Route.Chat.name) {
             // 对话页重新看得见(回到前台、从别的页面回来):补上别处存进来的轮次,接上别处开始的任务

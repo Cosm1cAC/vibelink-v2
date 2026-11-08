@@ -22,6 +22,14 @@ object Preconfigure {
     fun baseUrl(hub: String): String = hub.trimEnd('/') + "/api/llm/v1"
     const val MODEL = "auto/deepseek-v4.1-flash"
 
+    /** Clear only the authentication derived from Hub login; retain independent user API keys. */
+    fun onLogout(context: Context) {
+        val app = context.applicationContext as? VibeLinkApp ?: return
+        val cfg = app.providers.configs.value.firstOrNull { it.id == CONFIG_ID } ?: return
+        if (!cfg.baseUrl.trimEnd('/').endsWith("/api/llm/v1")) return
+        app.providers.save(cfg, "")
+    }
+
     /**
      * 配对成功后调：把 vibelink 服务商的地址和 Key 换成当前 hub 与新 token
      * （老版本 APK 存的是内置的共享 token，轮换后已失效）。还没配过就顺手配上。
@@ -32,6 +40,7 @@ object Preconfigure {
         if (token.isBlank()) return
         val existing = app.providers.configs.value.firstOrNull { it.id == CONFIG_ID }
         if (existing != null) {
+            if (!existing.baseUrl.trimEnd('/').endsWith("/api/llm/v1")) return
             // providerId 置空，让 ProviderStore 按新 baseUrl 绑定对应 Provider，避免被旧 Provider 的 baseUrl 覆盖回退
             app.providers.save(
                 existing.copy(
@@ -41,7 +50,9 @@ object Preconfigure {
                 ),
                 token,
             )
-            app.providers.choose(ModelRole.Main, RoleChoice.Model(CONFIG_ID))
+            if (app.providers.configFor(ModelRole.Main)?.id == CONFIG_ID || app.providers.roles.value.main == null) {
+                app.providers.choose(ModelRole.Main, RoleChoice.Model(CONFIG_ID))
+            }
         } else {
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(DONE, false).apply()
             ensure(context)
@@ -57,6 +68,7 @@ object Preconfigure {
         val store = app.providers
         val existing = store.configs.value.firstOrNull { it.id == CONFIG_ID }
         if (existing != null) {
+            if (!existing.baseUrl.trimEnd('/').endsWith("/api/llm/v1")) return
             val targetUrl = baseUrl(RemoteStore.hub(context))
             if (existing.baseUrl != targetUrl || existing.model != MODEL || store.apiKey(CONFIG_ID) != token) {
                 store.save(existing.copy(baseUrl = targetUrl, providerId = "", model = MODEL), token)

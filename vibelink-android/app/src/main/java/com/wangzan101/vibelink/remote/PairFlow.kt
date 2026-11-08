@@ -66,12 +66,15 @@ internal fun PairSetup(
     var pasted by remember { mutableStateOf("") }
 
     fun checkIn(l: PairLink) {
+        val urls = LoginPolicy.allowedUrls(l.urls, com.wangzan101.vibelink.BuildConfig.IS_BETA_EDITION)
+        if (urls.isEmpty()) { error = "二维码属于其他版本，请使用对应的开发版或内测版"; return }
+        val allowed = l.copy(urls = urls)
         error = null
-        link = l
+        link = allowed
         scan = null
         busy = true
         scope.launch {
-            runCatching { withContext(Dispatchers.IO) { RemoteApi.pairScan(l, deviceName) } }
+            runCatching { withContext(Dispatchers.IO) { RemoteApi.pairScan(allowed, deviceName) } }
                 .onSuccess { scan = it }
                 .onFailure { error = it.message ?: it.toString(); link = null }
             busy = false
@@ -79,6 +82,7 @@ internal fun PairSetup(
     }
 
     fun handleRaw(raw: String?) {
+        if (LoginQrLink.parse(raw) != null) { LoginQrInbox.offer(raw); return }
         val l = PairLink.parse(raw)
         if (l == null) error = "这不是 VibeLink 配对码：请扫电脑上「远程控制」弹窗（或 VibeLink 控制台「📱 连接手机」）里的二维码" else checkIn(l)
     }
@@ -110,7 +114,7 @@ internal fun PairSetup(
                 ) {
                     Text("🖥️", fontSize = 40.sp)
                     Text(
-                        "连接到 ${s.host.ifBlank { "这台电脑" }}？",
+                        "登录到 ${s.host.ifBlank { "这台电脑" }}？",
                         Modifier.padding(top = 10.dp),
                         fontSize = 19.sp, fontWeight = FontWeight.SemiBold, color = c.ink, textAlign = TextAlign.Center,
                     )
@@ -135,7 +139,7 @@ internal fun PairSetup(
                     enabled = !busy,
                 )
                 VibeLinkButton(
-                    if (busy) "连接中…" else "连接",
+                    if (busy) "登录中…" else "确认手机登录",
                     onClick = {
                         busy = true; error = null
                         scope.launch {
@@ -158,19 +162,19 @@ internal fun PairSetup(
                 ) {
                     Text("📷", fontSize = 40.sp)
                     Text(
-                        "扫码连接电脑",
+                        "手机扫码登录",
                         Modifier.padding(top = 10.dp),
                         fontSize = 19.sp, fontWeight = FontWeight.SemiBold, color = c.ink,
                     )
                     Text(
-                        "在电脑上打开 VibeLink，点左下角手机图标打开「远程控制」（或 VibeLink 控制台「📱 连接手机」），然后扫描弹窗里的二维码。",
+                        "扫描电脑 VibeLink 的手机连接码登录这台手机；扫描桌面登录码则进入授权确认。",
                         Modifier.padding(top = 8.dp),
                         style = VibeLinkType.Caption, color = c.ink3, textAlign = TextAlign.Center,
                     )
                 }
             }
             VibeLinkButton(
-                if (busy) "正在连接电脑…" else "扫码连接",
+                if (busy) "正在读取…" else "扫一扫",
                 onClick = { error = null; scanner.launch(null) },
                 modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
                 enabled = !busy,
@@ -213,6 +217,7 @@ internal fun PairSetup(
                 OutlinedTextField(
                     token, onToken,
                     label = { Text("Token") }, singleLine = true,
+                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
                     modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
                 )
                 TextButton(onClick = onManualConnect, enabled = !busy && token.isNotBlank()) { Text("保存并连接") }

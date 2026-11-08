@@ -83,6 +83,7 @@ fun HomeScreen(
     onOpenProfile: (String) -> Unit,
     onOpenGroup: (String) -> Unit = {},
     onOpenSettings: () -> Unit,
+    onOpenAccount: () -> Unit = {},
     onOpenCindy: () -> Unit = {},
     onOpenClash: () -> Unit = {},
     updateAvailable: Boolean = false,
@@ -113,10 +114,6 @@ fun HomeScreen(
     var newSessionAgent by remember { mutableStateOf<String?>(null) }
     var showHomeWorkspace by remember { mutableStateOf(false) }
     var showRemoteDesktop by remember { mutableStateOf(false) }
-    var showBetaInviteDialog by remember { mutableStateOf(false) }
-    var betaInviteInput by remember { mutableStateOf(com.wangzan101.vibelink.remote.RemoteStore.betaInviteCode(ctx)) }
-    var betaActivating by remember { mutableStateOf(false) }
-    var betaError by remember { mutableStateOf<String?>(null) }
     var betaQuotaText by remember { mutableStateOf(com.wangzan101.vibelink.remote.RemoteStore.betaLabel(ctx)) }
     LaunchedEffect(Unit) {
         if (com.wangzan101.vibelink.BuildConfig.IS_BETA_EDITION && com.wangzan101.vibelink.remote.RemoteStore.isPaired(ctx)) {
@@ -136,8 +133,8 @@ fun HomeScreen(
         when (r) {
             is io.github.g00fy2.quickie.QRResult.QRSuccess -> {
                 val raw = r.content.rawValue ?: r.content.rawBytes?.let { String(it) }
-                if (!com.wangzan101.vibelink.remote.PairInbox.offer(raw)) {
-                    android.widget.Toast.makeText(ctx, "这不是 VibeLink 配对码：请扫电脑上「远程控制」弹窗（或 VibeLink 控制台「📱 连接手机」）里的二维码", android.widget.Toast.LENGTH_SHORT).show()
+                if (!com.wangzan101.vibelink.remote.LoginQrInbox.offer(raw)) {
+                    android.widget.Toast.makeText(ctx, "这不是 VibeLink 登录码，请扫描电脑上显示的登录或手机连接二维码", android.widget.Toast.LENGTH_SHORT).show()
                 }
             }
             io.github.g00fy2.quickie.QRResult.QRMissingPermission ->
@@ -221,6 +218,7 @@ fun HomeScreen(
                         softWrap = false,
                     )
                 }
+                androidx.compose.material3.TextButton(onClick = onOpenAccount) { Text("账号", color = c.accent) }
                 BarIconButton(VibeLinkIcons.Terminal, "浏览远程工作区文件、Git、定时任务与插件", { showHomeWorkspace = true })
                 Box {
                     BarIconButton(VibeLinkIcons.Plus, "招募 Bot / 发起群聊 / 新建会话", { showPlusMenu = true })
@@ -229,7 +227,7 @@ fun HomeScreen(
                         onDismissRequest = { showPlusMenu = false },
                     ) {
                         DropdownMenuItem(
-                            text = { Text("📷 扫一扫（连接电脑）") },
+                            text = { Text("📷 扫一扫（登录或确认电脑）") },
                             onClick = {
                                 showPlusMenu = false
                                 scanPair.launch(null)
@@ -270,14 +268,13 @@ fun HomeScreen(
                         .clip(VibeLinkShapes.Pill)
                         .background(c.accent.copy(alpha = 0.12f))
                         .border(0.5.dp, c.accent.copy(alpha = 0.4f), VibeLinkShapes.Pill)
-                        .clickable { showBetaInviteDialog = true }
+                        .clickable { onOpenAccount() }
                         .padding(horizontal = 14.dp, vertical = 9.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text("🎁", fontSize = 15.sp)
                     Text(
-                        if (betaQuotaText.isNotBlank()) "已激活 $betaQuotaText · DeepSeek 免费通道"
-                        else "内测专享 · 点此输入邀请码免费解锁 DeepSeek 模型",
+                        betaQuotaText.ifBlank { "内测账号 · 管理登录" },
                         Modifier.padding(start = 8.dp).weight(1f),
                         fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold,
@@ -286,7 +283,7 @@ fun HomeScreen(
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        if (betaQuotaText.isNotBlank()) "查看/切换" else "去激活",
+                        "账号",
                         fontSize = 12.5.sp,
                         fontWeight = FontWeight.Bold,
                         color = c.accent,
@@ -519,91 +516,6 @@ fun HomeScreen(
             onSaved = { created ->
                 showCreateGroup = false
                 onOpenGroup(created.id)
-            },
-        )
-    }
-
-    if (showBetaInviteDialog) {
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = { if (!betaActivating) showBetaInviteDialog = false },
-            title = { Text("🎁 VibeLink 内测邀请码激活") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(
-                        "输入您的专属内测邀请码（如 VLK-BETA-01），即可免费使用 DeepSeek V4.1 Flash 模型（含思考链与百万上下文），并隔离绑定您自己的远程工作台：",
-                        style = VibeLinkType.Caption,
-                        color = c.ink2,
-                    )
-                    androidx.compose.material3.OutlinedTextField(
-                        value = betaInviteInput,
-                        onValueChange = {
-                            betaInviteInput = it
-                            betaError = null
-                        },
-                        singleLine = true,
-                        label = { Text("内测邀请码") },
-                        placeholder = { Text("例如：VLK-BETA-01") },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    if (betaError != null) {
-                        Text(betaError.orEmpty(), style = VibeLinkType.Caption, color = c.bad)
-                    }
-                }
-            },
-            confirmButton = {
-                androidx.compose.material3.TextButton(
-                    enabled = !betaActivating && betaInviteInput.isNotBlank(),
-                    onClick = {
-                        betaActivating = true
-                        betaError = null
-                        homeScope.launch {
-                            val res = withContext(Dispatchers.IO) {
-                                runCatching {
-                                    com.wangzan101.vibelink.remote.RemoteApi.activateBetaInvite(
-                                        betaInviteInput.trim(),
-                                        android.os.Build.MODEL ?: "Android",
-                                    )
-                                }
-                            }
-                            betaActivating = false
-                            res.onSuccess { json ->
-                                val tok = json.optString("token")
-                                val hubUrl = json.optString("hubUrl", "https://hub.vibelink.cloud")
-                                val label = json.optString("label", "内测席位")
-                                val used = json.optInt("usedRequests", 0)
-                                val limit = json.optInt("dailyLimitRequests", 300)
-                                com.wangzan101.vibelink.remote.RemoteStore.saveBetaActivation(
-                                    ctx,
-                                    betaInviteInput.trim(),
-                                    hubUrl,
-                                    tok,
-                                    label,
-                                )
-                                com.wangzan101.vibelink.settings.Preconfigure.onPaired(ctx)
-                                betaQuotaText = "$label (今日调用 $used/$limit 次 · ${json.optLong("totalTokens")} tokens)"
-                                showBetaInviteDialog = false
-                                tick++
-                                android.widget.Toast.makeText(
-                                    ctx,
-                                    "🎉 激活成功！已为您免费开启 DeepSeek 模型通道",
-                                    android.widget.Toast.LENGTH_LONG,
-                                ).show()
-                            }.onFailure { e ->
-                                betaError = e.message ?: "激活失败，请检查网络或邀请码"
-                            }
-                        }
-                    },
-                ) {
-                    Text(if (betaActivating) "激活中…" else "立即激活")
-                }
-            },
-            dismissButton = {
-                androidx.compose.material3.TextButton(
-                    enabled = !betaActivating,
-                    onClick = { showBetaInviteDialog = false },
-                ) {
-                    Text("取消")
-                }
             },
         )
     }

@@ -90,6 +90,7 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="vibelink" android:host="pair" />
+                <data android:scheme="vibelink" android:host="login" />
             </intent-filter>
         </activity>
 

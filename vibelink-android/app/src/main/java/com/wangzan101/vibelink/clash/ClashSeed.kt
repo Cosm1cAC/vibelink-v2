@@ -36,11 +36,13 @@ object ClashSeed {
 
     /** 配对 / 换 token 之后重写一次 Clash 配置（网关头里的 X-Mesh-Token 要跟着换）。 */
     fun reseed(context: Context) {
+        if (com.wangzan101.vibelink.BuildConfig.IS_BETA_EDITION) return
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(KEY).apply()
         ensure(context)
     }
 
     fun ensure(context: Context) {
+        if (com.wangzan101.vibelink.BuildConfig.IS_BETA_EDITION) return
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         if (prefs.getBoolean(KEY, false)) return
 

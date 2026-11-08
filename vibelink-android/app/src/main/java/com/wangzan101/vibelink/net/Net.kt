@@ -79,6 +79,9 @@ object Net {
                 val currentHub = ctx?.let { com.wangzan101.vibelink.remote.RemoteStore.hub(it) }
                     ?: rawUrl.substring(0, idx)
                 val latestToken = ctx?.let { com.wangzan101.vibelink.remote.RemoteStore.token(it) }.orEmpty()
+                check(latestToken.isNotBlank() && ctx?.let {
+                    com.wangzan101.vibelink.remote.RemoteStore.session(it)?.usableOffline(System.currentTimeMillis())
+                } == true) { "请先登录 VibeLink" }
                 val route = com.wangzan101.vibelink.remote.RemoteApi.routeSnapshot(currentHub, latestToken)
                 val candidates = route.candidates
                 var lastErr: IOException? = null

@@ -30,17 +30,36 @@ object GroupWorkStore {
     val errors = _errors.asStateFlow()
     private val _pending = MutableStateFlow<Map<String, Int>>(emptyMap())
     val pending = _pending.asStateFlow()
-    private data class Account(val id: String, val hub: String, val token: String, val prefs: android.content.SharedPreferences)
+    private data class Account(val id: String, val hub: String, val token: String, val prefs: android.content.SharedPreferences, val connection: RemoteStore.Connection)
     private fun capture(context: Context): Account {
-        val hub = RemoteStore.hub(context).trimEnd('/')
-        val token = RemoteStore.token(context)
-        val id = java.security.MessageDigest.getInstance("SHA-256")
-        .digest((hub + "|" + token).toByteArray())
-        .take(12).joinToString("") { "%02x".format(it) }
-        return Account(id, hub, token, context.applicationContext.getSharedPreferences("hub_group_work_" + id, Context.MODE_PRIVATE))
+        val connection = RemoteStore.connection(context)
+        val id = RemoteStore.accountScope(context)
+        return Account(id, connection.hub, connection.token, context.applicationContext.getSharedPreferences("hub_group_work_" + id, Context.MODE_PRIVATE), connection)
     }
     fun key(context: Context, groupId: String): String = capture(context).id + ":" + groupId
-    private fun guard(context: Context, account: Account) = requireGroupWorkAccount(account.id, capture(context).id)
+    private fun guard(context: Context, account: Account) {
+        requireGroupWorkAccount(account.id, RemoteStore.accountScope(context))
+        check(RemoteStore.matches(context, account.connection)) { "登录身份已变化，原请求保留在原账号中" }
+    }
+
+    /** Called only after /me verifies this exact legacy credential's subject. */
+    fun migrateLegacyOutbox(context: Context, oldId: String) {
+        val account = capture(context)
+        check(account.id != "unverified")
+        val old = context.getSharedPreferences("hub_group_work_" + oldId, Context.MODE_PRIVATE)
+        synchronized(this) {
+            if (old.getBoolean("migrated", false)) return
+            val edit = account.prefs.edit()
+            old.all.filter { it.key.startsWith("pending_") }.forEach { (key, value) ->
+                val combined = JSONObject(account.prefs.getString(key, "{}") ?: "{}")
+                val source = JSONObject(value as? String ?: "{}")
+                source.keys().forEach { id -> if (!combined.has(id)) combined.put(id, source.getJSONObject(id)) }
+                edit.putString(key, combined.toString())
+            }
+            check(edit.commit())
+            check(old.edit().putBoolean("migrated", true).commit())
+        }
+    }
 
     fun recoverPending(context: Context) {
         val app = context.applicationContext

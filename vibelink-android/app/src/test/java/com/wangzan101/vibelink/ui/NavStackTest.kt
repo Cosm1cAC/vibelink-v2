@@ -8,17 +8,17 @@ import org.junit.Test
 class NavStackTest {
     @Test fun backReturnsToWhereYouCameFrom() {
         val nav = NavStack()
-        assertEquals(Route.Chat, nav.current)
+        assertEquals(Route.Home, nav.current)
         assertFalse(nav.canGoBack)
         assertFalse(nav.back())
 
         // 侧栏进记忆,返回回到对话;从设置进记忆,返回回到设置
         nav.push(Route.Memory)
         assertTrue(nav.back())
-        assertEquals(Route.Chat, nav.current)
+        assertEquals(Route.Home, nav.current)
         nav.push(Route.Settings)
         nav.push(Route.Memory)
-        assertEquals(listOf(Route.Chat, Route.Settings, Route.Memory), nav.stack)
+        assertEquals(listOf(Route.Home, Route.Settings, Route.Memory), nav.stack)
         nav.back()
         assertEquals(Route.Settings, nav.current)
     }
@@ -27,22 +27,24 @@ class NavStackTest {
         val nav = NavStack()
         nav.push(Route.PhoneSetup)
         nav.push(Route.PhoneSetup)
-        assertEquals(listOf(Route.Chat, Route.PhoneSetup), nav.stack)
+        assertEquals(listOf(Route.Home, Route.PhoneSetup), nav.stack)
     }
 
     @Test fun resetAndChatGoBackToTheRoot() {
         val nav = NavStack(listOf(Route.Settings, Route.Memory))
-        assertEquals(listOf(Route.Chat, Route.Settings, Route.Memory), nav.stack)
-        nav.push(Route.Chat)
-        assertEquals(listOf(Route.Chat), nav.stack)
+        assertEquals(listOf(Route.Home, Route.Settings, Route.Memory), nav.stack)
+        nav.openChat()
+        assertEquals(listOf(Route.Home, Route.Chat), nav.stack)
+        nav.back()
+        assertEquals(Route.Home, nav.current)
         nav.push(Route.Plans)
         nav.reset()
-        assertEquals(listOf(Route.Chat), nav.stack)
+        assertEquals(listOf(Route.Home), nav.stack)
     }
 
-    @Test fun restoredStackAlwaysStartsWithChat() {
-        assertEquals(listOf(Route.Chat, Route.Run), NavStack(listOf(Route.Chat, Route.Chat, Route.Run)).stack)
-        assertEquals(listOf(Route.Chat), NavStack(emptyList()).stack)
+    @Test fun restoredStackAlwaysStartsWithHomeAndDeduplicatesOldPages() {
+        assertEquals(listOf(Route.Home, Route.Chat, Route.Run), NavStack(listOf(Route.Chat, Route.Chat, Route.Run)).stack)
+        assertEquals(listOf(Route.Home), NavStack(emptyList()).stack)
     }
 
     @Test fun backFromAPageOpenedInTheDrawerReopensTheDrawer() {

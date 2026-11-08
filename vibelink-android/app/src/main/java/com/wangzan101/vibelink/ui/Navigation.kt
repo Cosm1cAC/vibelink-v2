@@ -80,7 +80,7 @@ class NavStack(initial: List<Route> = listOf(Route.Home), fromDrawer: Boolean = 
         private const val DRAWER_MARK = "fromDrawer"
 
         private fun normalize(list: List<Route>): List<Route> =
-            listOf(Route.Home) + list.filter { it != Route.Home }
+            listOf(Route.Home) + list.filter { it != Route.Home }.asReversed().distinct().asReversed()
 
         val Saver: Saver<NavStack, ArrayList<String>> = Saver(
             save = { ArrayList(it.stack.map(Route::name) + listOfNotNull(DRAWER_MARK.takeIf { _ -> it.fromDrawer })) },

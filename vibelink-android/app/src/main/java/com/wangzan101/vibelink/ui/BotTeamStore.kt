@@ -222,6 +222,18 @@ object BotTeamStore {
     @Volatile
     private var initialized = false
 
+    @Synchronized fun resetAccountMemory() {
+        initialized = false
+        _botsFlow.value = emptyList()
+        _groupsFlow.value = emptyList()
+        draftTextCache.clear()
+        draftAttachmentsCache.clear()
+        draftSkillsCache.clear()
+        promptQueueMap.clear()
+        busyModeMap.clear()
+        _versionFlow.value++
+    }
+
     /** 对标 Open Duet `redact_secrets`：双向脱敏常见 API Key / Token 并返回 (脱敏文本, 替换次数) */
     fun redactSecrets(text: String): Pair<String, Int> {
         if (text.isEmpty()) return "" to 0
@@ -1036,7 +1048,7 @@ object BotTeamStore {
     }
 
     private fun prefs(context: Context) =
-        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        RemoteStore.scopedPreferences(context, PREF_NAME)
 
     fun ensureSeeded(context: Context) {
         val p = prefs(context)
@@ -2352,8 +2364,9 @@ object BotTeamStore {
     }
 
     private fun flushProfiles(context: Context, hub: String, token: String, guard: () -> Unit = {}) {
+        val capturedPrefs = prefs(context)
         val snapshot = synchronized(this) {
-            JSONObject(prefs(context).getString(KEY_PENDING_PROFILES, "{}") ?: "{}")
+            JSONObject(capturedPrefs.getString(KEY_PENDING_PROFILES, "{}") ?: "{}")
         }
         for (id in snapshot.keys()) {
             guard()
@@ -2361,11 +2374,12 @@ object BotTeamStore {
             RemoteApi.botUpsert(hub, token, profile)
             guard()
             synchronized(this) {
-                val pending = JSONObject(prefs(context).getString(KEY_PENDING_PROFILES, "{}") ?: "{}")
+                guard()
+                val pending = JSONObject(capturedPrefs.getString(KEY_PENDING_PROFILES, "{}") ?: "{}")
                 // A newer edit made while this request was in flight must remain pending.
                 if (pending.optJSONObject(id)?.toString() == profile.toString()) {
                     pending.remove(id)
-                    prefs(context).edit().putString(KEY_PENDING_PROFILES, pending.toString()).apply()
+                    capturedPrefs.edit().putString(KEY_PENDING_PROFILES, pending.toString()).apply()
                 }
             }
         }
@@ -2421,14 +2435,18 @@ object BotTeamStore {
 
     suspend fun syncWithHub(context: Context): Boolean = withContext(Dispatchers.IO) { profileSyncMutex.withLock {
         ensureSeeded(context)
-        val hub = RemoteStore.hub(context)
-        val token = RemoteStore.token(context)
+        val connection = RemoteStore.connection(context)
+        val hub = connection.hub
+        val token = connection.token
+        fun guard() { check(RemoteStore.matches(context, connection)) { "登录身份已变化" } }
         if (hub.isBlank() || token.isBlank()) return@withLock false
         runCatching {
-            flushProfiles(context, hub, token)
+            flushProfiles(context, hub, token, ::guard)
             val root = RemoteApi.botsList(hub, token)
+            guard()
             val bArr = root.optJSONArray("bots")
             synchronized(this@BotTeamStore) {
+            guard()
             if (bArr != null && bArr.length() > 0) {
                 val remoteBots = (0 until bArr.length()).mapNotNull { i ->
                     bArr.optJSONObject(i)?.let { parseBotJson(it) }
@@ -2470,6 +2488,7 @@ object BotTeamStore {
                         mergedMap[lb.id] = lb
                     }
                 }
+                guard()
                 saveBots(context, mergedMap.values.toList())
             }
             }

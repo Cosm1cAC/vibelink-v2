@@ -111,21 +111,16 @@ object RemoteApi {
         } else {
             if (normalized in setOf(LAN_HUB, TAILSCALE_HUB, "http://192.168.137.1:18995")) listOf(LAN_HUB, TAILSCALE_HUB) else emptyList()
         }
-        routes.configure(hub, token, extras, defaults)
+        routes.configure(hub, token, LoginPolicy.allowedUrls(extras, com.wangzan101.vibelink.BuildConfig.IS_BETA_EDITION), defaults)
     }
 
     fun candidates(hub: String): List<String> = routes.candidates(hub)
-    internal fun routeSnapshot(hub: String, token: String): HubRoutes.Snapshot = routes.capture(hub, token)
+    internal fun routeSnapshot(hub: String, token: String): HubRoutes.Snapshot {
+        check(LoginPolicy.allowedUrls(listOf(hub), com.wangzan101.vibelink.BuildConfig.IS_BETA_EDITION).isNotEmpty()) { "Hub 地址不属于当前版本的登录通道" }
+        return routes.capture(hub, token)
+    }
     internal fun requireRoute(snapshot: HubRoutes.Snapshot) = routes.requireCurrent(snapshot)
     internal fun rememberRoute(snapshot: HubRoutes.Snapshot, hub: String) = routes.remember(snapshot, hub)
-
-    /** 内测用户使用邀请码（如 VLK-BETA-01）一键激活免费 DeepSeek 模型与内测席位。 */
-    fun activateBetaInvite(code: String, deviceName: String): JSONObject {
-        val payload = JSONObject()
-            .put("code", code.trim())
-            .put("device", deviceName)
-        return pairPost(PUBLIC_HUB, "/api/beta/activate", payload)
-    }
 
     fun betaQuota(hub: String, token: String): JSONObject = get(hub, token, "/api/beta/quota")
 
@@ -156,6 +151,7 @@ object RemoteApi {
         val req = Request.Builder().url(url(h, path, token)).get().build()
         client.newCall(req).execute().use { resp ->
             val body = resp.body?.string().orEmpty()
+            if (resp.code == 401) AuthStore.unauthorized(token)
             if (!resp.isSuccessful) error("HTTP ${resp.code}: ${body.take(160)}")
             JSONObject(body)
         }
@@ -168,6 +164,7 @@ object RemoteApi {
             .build()
         client.newCall(req).execute().use { resp ->
             val body = resp.body?.string().orEmpty()
+            if (resp.code == 401) AuthStore.unauthorized(token)
             if (!resp.isSuccessful) error("HTTP ${resp.code}: ${body.take(160)}")
             JSONObject(body)
         }
