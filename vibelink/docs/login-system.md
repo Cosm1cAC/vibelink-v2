@@ -22,7 +22,7 @@ Hub 是账号与设备会话的签发方。桌面登录不依赖 Cindy 云账号
 | `POST /api/auth/beta` | `{code, deviceName}`，仅内测服务 | 同上，不返回管理员或 Agent Token |
 | `POST /api/auth/logout` | 当前设备 Bearer | 吊销本设备会话，不退出其他已完成登录的设备 |
 | `POST /api/auth/qr/start` | `{deviceName}` | `id, pollSecret, link, verificationCode, edition, expiresAt, intervalMs` |
-| `POST /api/auth/qr/scan` | `{id, scanSecret}` | 目标/确认码/到期时间及状态，不返回凭据 |
+| `POST /api/auth/qr/scan` | `{id, scanSecret}` | 目标/确认码/到期时间、issuer/hubId 及状态，不返回凭据 |
 | `POST /api/auth/qr/confirm` | 已登录手机 Bearer，`{id, scanSecret, decision: approve\|deny}` | 确认结果，不返回电脑凭据 |
 | `POST /api/auth/qr/poll` | `{id, pollSecret}` | `pending/scanned/denied/expired/approved/consumed`；approved 含本设备 `token, session` |
 | `POST /api/auth/qr/ack` | `{id, pollSecret}` | 电脑保存凭据后确认接收，随后不再返回该凭据 |

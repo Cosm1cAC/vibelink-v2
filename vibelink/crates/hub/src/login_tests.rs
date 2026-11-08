@@ -127,6 +127,8 @@ async fn qr_requires_both_secrets_explicit_approval_and_ack_without_leaking_cred
     )
     .await;
     assert_eq!(scanned["deviceName"], "Laptop");
+    assert_eq!(scanned["issuer"],app.auth.issuer());
+    assert_eq!(scanned["hubId"],scanned["issuer"]);
     assert!(scanned.get("token").is_none());
     let mut confirmation = scan;
     confirmation["decision"] = json!("approve");

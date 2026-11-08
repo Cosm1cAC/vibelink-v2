@@ -396,7 +396,11 @@ pub async fn qr_scan(State(app): State<Shared>, Json(body): Json<Value>) -> Resp
         body["id"].as_str().unwrap_or(""),
         body["scanSecret"].as_str().unwrap_or(""),
     ) {
-        Ok(value) => Json(value).into_response(),
+        Ok(mut value) => {
+            value["issuer"] = json!(app.auth.issuer());
+            value["hubId"] = json!(app.auth.issuer());
+            Json(value).into_response()
+        },
         Err(error) => failure(error),
     }
 }
