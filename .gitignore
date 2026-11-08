@@ -39,3 +39,13 @@ keys/
 *.pem
 *.key
 .env
+
+# Private proxy configurations and generated runtime state stay local.
+/wproxy/config.yaml*
+/wproxy/hysteria-client.yaml*
+/android-phone/cmfa-config.yaml
+/android-phone/cmfa-lan-gateway.yaml
+/data/
+/vibelink/data/
+/mesh/data/
+/mesh-rs/data/
