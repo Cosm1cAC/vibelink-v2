@@ -4,7 +4,7 @@ export interface NativeCodexSubscriptionContext {
   hostPurpose?: string;
   customContextModel?: string;
   customContextWindow?: number;
-  customContextProviderId?: string;
+  customContextProviderId?: string | null;
   deviceHostedGuestProviderId?: string;
 }
 interface NativeSubscriptionOptions {

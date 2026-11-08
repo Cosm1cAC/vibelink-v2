@@ -16,26 +16,153 @@ index 4da653f8..a50a4a90 100644
    hooks: {
      // Builds cindy-updater.exe before electron-packager copies resources/ into
      // the package — guarantees the shipped updater matches HEAD.
+diff --git a/apps/desktop/src/main/__tests__/appSessionBoundary.test.ts b/apps/desktop/src/main/__tests__/appSessionBoundary.test.ts
+index 862cc85f..b7dce8c2 100644
+--- a/apps/desktop/src/main/__tests__/appSessionBoundary.test.ts
++++ b/apps/desktop/src/main/__tests__/appSessionBoundary.test.ts
+@@ -63,6 +63,15 @@ const createCloudCommit = new Function(
+ ) => (ownerId: string, authRealmChanged: boolean) => void;
+ 
+ describe('application session boundary isolation', () => {
++  it('commits a real Hub owner without claiming a Cindy cloud membership', () => {
++    const before = getActiveAppSession();
++    const next = commitActiveAppSession('hub', 'hub_verified_principal');
++    expect(next.mode).toBe('hub');
++    expect(next.dataOwnerId).toBe('hub_verified_principal');
++    expect(next.generation).toBeGreaterThan(before.generation);
++    expect(() => commitActiveAppSession('hub', '')).toThrow();
++    commitActiveAppSession('signed-out');
++  });
+   it('cancels request scopes before boundaries and generation changes, and unsubscribes on completion', () => {
+     const observed: number[] = [];
+     const unsubscribe = onAppSessionInvalidated(() => observed.push(getActiveAppSession().generation));
 diff --git a/apps/desktop/src/main/appSessionState.ts b/apps/desktop/src/main/appSessionState.ts
-index 95247ade..f3c44c94 100644
+index 95247ade..60baca40 100644
 --- a/apps/desktop/src/main/appSessionState.ts
 +++ b/apps/desktop/src/main/appSessionState.ts
+@@ -15,7 +15,7 @@ import { createOverrideSettingsFile } from './maker-host/override-settings-file.
+ import { LOCAL_PROFILE_DATA_OWNER_ID } from './profile/profileRegistryModel.js';
+ import type { DataOwnerPushStamp } from '../shared/dataOwnerPush.js';
+ 
+-export type AppSessionMode = 'signed-out' | 'local' | 'cloud';
++export type AppSessionMode = 'signed-out' | 'local' | 'cloud' | 'hub';
+ 
+ export interface ActiveAppSession {
+   mode: AppSessionMode;
 @@ -52,7 +52,9 @@ interface PersistedAppSessionSettings {
  }
  
  const log = createLogger('appSessionState');
 -const DEFAULTS: PersistedAppSessionSettings = { activeMode: 'signed-out' };
 +const DEFAULTS: PersistedAppSessionSettings = {
-+  activeMode: process.env.CINDY_VIBELINK_EMBEDDED === '1' ? 'local' : 'signed-out',
++  activeMode: 'signed-out',
 +};
  
  function settingsFilePath(): string {
    return path.join(app.getPath('userData'), 'app-session.json');
+@@ -65,7 +67,7 @@ function normalize(raw: unknown): PersistedAppSessionSettings {
+       : undefined;
+   return {
+     activeMode:
+-      activeMode === 'local' || activeMode === 'cloud' || activeMode === 'signed-out'
++      activeMode === 'local' || activeMode === 'cloud' || activeMode === 'hub' || activeMode === 'signed-out'
+         ? activeMode
+         : 'signed-out',
+   };
+@@ -108,7 +110,7 @@ function ensureLoaded(): ActiveAppSession {
+   const persistedMode = store.read().activeMode;
+   // Cloud is only an intent at process start. It becomes an active session
+   // after auth verifies the persisted refresh token and supplies its owner.
+-  const initialMode: AppSessionMode = persistedMode === 'local' ? 'local' : 'signed-out';
++  const initialMode: AppSessionMode = persistedMode === 'local' && process.env.CINDY_VIBELINK_EMBEDDED !== '1' ? 'local' : 'signed-out';
+   active = {
+     mode: initialMode,
+     dataOwnerId: initialMode === 'local' ? LOCAL_DATA_OWNER_ID : null,
+@@ -196,9 +198,9 @@ export function commitActiveAppSession(
+   let dataOwnerId: string | null = null;
+   if (mode === 'local') {
+     dataOwnerId = LOCAL_DATA_OWNER_ID;
+-  } else if (mode === 'cloud') {
++  } else if (mode === 'cloud' || mode === 'hub') {
+     const normalized = cloudOwnerId?.trim();
+-    if (!normalized) throw new Error('cloud app session requires a verified data owner');
++    if (!normalized) throw new Error(`${mode} app session requires a verified data owner`);
+     dataOwnerId = normalized;
+   }
+   const ownerChanged = previous.mode !== mode || previous.dataOwnerId !== dataOwnerId;
+@@ -233,9 +235,9 @@ export function commitVolatileAppSession(
+   let dataOwnerId: string | null = null;
+   if (mode === 'local') {
+     dataOwnerId = LOCAL_DATA_OWNER_ID;
+-  } else if (mode === 'cloud') {
++  } else if (mode === 'cloud' || mode === 'hub') {
+     const normalized = cloudOwnerId?.trim();
+-    if (!normalized) throw new Error('cloud app session requires a verified data owner');
++    if (!normalized) throw new Error(`${mode} app session requires a verified data owner`);
+     dataOwnerId = normalized;
+   }
+   const ownerChanged = previous.mode !== mode || previous.dataOwnerId !== dataOwnerId;
+diff --git a/apps/desktop/src/main/authManager.ts b/apps/desktop/src/main/authManager.ts
+index 8ed676ef..b3b92610 100644
+--- a/apps/desktop/src/main/authManager.ts
++++ b/apps/desktop/src/main/authManager.ts
+@@ -2701,6 +2701,44 @@ async function withAccountFreeOwnerCommit(opts: {
+   }
+ }
+ 
++/** A Hub principal owns a real local runtime but is never a Cindy cloud user.
++ * Existing Cindy credentials stay untouched for rollback to the original app. */
++export async function commitHubOwner(ownerId: string | null): Promise<void> {
++  if (process.env.CINDY_VIBELINK_EMBEDDED !== '1') throw new Error('Hub identity requires VibeLink mode');
++  const previous = getActiveAppSession();
++  const nextMode = ownerId ? 'hub' : 'signed-out';
++  if (previous.mode === nextMode && previous.dataOwnerId === ownerId && isGhostSkillProjectionBoundaryStableForOwner(ownerId)) return;
++  let release: (() => void) | undefined;
++  let shellPending = false;
++  try {
++    await withGhostSkillProjectionOwnerCommit({
++      previousOwnerId: previous.dataOwnerId, nextOwnerId: ownerId,
++      prepareTransition: async ({ ownerChanged }) => {
++        notifyRendererAuthBoundaryPending();
++        enterOwnerChangeShellPending(); shellPending = true;
++        release = beginAppSessionBoundary();
++        const teardown = ownerChanged ? authSessionTeardown : projectionRepairTeardown;
++        if (!teardown) throw new Error('Hub owner transition requires runtime teardown');
++        await teardown('vibelink-hub-owner-change');
++      },
++      commit: () => {
++        clearAuth({ notify: false, nextMode: 'signed-out', preservePersistedRefreshToken: true, deferSessionCommit: true });
++        commitActiveAppSession(nextMode, ownerId, true);
++      },
++    });
++  } catch (error) {
++    // A failed runtime handover must not leave the outgoing owner enterable.
++    // The durable Ghost quarantine still requires a successful sweep on retry.
++    commitVolatileAppSession('signed-out');
++    throw error;
++  } finally {
++    release?.();
++    if (shellPending) leaveOwnerChangeShellPending();
++    notifyRenderer(); notifyAuthListeners();
++  }
++  requestStableOwnerPostCommit('hub-owner-commit');
++}
++
+ async function recoverAccountFreeOwnerAtStartup(
+   mode: Extract<AppSessionMode, 'signed-out' | 'local'>,
+   reason: string,
 diff --git a/apps/desktop/src/main/bootstrap-electron.ts b/apps/desktop/src/main/bootstrap-electron.ts
-index b842bf8d..aa6be63a 100644
+index b842bf8d..c1510407 100644
 --- a/apps/desktop/src/main/bootstrap-electron.ts
 +++ b/apps/desktop/src/main/bootstrap-electron.ts
-@@ -97,6 +97,7 @@ import {
+@@ -1,4 +1,6 @@
+ import { deliverRoutineResult, listRoutineDeliveryTargets } from './routines/delivery.js';
++import { currentHubCredential, currentHubControlSettings, initializeHubAppAuth, invokeHubAuth, isVibeLinkMode } from './vibelink/authRuntime.js';
++import { randomUUID as vibelinkRandomUUID } from 'node:crypto';
+ import { flushPluginUsageLifecycle } from './plugin-usage/current.js';
+ import { registerAccessibilitySupportIpc } from './accessibility-support-ipc.js';
+ import { mcpAppSchemePrivilege, registerMcpAppProtocol } from './mcp-apps/sandboxProtocol.js';
+@@ -97,6 +99,7 @@ import {
    WINDOW_BACKDROP_MATERIAL_CHANGED_CHANNEL,
  } from '../shared/windowBackdrop.js';
  import { isAllowedBillingMailtoRequest } from '../shared/billing.js';
@@ -43,7 +170,7 @@ index b842bf8d..aa6be63a 100644
  import path from 'node:path';
  import fs from 'node:fs';
  import { textFilePreviewResult, TEXT_PREVIEW_LIMIT_MB } from './text-file-preview';
-@@ -631,6 +632,7 @@ import {
+@@ -631,6 +634,7 @@ import {
    handleDeviceLinkSystemResume,
    getControllerName,
    revokeController,
@@ -51,28 +178,150 @@ index b842bf8d..aa6be63a 100644
  } from './device-link';
  import { closeSharedTasksBeforeLogout } from './device-link/sharedTaskRuntime.js';
  import { closeSharedTasksBeforeAccountHandover } from './device-link/sharedTaskAccountBoundary.js';
-@@ -4565,6 +4567,20 @@ function parseOptionalDeviceLinkDeviceId(value: unknown): string | null | undefi
+@@ -4564,7 +4568,32 @@ function parseOptionalDeviceLinkDeviceId(value: unknown): string | null | undefi
+   return trimmed;
  }
  
++const vibelinkEmbeddedSecret = vibelinkRandomUUID();
  const registerIpcHandlers = () => {
++  ipcMain.handle('vibelink:auth', async (event, input: unknown) => {
++    assertTrustedAppRendererEvent(event);
++    return invokeHubAuth(input);
++  });
 +  ipcMain.handle('vibelink:request', async (event, kind: unknown, payload: unknown) => {
 +    assertTrustedAppRendererEvent(event);
 +    if (process.env.CINDY_VIBELINK_EMBEDDED !== '1') throw new Error('VibeLink desktop mode is not enabled');
++    const credential = currentHubCredential();
++    if (!credential || isAppSessionBoundaryPending()) throw new Error('请先登录 VibeLink。');
++    const ownerKey = activeOwnerScopeKey();
 +    if (kind !== 'state' && kind !== 'action') throw new Error('Unsupported VibeLink request');
 +    if (kind === 'action' && (!payload || typeof payload !== 'object' || Array.isArray(payload))) throw new Error('Invalid VibeLink action');
 +    const body = kind === 'action' ? JSON.stringify(payload) : undefined;
 +    if (body && Buffer.byteLength(body) > 512 * 1024) throw new Error('VibeLink action is too large');
 +    const response = await fetch(`http://127.0.0.1:5174/api/vibelink/${kind}`, {
 +      method: kind === 'state' ? 'GET' : 'POST',
-+      ...(body ? { headers: { 'Content-Type': 'application/json' }, body } : {}),
++      headers: { 'x-vibelink-ipc': vibelinkEmbeddedSecret, ...(body ? { 'Content-Type': 'application/json' } : {}) },
++      ...(body ? { body } : {}),
 +      signal: AbortSignal.timeout(10000),
 +    });
-+    return { ok: response.ok, status: response.status, data: await response.json() };
++    const data = await response.json();
++    if (activeOwnerScopeKey() !== ownerKey || isAppSessionBoundaryPending()) throw new Error('登录身份已改变，请重试。');
++    return { ok: response.ok, status: response.status, data };
 +  });
    ipcMain.handle('database-size-warning:get-settings', (event) => {
      assertTrustedAppRendererEvent(event);
      const state = readDatabaseSizeWarningSettingsState();
-@@ -9463,6 +9479,25 @@ app.on('ready', async () => {
+@@ -4868,7 +4897,7 @@ const registerIpcHandlers = () => {
+   });
+ 
+   ipcMain.on('get-app-display-version-info', (event) => {
+-    event.returnValue = getAppDisplayVersionInfo();
++    event.returnValue = { ...getAppDisplayVersionInfo(), vibelinkEnabled: isVibeLinkMode() };
+   });
+ 
+   // 开屏卡住诊断:renderer 的 r: 日志不进上传,这条快照由 main 校验后写进 renderer-guard。
+@@ -6186,7 +6215,14 @@ const registerIpcHandlers = () => {
+ 
+   // ── Auth IPC handlers (delegated to authManager) ──
+ 
+-  ipcMain.handle('auth:initialize', async () => {
++  ipcMain.handle('auth:initialize', async (event) => {
++    assertTrustedAppRendererEvent(event);
++    if (isVibeLinkMode()) {
++      const state = await initializeHubAppAuth();
++      if (state.canEnterApp) markStartupMilestone('auth-initialized');
++      if (!app.isPackaged) recordDesktopDevAuthStartupResult(state, null, () => authManager.getAuthState());
++      return state;
++    }
+     try {
+       let pendingCompletion: Promise<authManager.AuthState> | null = null;
+       const state = await authManager
+@@ -6236,10 +6272,14 @@ const registerIpcHandlers = () => {
+     }
+   });
+ 
+-  ipcMain.handle('auth:get-login-state', async () => authManager.getLoginState());
++  ipcMain.handle('auth:get-login-state', async () => {
++    if (isVibeLinkMode()) throwIpcError('PERMISSION_DENIED', '请使用 VibeLink 统一登录。');
++    return authManager.getLoginState();
++  });
+ 
+   ipcMain.handle('auth:dispatch-login-action', async (event, action: unknown) => {
+     assertTrustedAppRendererEvent(event);
++    if (isVibeLinkMode()) throwIpcError('PERMISSION_DENIED', '请使用 VibeLink 统一登录。');
+     // Login can be the first real credential operation to observe an unavailable
+     // backend. Reuse the bounded, idle-only recovery after the action settles.
+     return authManager.dispatchLoginAction(action).finally(() => authCredentialRecovery.request());
+@@ -6252,17 +6292,21 @@ const registerIpcHandlers = () => {
+     return authManager.getLoginCaptchaChallengeUrl();
+   });
+ 
+-  ipcMain.handle('auth:logout', async () => {
++  ipcMain.handle('auth:logout', async (event) => {
++    assertTrustedAppRendererEvent(event);
++    if (isVibeLinkMode()) { await invokeHubAuth({ action: 'logout' }); return; }
+     await authManager.logout();
+   });
+ 
+   ipcMain.handle('auth:accounts:list', (event) => {
+     assertTrustedAppRendererEvent(event);
++    if (isVibeLinkMode()) throwIpcError('PERMISSION_DENIED', 'VibeLink 账号由当前 Hub 管理。');
+     return authManager.listSavedAccounts();
+   });
+ 
+   ipcMain.handle('auth:accounts:sync', async (event) => {
+     assertTrustedAppRendererEvent(event);
++    if (isVibeLinkMode()) throwIpcError('PERMISSION_DENIED', 'VibeLink 账号由当前 Hub 管理。');
+     try {
+       return await authManager.syncSavedAccounts();
+     } catch (error) {
+@@ -6272,6 +6316,7 @@ const registerIpcHandlers = () => {
+ 
+   ipcMain.handle('auth:accounts:switch', async (event, accountKey: unknown) => {
+     assertTrustedAppRendererEvent(event);
++    if (isVibeLinkMode()) throwIpcError('PERMISSION_DENIED', '请先退出当前 VibeLink 账号。');
+     try {
+       await authManager.switchSavedAccount(accountKey);
+     } catch (error) {
+@@ -6281,6 +6326,7 @@ const registerIpcHandlers = () => {
+ 
+   ipcMain.handle('auth:accounts:begin-add', async (event) => {
+     assertTrustedAppRendererEvent(event);
++    if (isVibeLinkMode()) throwIpcError('PERMISSION_DENIED', '请使用 VibeLink 统一登录。');
+     try {
+       return await authManager.beginAddAccountLogin();
+     } catch (error) {
+@@ -6293,7 +6339,9 @@ const registerIpcHandlers = () => {
+     authManager.cancelAddAccountLogin();
+   });
+ 
+-  ipcMain.handle('auth:enter-local', async () => {
++  ipcMain.handle('auth:enter-local', async (event) => {
++    assertTrustedAppRendererEvent(event);
++    if (isVibeLinkMode()) { await invokeHubAuth({ action: 'useLocalWorkspace' }); return authManager.getAuthState(); }
+     if (getActiveAppSession().mode === 'local') {
+       return authManager.getAuthState();
+     }
+@@ -6301,7 +6349,9 @@ const registerIpcHandlers = () => {
+     return authManager.enterLocalMode();
+   });
+ 
+-  ipcMain.handle('auth:exit-local', async () => {
++  ipcMain.handle('auth:exit-local', async (event) => {
++    assertTrustedAppRendererEvent(event);
++    if (isVibeLinkMode()) { await invokeHubAuth({ action: 'logout' }); return authManager.getAuthState(); }
+     if (getActiveAppSession().mode !== 'local') {
+       throwIpcError('PRECONDITION_FAILED', 'Local mode is not active.');
+     }
+@@ -6309,6 +6359,7 @@ const registerIpcHandlers = () => {
+   });
+ 
+   ipcMain.handle('auth:refresh', async () => {
++    if (isVibeLinkMode()) return initializeHubAppAuth();
+     return authManager.refresh();
+   });
+ 
+@@ -9463,6 +9514,27 @@ app.on('ready', async () => {
    registerCindyMediaProtocolHandler();
    registerMcpAppProtocol();
  
@@ -83,12 +332,14 @@ index b842bf8d..aa6be63a 100644
 +    try {
 +      const runtimeRequire = createRequire(typeof __filename === 'string' ? __filename : import.meta.url);
 +      const { startEmbeddedRendererAndVibeLinkServer } = runtimeRequire('./vibelink-embedded-server.js') as {
-+        startEmbeddedRendererAndVibeLinkServer: (opts: { rendererRoot: string; pdfjsRoot: string; port: number }) => unknown;
++        startEmbeddedRendererAndVibeLinkServer: (opts: { rendererRoot: string; pdfjsRoot: string; port: number; ipcSecret: string; getHubSettings: typeof currentHubControlSettings }) => unknown;
 +      };
 +      startEmbeddedRendererAndVibeLinkServer({
 +        rendererRoot: path.join(__dirname, '../renderer/main_window'),
 +        pdfjsRoot: path.resolve(__dirname, '../../../../node_modules/pdfjs-dist'),
 +        port: 5174,
++        ipcSecret: vibelinkEmbeddedSecret,
++        getHubSettings: currentHubControlSettings,
 +      });
 +    } catch (err) {
 +      console.error('[vibelink-embedded-server] init error:', err);
@@ -98,7 +349,7 @@ index b842bf8d..aa6be63a 100644
    // Inject a Content-Security-Policy response header onto the app's own
    // top-level document (defaultSession mainFrame) before any window loads.
    // Blocks an XSS from escalating to preload privileges via inline / eval
-@@ -10148,6 +10183,9 @@ app.on('ready', async () => {
+@@ -10148,6 +10220,9 @@ app.on('ready', async () => {
    registerProviderShareIpc();
    // 自建中转服务(docs/self-hosted-relay-plan.md):本机中转与加入别的中转。
    registerSelfHostedRelayIpc();
@@ -207,15 +458,24 @@ index 40fadc5f..4b6f61b1 100644
      if (ctx.method !== 'POST' || !upstream) {
        res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' });
 diff --git a/apps/desktop/src/main/maker-host/index.ts b/apps/desktop/src/main/maker-host/index.ts
-index 658cb444..5d1e01b4 100644
+index 658cb444..90d9593f 100644
 --- a/apps/desktop/src/main/maker-host/index.ts
 +++ b/apps/desktop/src/main/maker-host/index.ts
-@@ -1,3 +1,4 @@
+@@ -1,3 +1,5 @@
 +import { nativeCodexSubscriptionSpawn } from './vibelink-subscription-policy.js';
++import { assertVibeLinkLocalExecution } from '../vibelink/verifiedIdentity.js';
  import { refreshInstalledPluginApps } from '../cindy-brain/index.js';
  import { configureSessionModelInterfaceStorage, sessionModelInterface } from './session-model-interface.js';
  import { readGeneratedImageEpoch } from '../cindy-media/generatedImageStorage';
-@@ -2007,6 +2008,36 @@ export function getMaker(): Maker {
+@@ -1904,6 +1906,7 @@ export function getMaker(): Maker {
+       resolveCodexSubagentRoutingSignature: async (_providers, ctx) =>
+         resolveDesiredCodexSubagentRoutingSignature(ctx),
+       prepareCodexExtraSpawnConfig: async (providers, ctx) => {
++        assertVibeLinkLocalExecution();
+         if (ctx.remoteHostId) {
+           // The remote daemon owns its own CODEX_HOME and Chrome companion.
+           // Do not let the local Desktop platform or local companion probe
+@@ -2007,6 +2010,36 @@ export function getMaker(): Maker {
                ? 'provider-oauth'
                : 'env-key';
          const useOAuthBearer = authInjection === 'oauth-bearer';
@@ -252,21 +512,194 @@ index 658cb444..5d1e01b4 100644
          if (!usesIsolatedProxy) {
            setCodexProxyAuthInjection(authInjection);
            await broadcastCodexRuntimeRoute();
+@@ -2959,6 +2992,7 @@ export function getMaker(): Maker {
+       // 启动前的 Skill 共享与关闭后的清理都由 desktop host 注入。
+       lifecycleHooks: {
+         prepareStartOptions: async (sessionId, opts) => {
++          assertVibeLinkLocalExecution();
+           pendingBotRuntimeSnapshots.delete(sessionId);
+           // Agent 在另一台电脑上运行的任务：所有入口(界面、定时任务、IM、协同等)恢复时都以任务
+           // 记录为准，Agent 回到原来那台电脑。读失败按本机任务处理(本机任务的启动与原来完全一致；
+@@ -3087,6 +3121,7 @@ export function getMaker(): Maker {
+                 }
+               : {}),
+           };
++          assertVibeLinkLocalExecution();
+         },
+         onBeforeStart: async ({ agentKind, workingDir, remoteHostId }) => {
+           // 延迟记忆重启 pending 时,本地 Codex 新会话加入 shared host 前先尝试
+diff --git a/apps/desktop/src/main/voice-input/CodexResponsesTextModelClient.ts b/apps/desktop/src/main/voice-input/CodexResponsesTextModelClient.ts
+index 23ed9aa6..dab1a7f7 100644
+--- a/apps/desktop/src/main/voice-input/CodexResponsesTextModelClient.ts
++++ b/apps/desktop/src/main/voice-input/CodexResponsesTextModelClient.ts
+@@ -47,6 +47,7 @@ export function getCodexResponsesHttpDispatcher(): Agent {
+  * this call exists to do; errors are swallowed.
+  */
+ export async function prewarmCodexResponsesEndpoint(): Promise<void> {
++  if (process.env.CINDY_VIBELINK_EMBEDDED === '1') return;
+   if (DISABLE_PREWARM) {
+     log.debug('codex responses prewarm disabled by env');
+     return;
+@@ -147,6 +148,7 @@ export class CodexResponsesTextModelClient implements TextModelClient {
+     promptCacheScope?: string;
+     onTextSnapshot?: (text: string) => void;
+   }): Promise<T> {
++    if (process.env.CINDY_VIBELINK_EMBEDDED === '1') throw new Error('official_cli_required: VibeLink subscription inference requires the official CLI.');
+     const [accessToken, accountId] = await Promise.all([
+       this.accessTokenProvider(),
+       this.accountIdProvider(),
+diff --git a/apps/desktop/src/main/voice-input/__tests__/CodexResponsesTextModelClient.test.ts b/apps/desktop/src/main/voice-input/__tests__/CodexResponsesTextModelClient.test.ts
+index 41f002f0..5ca13c3e 100644
+--- a/apps/desktop/src/main/voice-input/__tests__/CodexResponsesTextModelClient.test.ts
++++ b/apps/desktop/src/main/voice-input/__tests__/CodexResponsesTextModelClient.test.ts
+@@ -12,7 +12,7 @@ vi.mock('undici', async (importOriginal) => {
+   };
+ });
+ 
+-import { CodexResponsesTextModelClient } from '../CodexResponsesTextModelClient.js';
++import { CodexResponsesTextModelClient, prewarmCodexResponsesEndpoint } from '../CodexResponsesTextModelClient.js';
+ 
+ function makeSseResponse(events: Array<{ event: string; data: unknown }>): Response {
+   const body = events
+@@ -28,6 +28,19 @@ describe('CodexResponsesTextModelClient', () => {
+   afterEach(() => {
+     undiciFetchMock.mockReset();
+     vi.useRealTimers();
++    vi.unstubAllEnvs();
++  });
++
++  it('rejects subscription HTTP in VibeLink before reading credentials or touching the network', async () => {
++    vi.stubEnv('CINDY_VIBELINK_EMBEDDED', '1');
++    const accessTokenProvider = vi.fn(async () => 'fake-unused-token');
++    const accountIdProvider = vi.fn(async () => 'fake-unused-account');
++    const client = new CodexResponsesTextModelClient({ accessTokenProvider, accountIdProvider });
++    await expect(client.requestJson({ model: 'fake-model', system: '', user: '', schemaName: 'fake' })).rejects.toThrow('official_cli_required');
++    await prewarmCodexResponsesEndpoint();
++    expect(accessTokenProvider).not.toHaveBeenCalled();
++    expect(accountIdProvider).not.toHaveBeenCalled();
++    expect(undiciFetchMock).not.toHaveBeenCalled();
+   });
+ 
+   it('accumulates output_text deltas, parses JSON, and reports usage', async () => {
 diff --git a/apps/desktop/src/preload/preload.ts b/apps/desktop/src/preload/preload.ts
-index 3e3b5507..a0ba9e15 100644
+index 3e3b5507..320027a9 100644
 --- a/apps/desktop/src/preload/preload.ts
 +++ b/apps/desktop/src/preload/preload.ts
-@@ -1114,6 +1114,10 @@ const readMicrophonePermissionSnapshot = createMicrophonePermissionSnapshot();
+@@ -1093,6 +1093,7 @@ interface ComputerDriverUpdateCheck {
+ const appDisplayVersionInfo = ipcRenderer.sendSync('get-app-display-version-info') as {
+   display: string;
+   detail: string;
++  vibelinkEnabled?: boolean;
+ };
+ 
+ // 运行期端点清单(main 在 createWindow 前解析完成;首帧同步可用)。
+@@ -1114,6 +1115,17 @@ const readMicrophonePermissionSnapshot = createMicrophonePermissionSnapshot();
  const voiceInputDataSnapshot = createVoiceInputDataSnapshot();
  
  contextBridge.exposeInMainWorld('electronAPI', {
 +  vibelink: {
++    enabled: appDisplayVersionInfo.vibelinkEnabled === true,
++    auth: (input: import('../shared/vibelinkAuth').HubAuthInput) => ipcRenderer.invoke('vibelink:auth', input),
++    onAuthState: (listener: (result: import('../shared/vibelinkAuth').HubAuthResult) => void) => {
++      const receive = (_event: Electron.IpcRendererEvent, result: import('../shared/vibelinkAuth').HubAuthResult) => listener(result);
++      ipcRenderer.on('vibelink:auth-state', receive);
++      return () => ipcRenderer.removeListener('vibelink:auth-state', receive);
++    },
 +    request: (kind: import('../shared/vibelinkDesktop').VibeLinkRequestKind, payload?: Record<string, unknown>) =>
 +      ipcRenderer.invoke('vibelink:request', kind, payload),
 +  },
    localAgent: {
      onConfirmation: (listener: (request: import('../shared/localAgent').LocalAgentConfirmation) => void): (() => void) => {
        const receive = (_event: Electron.IpcRendererEvent, request: import('../shared/localAgent').LocalAgentConfirmation) => listener(request);
+@@ -2326,7 +2338,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
+     ipcRenderer.sendSync('auth:has-persisted-session-hint-sync') === true,
+   authInitialize: (): Promise<{
+     user: unknown;
+-    mode: 'signed-out' | 'local' | 'cloud';
++    mode: 'signed-out' | 'local' | 'cloud' | 'hub';
+     dataOwnerId: string | null;
+     canEnterApp: boolean;
+     isAuthenticated: boolean;
+diff --git a/apps/desktop/src/renderer/App.tsx b/apps/desktop/src/renderer/App.tsx
+index c1e8dfb1..7ad9b75a 100644
+--- a/apps/desktop/src/renderer/App.tsx
++++ b/apps/desktop/src/renderer/App.tsx
+@@ -16,7 +16,7 @@ import { LocaleProvider } from '@/hooks/useLocale';
+ import { AuthProvider, useAuth } from '@/contexts/AuthContext';
+ import { PluginReviewUpdatesProvider } from '@/contexts/PluginReviewUpdatesContext';
+ import { AppShellCoverProvider, useAppShellCover } from '@/contexts/AppShellCoverContext';
+-import { LoginHandoffProvider } from '@/contexts/LoginHandoffContext';
++import { LoginHandoffProvider, useLoginHandoff } from '@/contexts/LoginHandoffContext';
+ import { EnvCheckProvider, EnvCheckGuard } from '@/contexts/EnvCheckContext';
+ import { WorktreeProvider } from '@/contexts/WorktreeContext';
+ import { PrRefsProvider } from '@/contexts/PrRefsContext';
+@@ -106,11 +106,18 @@ function LoginHandoffHost({ children }: { children: React.ReactNode }) {
+           避免 renderer localStorage 被清空但主进程仍持有会话时整个已登录会话
+           被永久锁亮色;未登录场景仍由 LoginPage 卸载结束门(见组件头注释)。 */}
+       <LoginFirstLaunchLightGateBridge authResolved={!isInitializing} canEnterApp={canEnterApp} />
++      {window.electronAPI?.vibelink?.enabled && <VibeLinkBrandReady />}
+       {children}
+     </LoginHandoffProvider>
+   );
+ }
+ 
++function VibeLinkBrandReady() {
++  const { reportBrandAssetsReady } = useLoginHandoff();
++  useEffect(() => { document.title = 'VibeLink'; reportBrandAssetsReady(); }, [reportBrandAssetsReady]);
++  return null;
++}
++
+ function syncWorkerPrefs() {
+   const owner = getDataOwnerGeneration();
+   window.electronAPI.syncWorkerCreationPrefs({
+@@ -459,7 +466,7 @@ export function App() {
+                             {/* 副窗口(「在新窗口打开」)/ 右侧栏子窗口跳过 splash:env/热更检查
+                             由主窗启动时完成,附属窗 EnvCheckProvider 初始即 'passed',
+                             不需要也不应再走 splash 流程。 */}
+-                            {!isSecondaryWindow() && !isSidebarWindow() && <LoginBrandStage />}
++                            {!window.electronAPI?.vibelink?.enabled && !isSecondaryWindow() && !isSidebarWindow() && <LoginBrandStage />}
+                             {!isSecondaryWindow() && !isSidebarWindow() && <SplashScreen />}
+                             <EnvCheckGuard>
+                               <MakerBootstrap />
+diff --git a/apps/desktop/src/renderer/components/auth/GuestRoute.tsx b/apps/desktop/src/renderer/components/auth/GuestRoute.tsx
+index 8cc38ee6..912012fa 100644
+--- a/apps/desktop/src/renderer/components/auth/GuestRoute.tsx
++++ b/apps/desktop/src/renderer/components/auth/GuestRoute.tsx
+@@ -9,6 +9,6 @@ export function GuestRoute() {
+   const { mode, isInitializing } = useAuth();
+ 
+   if (isInitializing) return null;
+-  if (mode === 'cloud' || mode === 'local') return <Navigate to={destination} replace />;
++  if (mode === 'cloud' || mode === 'local' || mode === 'hub') return <Navigate to={destination} replace />;
+   return <Outlet />;
+ }
+diff --git a/apps/desktop/src/renderer/components/auth/ProtectedRoute.tsx b/apps/desktop/src/renderer/components/auth/ProtectedRoute.tsx
+index cbe9fbbf..5ecbc9a7 100644
+--- a/apps/desktop/src/renderer/components/auth/ProtectedRoute.tsx
++++ b/apps/desktop/src/renderer/components/auth/ProtectedRoute.tsx
+@@ -1,14 +1,21 @@
+-import { Navigate, Outlet } from 'react-router-dom';
++import { Navigate, Outlet, useLocation } from 'react-router-dom';
+ 
+ import { useAuth } from '@/contexts/AuthContext';
++import { useHubAuth } from '@/features/vibelink/useHubAuth';
+ 
+ export function ProtectedRoute() {
+   const { canEnterApp, isInitializing, dataOwnerId } = useAuth();
++  const { snapshot } = useHubAuth();
++  const location = useLocation();
+ 
+   if (isInitializing) return null;
+   // canEnterApp is false for a real signed-out session and while a real owner
+   // change is in flight. Same-owner token refresh keeps it true.
+   if (!canEnterApp) return <Navigate to="/login" replace />;
++  if (window.electronAPI?.vibelink?.enabled) {
++    if (snapshot.status !== 'authenticated') return null;
++    if (snapshot.session?.edition === 'beta' && location.pathname !== '/hub') return <Navigate to="/hub" replace />;
++  }
+ 
+   // Owner changes must remount the protected tree so transient New Maker
+   // drafts and other route-local state cannot leak across data namespaces.
 diff --git a/apps/desktop/src/renderer/components/branding/ThemeBrandLockup.tsx b/apps/desktop/src/renderer/components/branding/ThemeBrandLockup.tsx
 index 177bd8c4..cc46a7ab 100644
 --- a/apps/desktop/src/renderer/components/branding/ThemeBrandLockup.tsx
@@ -352,6 +785,67 @@ index 177bd8c4..cc46a7ab 100644
        </span>
      </div>
    );
+diff --git a/apps/desktop/src/renderer/components/settings/UserProfileCard.tsx b/apps/desktop/src/renderer/components/settings/UserProfileCard.tsx
+index 3c8eaed2..dc897aef 100644
+--- a/apps/desktop/src/renderer/components/settings/UserProfileCard.tsx
++++ b/apps/desktop/src/renderer/components/settings/UserProfileCard.tsx
+@@ -10,6 +10,7 @@ import { useAuth } from '@/contexts/AuthContext';
+ import { useOptionalConfirmDialog } from '@/components/ui/confirm-dialog-provider';
+ import { useLogout } from '@/hooks/useLogout';
+ import { ProfileEditDialog } from './ProfileEditDialog';
++import { VibeLinkAccountInfo } from '@/features/vibelink/AccountInfo';
+ 
+ const ORGANIZATION_ROLE_I18N_KEYS = {
+   owner: 'settings.userProfile.organization.roles.owner',
+@@ -33,6 +34,11 @@ function abbreviateUserId(id: string): string {
+ }
+ 
+ export function UserProfileCard() {
++  if (window.electronAPI?.vibelink?.enabled) return <VibeLinkAccountInfo />;
++  return <CindyUserProfileCard />;
++}
++
++function CindyUserProfileCard() {
+   const { user, mode, exitLocalMode } = useAuth();
+   const confirmDialog = useOptionalConfirmDialog();
+   const { handleLogout } = useLogout();
+diff --git a/apps/desktop/src/renderer/components/settings/billingVisibility.ts b/apps/desktop/src/renderer/components/settings/billingVisibility.ts
+index a05fa931..5c437680 100644
+--- a/apps/desktop/src/renderer/components/settings/billingVisibility.ts
++++ b/apps/desktop/src/renderer/components/settings/billingVisibility.ts
+@@ -1,5 +1,5 @@
+ export type BillingSettingsIdentity = {
+-  mode: 'signed-out' | 'local' | 'cloud';
++  mode: 'signed-out' | 'local' | 'cloud' | 'hub';
+   membershipKind: 'personal' | 'org' | null;
+ };
+ 
+diff --git a/apps/desktop/src/renderer/components/settings/imBotVisibility.ts b/apps/desktop/src/renderer/components/settings/imBotVisibility.ts
+index d3abc46b..3c5ce6cd 100644
+--- a/apps/desktop/src/renderer/components/settings/imBotVisibility.ts
++++ b/apps/desktop/src/renderer/components/settings/imBotVisibility.ts
+@@ -5,7 +5,7 @@ import type { CindyRegion } from '@cindy/maker-shared/brand-identity';
+ /** 设置搜索仍使用完整身份快照；官方分栏只取登录模式。 */
+ export interface ImBotIdentity {
+   region: CindyRegion;
+-  mode: 'signed-out' | 'local' | 'cloud';
++  mode: 'signed-out' | 'local' | 'cloud' | 'hub';
+   membershipKind: 'personal' | 'org' | null;
+ }
+ 
+diff --git a/apps/desktop/src/renderer/components/settings/usageVisibility.ts b/apps/desktop/src/renderer/components/settings/usageVisibility.ts
+index 9de4b99f..94b89a32 100644
+--- a/apps/desktop/src/renderer/components/settings/usageVisibility.ts
++++ b/apps/desktop/src/renderer/components/settings/usageVisibility.ts
+@@ -7,7 +7,7 @@
+  */
+ 
+ export interface UsageSettingsIdentity {
+-  mode: 'signed-out' | 'local' | 'cloud';
++  mode: 'signed-out' | 'local' | 'cloud' | 'hub';
+ }
+ 
+ export function canAccessUsageSettings(identity: UsageSettingsIdentity): boolean {
 diff --git a/apps/desktop/src/renderer/components/sidebar/SidebarTopNav.tsx b/apps/desktop/src/renderer/components/sidebar/SidebarTopNav.tsx
 index ec5535b1..4b2ccb52 100644
 --- a/apps/desktop/src/renderer/components/sidebar/SidebarTopNav.tsx
@@ -378,19 +872,741 @@ index ec5535b1..4b2ccb52 100644
        )}
        {showScrollable &&
          (customizing ? (
+diff --git a/apps/desktop/src/renderer/components/sidebar/UserInfoSection.tsx b/apps/desktop/src/renderer/components/sidebar/UserInfoSection.tsx
+index 68e148eb..61b6d1d9 100644
+--- a/apps/desktop/src/renderer/components/sidebar/UserInfoSection.tsx
++++ b/apps/desktop/src/renderer/components/sidebar/UserInfoSection.tsx
+@@ -32,6 +32,7 @@ import type { DesktopSavedAccount } from '@/lib/authService';
+ import { CURRENT_CINDY_REGION } from '../../../shared/brandRegion';
+ import { shouldLabelRegion } from '../../../shared/regionCode';
+ import { MobileDownloadDialog } from './MobileDownloadDialog';
++import { VibeLinkAccountInfo } from '@/features/vibelink/AccountInfo';
+ 
+ interface UserInfoSectionProps {
+   isCollapsed: boolean;
+@@ -67,6 +68,11 @@ function AccountMenuAvatar({ account }: { account: DesktopSavedAccount }) {
+ }
+ 
+ export function UserInfoSection({ isCollapsed, onOpenUpdateNotice }: UserInfoSectionProps) {
++  if (window.electronAPI?.vibelink?.enabled) return <VibeLinkAccountInfo compact />;
++  return <CindyUserInfoSection isCollapsed={isCollapsed} onOpenUpdateNotice={onOpenUpdateNotice} />;
++}
++
++function CindyUserInfoSection({ isCollapsed, onOpenUpdateNotice }: UserInfoSectionProps) {
+   const { user, mode, dataOwnerId, isCanary, listAccounts, syncAccounts, switchAccount } =
+     useAuth();
+   const confirmDialog = useOptionalConfirmDialog();
+diff --git a/apps/desktop/src/renderer/contexts/AuthContext.tsx b/apps/desktop/src/renderer/contexts/AuthContext.tsx
+index 309d81b1..fd6fb5ea 100644
+--- a/apps/desktop/src/renderer/contexts/AuthContext.tsx
++++ b/apps/desktop/src/renderer/contexts/AuthContext.tsx
+@@ -84,7 +84,7 @@ function presentLoginResult(result: DesktopLoginActionResult): DesktopLoginState
+  */
+ export interface AuthContextValue {
+   user: User | null;
+-  mode: 'signed-out' | 'local' | 'cloud';
++  mode: 'signed-out' | 'local' | 'cloud' | 'hub';
+   dataOwnerId: string | null;
+   /** Failed auth boundaries remount owner-scoped routes so stale generations can rehydrate. */
+   dataOwnerRecoveryEpoch: number;
+@@ -168,7 +168,7 @@ export function AuthProvider({
+   enableSessionExpiredPrompt?: boolean;
+ }) {
+   const [user, setUser] = useState<User | null>(null);
+-  const [mode, setMode] = useState<'signed-out' | 'local' | 'cloud'>('signed-out');
++  const [mode, setMode] = useState<'signed-out' | 'local' | 'cloud' | 'hub'>('signed-out');
+   const [dataOwnerId, setDataOwnerId] = useState<string | null>(null);
+   const [dataOwnerRecoveryEpoch, setDataOwnerRecoveryEpoch] = useState(0);
+   const [dataOwnerGeneration, setDataOwnerGenerationState] = useState(0);
+diff --git a/apps/desktop/src/renderer/features/cc-agent/HomeZeroModelAction.tsx b/apps/desktop/src/renderer/features/cc-agent/HomeZeroModelAction.tsx
+index ac3d178a..3e53cc56 100644
+--- a/apps/desktop/src/renderer/features/cc-agent/HomeZeroModelAction.tsx
++++ b/apps/desktop/src/renderer/features/cc-agent/HomeZeroModelAction.tsx
+@@ -11,7 +11,7 @@ export function HomeZeroModelAction({
+   authMode,
+   narrow,
+ }: {
+-  authMode: 'signed-out' | 'local' | 'cloud';
++  authMode: 'signed-out' | 'local' | 'cloud' | 'hub';
+   narrow: boolean;
+ }) {
+   const { t } = useTranslation();
+diff --git a/apps/desktop/src/renderer/features/plugin/lib/ghostPluginViewModel.ts b/apps/desktop/src/renderer/features/plugin/lib/ghostPluginViewModel.ts
+index a101d12b..c02a59cc 100644
+--- a/apps/desktop/src/renderer/features/plugin/lib/ghostPluginViewModel.ts
++++ b/apps/desktop/src/renderer/features/plugin/lib/ghostPluginViewModel.ts
+@@ -358,7 +358,7 @@ export function toGhostPluginDetail(
+  * 所以 key 必须含 owner 身份:换身份即卸载重建。
+  */
+ export function ghostWebviewOwnerKey(
+-  mode: 'signed-out' | 'local' | 'cloud',
++  mode: 'signed-out' | 'local' | 'cloud' | 'hub',
+   dataOwnerId: string | null,
+ ): string {
+   return `${mode}:${dataOwnerId ?? ''}`;
+diff --git a/apps/desktop/src/renderer/features/plugin/lib/pluginMarketPresentation.ts b/apps/desktop/src/renderer/features/plugin/lib/pluginMarketPresentation.ts
+index b501219b..af2e0a81 100644
+--- a/apps/desktop/src/renderer/features/plugin/lib/pluginMarketPresentation.ts
++++ b/apps/desktop/src/renderer/features/plugin/lib/pluginMarketPresentation.ts
+@@ -174,7 +174,7 @@ export function orderPluginCatalogItems<TInstalled extends { id: string }>(
+ 
+ /** 目录不按名字推测账号依赖；包确认和运行时根据真实声明处理。 */
+ export function canOfferMarketInstall(
+-  mode: 'signed-out' | 'local' | 'cloud',
++  mode: 'signed-out' | 'local' | 'cloud' | 'hub',
+   _ghostId: string,
+ ): boolean {
+   if (mode === 'signed-out') return false;
+diff --git a/apps/desktop/src/renderer/features/plugin/lib/updateAllModel.ts b/apps/desktop/src/renderer/features/plugin/lib/updateAllModel.ts
+index 40c9d21e..edc0c16d 100644
+--- a/apps/desktop/src/renderer/features/plugin/lib/updateAllModel.ts
++++ b/apps/desktop/src/renderer/features/plugin/lib/updateAllModel.ts
+@@ -94,7 +94,7 @@ export function batchSummary(rows: readonly UpdateAllRow[]): {
+  * 账号 A 的「忽略本轮」静默压掉账号 B 的更新横幅。
+  */
+ export function ignoredRoundStorageKey(
+-  mode: 'signed-out' | 'local' | 'cloud',
++  mode: 'signed-out' | 'local' | 'cloud' | 'hub',
+   dataOwnerId: string | null,
+ ): string {
+   return `cindy.pluginUpdates.ignoredRound.${mode}.${dataOwnerId ?? 'anonymous'}`;
+diff --git a/apps/desktop/src/renderer/hooks/useProviderOnboarding.ts b/apps/desktop/src/renderer/hooks/useProviderOnboarding.ts
+index 55a0d63d..01dce4cb 100644
+--- a/apps/desktop/src/renderer/hooks/useProviderOnboarding.ts
++++ b/apps/desktop/src/renderer/hooks/useProviderOnboarding.ts
+@@ -57,7 +57,7 @@ export interface UseProviderOnboardingReturn {
+   visible: boolean;
+   loading: boolean;
+   /** 登录三态:cloud 引导连接 Cindy AI;signed-out/local 引导去登录。 */
+-  authMode: 'signed-out' | 'local' | 'cloud';
++  authMode: 'signed-out' | 'local' | 'cloud' | 'hub';
+   /** Cindy AI 官方供应商(恒在目录中;仅卡片推荐行消费)。 */
+   xdProvider: ProviderView | undefined;
+   /**
+diff --git a/apps/desktop/src/renderer/hooks/useSignInToCindy.ts b/apps/desktop/src/renderer/hooks/useSignInToCindy.ts
+index 8f777768..c3e32412 100644
+--- a/apps/desktop/src/renderer/hooks/useSignInToCindy.ts
++++ b/apps/desktop/src/renderer/hooks/useSignInToCindy.ts
+@@ -21,6 +21,10 @@ export function useSignInToCindy(returnTo?: string): () => Promise<void> {
+   const navigate = useNavigate();
+ 
+   return useCallback(async () => {
++    if (window.electronAPI?.vibelink?.enabled) {
++      navigate(mode === 'hub' ? '/settings?tab=account' : '/login');
++      return;
++    }
+     if (mode === 'local') {
+       try {
+         await exitLocalMode();
+diff --git a/apps/desktop/src/renderer/i18n/locales/de/common.json b/apps/desktop/src/renderer/i18n/locales/de/common.json
+index c258b6d1..90a48282 100644
+--- a/apps/desktop/src/renderer/i18n/locales/de/common.json
++++ b/apps/desktop/src/renderer/i18n/locales/de/common.json
+@@ -18951,5 +18951,42 @@
+     "rendered": "Dokument anzeigen",
+     "wrap": "Zeilenumbruch",
+     "lineNumbers": "Zeilennummern"
++  },
++  "vibelinkAuth": {
++    "title": "Ein Konto. Einfach weiterarbeiten.",
++    "subtitle": "Teams, Aufgaben und Fortschritt auf Handy und Computer.",
++    "qrTitle": "Mit dem Handy anmelden",
++    "connection": "Verbindung",
++    "dev": "Private Entwicklung",
++    "beta": "Öffentliche Beta",
++    "scanned": "Gescannt. Bitte auf dem Handy prüfen und bestätigen.",
++    "denied": "Anmeldung auf dem Handy abgelehnt. Erstelle einen neuen QR-Code.",
++    "expired": "QR-Code abgelaufen. Erstelle einen neuen.",
++    "scanHint": "Mit der angemeldeten VibeLink-App scannen",
++    "phoneHint": "Auf dem Handy bestätigen und hier dasselbe Konto nutzen",
++    "verificationCode": "Bestätigungscode",
++    "qrAlt": "QR-Code für die VibeLink-Anmeldung per Handy",
++    "refreshQr": "Neuen QR-Code erstellen",
++    "createQr": "QR-Code zur Anmeldung erstellen",
++    "betaTitle": "Beta-Nutzer",
++    "betaIntro": "Melde dich zuerst mit deinem Beta-Code an. Danach kannst du dein Handy verwenden.",
++    "inviteLabel": "Beta-Code",
++    "invitePlaceholder": "Beta-Code eingeben",
++    "betaLogin": "Mit Beta-Code anmelden",
++    "localLogin": "Arbeitsbereich dieses Computers verwenden",
++    "localHint": "Verbinde dich mit dem Entwicklungs-Hub dieses Computers und behalte deinen lokalen Verlauf.",
++    "storageUnavailable": "Sicherer Speicher nicht verfügbar",
++    "loginFailed": "Anmeldung fehlgeschlagen",
++    "help": "Lösungen anzeigen",
++    "account": "VibeLink-Konto",
++    "accountSettings": "Kontoeinstellungen",
++    "logout": "Abmelden",
++    "workspace": "VibeLink-Arbeitsbereich",
++    "loggedIn": "Angemeldet als {{label}}",
++    "sharedProgress": "Aufgaben werden mit deiner Hub-Identität ausgeführt. Handy und Computer teilen denselben Fortschritt.",
++    "errorNetwork": "Keine Verbindung zum Hub. Prüfe deine Verbindung und versuche es erneut.",
++    "errorExpired": "Deine Sitzung ist abgelaufen. Melde dich erneut an.",
++    "errorVault": "Sicherer Speicher nicht verfügbar. Entsperre dein System und versuche es erneut.",
++    "errorLogin": "Die Anmeldung ist nicht abgeschlossen. Versuche es erneut."
+   }
+ }
+diff --git a/apps/desktop/src/renderer/i18n/locales/en/common.json b/apps/desktop/src/renderer/i18n/locales/en/common.json
+index bc45dcdd..806d2b37 100644
+--- a/apps/desktop/src/renderer/i18n/locales/en/common.json
++++ b/apps/desktop/src/renderer/i18n/locales/en/common.json
+@@ -18951,5 +18951,42 @@
+     "rendered": "View document",
+     "wrap": "Wrap lines",
+     "lineNumbers": "Line numbers"
++  },
++  "vibelinkAuth": {
++    "title": "One account. Keep working.",
++    "subtitle": "Your teams, tasks and progress, on your phone and computer.",
++    "qrTitle": "Sign in with your phone",
++    "connection": "Connection",
++    "dev": "Private development",
++    "beta": "Public beta",
++    "scanned": "Scanned. Check and confirm on your phone.",
++    "denied": "Sign-in declined on your phone. Generate a new QR code.",
++    "expired": "QR code expired. Generate a new one.",
++    "scanHint": "Scan with the signed-in VibeLink mobile app",
++    "phoneHint": "Confirm on your phone to use the same account here",
++    "verificationCode": "Verification code",
++    "qrAlt": "VibeLink phone sign-in QR code",
++    "refreshQr": "Generate a new QR code",
++    "createQr": "Generate sign-in QR code",
++    "betaTitle": "Beta users",
++    "betaIntro": "Sign in with your beta code first. You can use your phone to scan next time.",
++    "inviteLabel": "Beta code",
++    "invitePlaceholder": "Enter your beta code",
++    "betaLogin": "Sign in with beta code",
++    "localLogin": "Use this computer’s workspace",
++    "localHint": "Connect to this computer’s development Hub and keep your existing local history.",
++    "storageUnavailable": "Secure storage is unavailable",
++    "loginFailed": "Could not sign in",
++    "help": "View solutions",
++    "account": "VibeLink account",
++    "accountSettings": "Account settings",
++    "logout": "Sign out",
++    "workspace": "VibeLink workspace",
++    "loggedIn": "Signed in as {{label}}",
++    "sharedProgress": "Tasks run under your Hub identity. Your phone and computer share the same progress.",
++    "errorNetwork": "Cannot connect to the Hub. Check your connection and try again.",
++    "errorExpired": "Your session expired. Sign in again.",
++    "errorVault": "Secure storage is unavailable. Unlock your system and try again.",
++    "errorLogin": "Sign-in is not complete. Try again."
+   }
+ }
+diff --git a/apps/desktop/src/renderer/i18n/locales/es/common.json b/apps/desktop/src/renderer/i18n/locales/es/common.json
+index d4d5c25a..59995538 100644
+--- a/apps/desktop/src/renderer/i18n/locales/es/common.json
++++ b/apps/desktop/src/renderer/i18n/locales/es/common.json
+@@ -19122,5 +19122,42 @@
+     "rendered": "Ver documento",
+     "wrap": "Ajustar líneas",
+     "lineNumbers": "Números de línea"
++  },
++  "vibelinkAuth": {
++    "title": "Una cuenta. Sigue trabajando.",
++    "subtitle": "Tus equipos, tareas y progreso en el móvil y el ordenador.",
++    "qrTitle": "Iniciar sesión con el móvil",
++    "connection": "Conexión",
++    "dev": "Desarrollo privado",
++    "beta": "Beta pública",
++    "scanned": "Código escaneado. Comprueba y confirma en tu móvil.",
++    "denied": "Inicio de sesión rechazado en el móvil. Genera otro código QR.",
++    "expired": "El código QR ha caducado. Genera uno nuevo.",
++    "scanHint": "Escanea con la aplicación móvil VibeLink con la sesión iniciada",
++    "phoneHint": "Confirma en tu móvil para usar la misma cuenta aquí",
++    "verificationCode": "Código de verificación",
++    "qrAlt": "Código QR de inicio de sesión móvil de VibeLink",
++    "refreshQr": "Generar otro código QR",
++    "createQr": "Generar código QR de acceso",
++    "betaTitle": "Usuarios de la beta",
++    "betaIntro": "Inicia sesión primero con tu código beta. La próxima vez podrás usar el móvil.",
++    "inviteLabel": "Código beta",
++    "invitePlaceholder": "Introduce tu código beta",
++    "betaLogin": "Iniciar sesión con código beta",
++    "localLogin": "Usar el espacio de trabajo de este ordenador",
++    "localHint": "Conéctate al Hub de desarrollo de este ordenador y conserva tu historial local.",
++    "storageUnavailable": "Almacenamiento seguro no disponible",
++    "loginFailed": "No se pudo iniciar sesión",
++    "help": "Ver soluciones",
++    "account": "Cuenta de VibeLink",
++    "accountSettings": "Ajustes de la cuenta",
++    "logout": "Cerrar sesión",
++    "workspace": "Espacio de trabajo de VibeLink",
++    "loggedIn": "Sesión iniciada como {{label}}",
++    "sharedProgress": "Las tareas se ejecutan con tu identidad del Hub. El móvil y el ordenador comparten el mismo progreso.",
++    "errorNetwork": "No se puede conectar con el Hub. Comprueba la conexión e inténtalo de nuevo.",
++    "errorExpired": "Tu sesión ha caducado. Inicia sesión de nuevo.",
++    "errorVault": "El almacenamiento seguro no está disponible. Desbloquea el sistema y vuelve a intentarlo.",
++    "errorLogin": "No se ha completado el inicio de sesión. Inténtalo de nuevo."
+   }
+ }
+diff --git a/apps/desktop/src/renderer/i18n/locales/fr/common.json b/apps/desktop/src/renderer/i18n/locales/fr/common.json
+index 67f0538c..0e5d56c8 100644
+--- a/apps/desktop/src/renderer/i18n/locales/fr/common.json
++++ b/apps/desktop/src/renderer/i18n/locales/fr/common.json
+@@ -19122,5 +19122,42 @@
+     "rendered": "Afficher le document",
+     "wrap": "Retour à la ligne",
+     "lineNumbers": "Numéros de ligne"
++  },
++  "vibelinkAuth": {
++    "title": "Un compte. Reprenez votre travail.",
++    "subtitle": "Vos équipes, tâches et avancées sur téléphone et ordinateur.",
++    "qrTitle": "Connexion avec votre téléphone",
++    "connection": "Connexion",
++    "dev": "Développement privé",
++    "beta": "Bêta publique",
++    "scanned": "Code scanné. Vérifiez et confirmez sur votre téléphone.",
++    "denied": "Connexion refusée sur votre téléphone. Générez un nouveau code QR.",
++    "expired": "Code QR expiré. Générez-en un nouveau.",
++    "scanHint": "Scannez avec l’application mobile VibeLink déjà connectée",
++    "phoneHint": "Confirmez sur votre téléphone pour utiliser le même compte ici",
++    "verificationCode": "Code de vérification",
++    "qrAlt": "Code QR de connexion VibeLink par téléphone",
++    "refreshQr": "Générer un nouveau code QR",
++    "createQr": "Générer le code QR de connexion",
++    "betaTitle": "Utilisateurs bêta",
++    "betaIntro": "Connectez-vous d’abord avec votre code bêta. Vous pourrez ensuite utiliser votre téléphone.",
++    "inviteLabel": "Code bêta",
++    "invitePlaceholder": "Saisir votre code bêta",
++    "betaLogin": "Se connecter avec le code bêta",
++    "localLogin": "Utiliser l’espace de travail de cet ordinateur",
++    "localHint": "Connectez-vous au Hub de développement de cet ordinateur et conservez votre historique local.",
++    "storageUnavailable": "Stockage sécurisé indisponible",
++    "loginFailed": "Connexion impossible",
++    "help": "Voir les solutions",
++    "account": "Compte VibeLink",
++    "accountSettings": "Paramètres du compte",
++    "logout": "Se déconnecter",
++    "workspace": "Espace de travail VibeLink",
++    "loggedIn": "Connecté en tant que {{label}}",
++    "sharedProgress": "Les tâches utilisent votre identité Hub. Votre téléphone et votre ordinateur partagent la même progression.",
++    "errorNetwork": "Impossible de joindre le Hub. Vérifiez votre connexion et réessayez.",
++    "errorExpired": "Votre session a expiré. Reconnectez-vous.",
++    "errorVault": "Stockage sécurisé indisponible. Déverrouillez votre système et réessayez.",
++    "errorLogin": "La connexion n’est pas terminée. Réessayez."
+   }
+ }
+diff --git a/apps/desktop/src/renderer/i18n/locales/ja/common.json b/apps/desktop/src/renderer/i18n/locales/ja/common.json
+index e3383953..372b3b0f 100644
+--- a/apps/desktop/src/renderer/i18n/locales/ja/common.json
++++ b/apps/desktop/src/renderer/i18n/locales/ja/common.json
+@@ -18879,5 +18879,42 @@
+     "rendered": "文書を表示",
+     "wrap": "行の折り返し",
+     "lineNumbers": "行番号"
++  },
++  "vibelinkAuth": {
++    "title": "同じアカウントで、作業の続きを。",
++    "subtitle": "チーム、タスク、進捗をスマートフォンとパソコンで共有。",
++    "qrTitle": "スマートフォンでログイン",
++    "connection": "接続先",
++    "dev": "プライベート開発版",
++    "beta": "公開ベータ版",
++    "scanned": "読み取り済みです。スマートフォンで内容を確認して承認してください。",
++    "denied": "スマートフォンでログインが拒否されました。QR コードを再発行してください。",
++    "expired": "QR コードの有効期限が切れました。再発行してください。",
++    "scanHint": "ログイン済みの VibeLink モバイルアプリでスキャン",
++    "phoneHint": "スマートフォンで承認すると、同じアカウントをこのパソコンで使えます",
++    "verificationCode": "確認コード",
++    "qrAlt": "VibeLink スマートフォンログイン用 QR コード",
++    "refreshQr": "QR コードを再発行",
++    "createQr": "ログイン用 QR コードを発行",
++    "betaTitle": "ベータ版ユーザー",
++    "betaIntro": "初回はベータコードでログインしてください。次回からスマートフォンでスキャンできます。",
++    "inviteLabel": "ベータコード",
++    "invitePlaceholder": "ベータコードを入力",
++    "betaLogin": "ベータコードでログイン",
++    "localLogin": "このパソコンのワークスペースを使う",
++    "localHint": "このパソコンの開発用 Hub に接続し、既存のローカル履歴を引き継ぎます。",
++    "storageUnavailable": "安全なストレージを利用できません",
++    "loginFailed": "ログインできませんでした",
++    "help": "解決方法を見る",
++    "account": "VibeLink アカウント",
++    "accountSettings": "アカウント設定",
++    "logout": "ログアウト",
++    "workspace": "VibeLink ワークスペース",
++    "loggedIn": "{{label}} としてログイン中",
++    "sharedProgress": "タスクはあなたの Hub ID で実行され、スマートフォンとパソコンで進捗を共有します。",
++    "errorNetwork": "Hub に接続できません。接続を確認して再試行してください。",
++    "errorExpired": "ログインの有効期限が切れました。再度ログインしてください。",
++    "errorVault": "安全なストレージを利用できません。システムのロックを解除して再試行してください。",
++    "errorLogin": "ログインが完了していません。再試行してください。"
+   }
+ }
+diff --git a/apps/desktop/src/renderer/i18n/locales/ko/common.json b/apps/desktop/src/renderer/i18n/locales/ko/common.json
+index 30577f6d..12e5ea23 100644
+--- a/apps/desktop/src/renderer/i18n/locales/ko/common.json
++++ b/apps/desktop/src/renderer/i18n/locales/ko/common.json
+@@ -18879,5 +18879,42 @@
+     "rendered": "문서 보기",
+     "wrap": "자동 줄 바꿈",
+     "lineNumbers": "줄 번호"
++  },
++  "vibelinkAuth": {
++    "title": "하나의 계정으로 작업을 이어가세요.",
++    "subtitle": "휴대폰과 컴퓨터에서 팀, 작업, 진행 상황을 공유하세요.",
++    "qrTitle": "휴대폰으로 로그인",
++    "connection": "연결",
++    "dev": "비공개 개발 버전",
++    "beta": "공개 베타 버전",
++    "scanned": "스캔했습니다. 휴대폰에서 내용을 확인하고 승인하세요.",
++    "denied": "휴대폰에서 로그인을 거부했습니다. QR 코드를 다시 생성하세요.",
++    "expired": "QR 코드가 만료되었습니다. 다시 생성하세요.",
++    "scanHint": "로그인된 VibeLink 모바일 앱으로 스캔하세요",
++    "phoneHint": "휴대폰에서 승인하면 컴퓨터에서도 같은 계정을 사용할 수 있습니다",
++    "verificationCode": "확인 코드",
++    "qrAlt": "VibeLink 휴대폰 로그인 QR 코드",
++    "refreshQr": "QR 코드 다시 생성",
++    "createQr": "로그인 QR 코드 생성",
++    "betaTitle": "베타 사용자",
++    "betaIntro": "처음에는 베타 코드로 로그인하세요. 다음부터는 휴대폰으로 스캔할 수 있습니다.",
++    "inviteLabel": "베타 코드",
++    "invitePlaceholder": "베타 코드 입력",
++    "betaLogin": "베타 코드로 로그인",
++    "localLogin": "이 컴퓨터의 작업 공간 사용",
++    "localHint": "이 컴퓨터의 개발용 Hub에 연결하여 기존 로컬 기록을 이어갑니다.",
++    "storageUnavailable": "보안 저장소를 사용할 수 없습니다",
++    "loginFailed": "로그인하지 못했습니다",
++    "help": "해결 방법 보기",
++    "account": "VibeLink 계정",
++    "accountSettings": "계정 설정",
++    "logout": "로그아웃",
++    "workspace": "VibeLink 작업 공간",
++    "loggedIn": "{{label}} 계정으로 로그인됨",
++    "sharedProgress": "작업은 내 Hub 계정으로 실행되며 휴대폰과 컴퓨터에서 진행 상황을 공유합니다.",
++    "errorNetwork": "Hub에 연결할 수 없습니다. 연결을 확인한 후 다시 시도하세요.",
++    "errorExpired": "로그인이 만료되었습니다. 다시 로그인하세요.",
++    "errorVault": "보안 저장소를 사용할 수 없습니다. 시스템 잠금을 해제한 후 다시 시도하세요.",
++    "errorLogin": "로그인이 완료되지 않았습니다. 다시 시도하세요."
+   }
+ }
+diff --git a/apps/desktop/src/renderer/i18n/locales/pt-BR/common.json b/apps/desktop/src/renderer/i18n/locales/pt-BR/common.json
+index 7b546ee2..5b15f1b2 100644
+--- a/apps/desktop/src/renderer/i18n/locales/pt-BR/common.json
++++ b/apps/desktop/src/renderer/i18n/locales/pt-BR/common.json
+@@ -19122,5 +19122,42 @@
+     "rendered": "Ver documento",
+     "wrap": "Quebra de linha",
+     "lineNumbers": "Números de linha"
++  },
++  "vibelinkAuth": {
++    "title": "Uma conta. Continue trabalhando.",
++    "subtitle": "Suas equipes, tarefas e progresso no celular e no computador.",
++    "qrTitle": "Entrar com o celular",
++    "connection": "Conexão",
++    "dev": "Desenvolvimento privado",
++    "beta": "Beta pública",
++    "scanned": "Código lido. Confira e confirme no celular.",
++    "denied": "Entrada recusada no celular. Gere outro código QR.",
++    "expired": "O código QR expirou. Gere um novo.",
++    "scanHint": "Leia com o aplicativo móvel VibeLink com a sessão iniciada",
++    "phoneHint": "Confirme no celular para usar a mesma conta aqui",
++    "verificationCode": "Código de verificação",
++    "qrAlt": "Código QR de entrada móvel do VibeLink",
++    "refreshQr": "Gerar novo código QR",
++    "createQr": "Gerar código QR de entrada",
++    "betaTitle": "Usuários beta",
++    "betaIntro": "Entre primeiro com seu código beta. Da próxima vez você poderá usar o celular.",
++    "inviteLabel": "Código beta",
++    "invitePlaceholder": "Digite seu código beta",
++    "betaLogin": "Entrar com código beta",
++    "localLogin": "Usar o espaço de trabalho deste computador",
++    "localHint": "Conecte-se ao Hub de desenvolvimento deste computador e mantenha o histórico local.",
++    "storageUnavailable": "Armazenamento seguro indisponível",
++    "loginFailed": "Não foi possível entrar",
++    "help": "Ver soluções",
++    "account": "Conta VibeLink",
++    "accountSettings": "Configurações da conta",
++    "logout": "Sair",
++    "workspace": "Espaço de trabalho VibeLink",
++    "loggedIn": "Conectado como {{label}}",
++    "sharedProgress": "As tarefas usam sua identidade do Hub. O celular e o computador compartilham o mesmo progresso.",
++    "errorNetwork": "Não foi possível conectar ao Hub. Confira a conexão e tente novamente.",
++    "errorExpired": "Sua sessão expirou. Entre novamente.",
++    "errorVault": "Armazenamento seguro indisponível. Desbloqueie o sistema e tente novamente.",
++    "errorLogin": "A entrada não foi concluída. Tente novamente."
+   }
+ }
+diff --git a/apps/desktop/src/renderer/i18n/locales/pt-PT/common.json b/apps/desktop/src/renderer/i18n/locales/pt-PT/common.json
+index bae75933..98522e94 100644
+--- a/apps/desktop/src/renderer/i18n/locales/pt-PT/common.json
++++ b/apps/desktop/src/renderer/i18n/locales/pt-PT/common.json
+@@ -19122,5 +19122,42 @@
+     "rendered": "Ver documento",
+     "wrap": "Moldar linhas",
+     "lineNumbers": "Números de linha"
++  },
++  "vibelinkAuth": {
++    "title": "Uma conta. Continue a trabalhar.",
++    "subtitle": "As suas equipas, tarefas e progresso no telemóvel e no computador.",
++    "qrTitle": "Entrar com o telemóvel",
++    "connection": "Ligação",
++    "dev": "Desenvolvimento privado",
++    "beta": "Beta pública",
++    "scanned": "Código lido. Verifique e confirme no telemóvel.",
++    "denied": "Entrada recusada no telemóvel. Gere outro código QR.",
++    "expired": "O código QR expirou. Gere um novo.",
++    "scanHint": "Leia com a aplicação móvel VibeLink com sessão iniciada",
++    "phoneHint": "Confirme no telemóvel para utilizar a mesma conta aqui",
++    "verificationCode": "Código de verificação",
++    "qrAlt": "Código QR de entrada móvel do VibeLink",
++    "refreshQr": "Gerar novo código QR",
++    "createQr": "Gerar código QR de entrada",
++    "betaTitle": "Utilizadores beta",
++    "betaIntro": "Entre primeiro com o seu código beta. Da próxima vez poderá utilizar o telemóvel.",
++    "inviteLabel": "Código beta",
++    "invitePlaceholder": "Introduza o seu código beta",
++    "betaLogin": "Entrar com código beta",
++    "localLogin": "Utilizar o espaço de trabalho deste computador",
++    "localHint": "Ligue-se ao Hub de desenvolvimento deste computador e mantenha o histórico local.",
++    "storageUnavailable": "Armazenamento seguro indisponível",
++    "loginFailed": "Não foi possível entrar",
++    "help": "Ver soluções",
++    "account": "Conta VibeLink",
++    "accountSettings": "Definições da conta",
++    "logout": "Terminar sessão",
++    "workspace": "Espaço de trabalho VibeLink",
++    "loggedIn": "Sessão iniciada como {{label}}",
++    "sharedProgress": "As tarefas usam a sua identidade do Hub. O telemóvel e o computador partilham o mesmo progresso.",
++    "errorNetwork": "Não foi possível ligar ao Hub. Verifique a ligação e tente novamente.",
++    "errorExpired": "A sessão expirou. Inicie sessão novamente.",
++    "errorVault": "Armazenamento seguro indisponível. Desbloqueie o sistema e tente novamente.",
++    "errorLogin": "A entrada não foi concluída. Tente novamente."
+   }
+ }
+diff --git a/apps/desktop/src/renderer/i18n/locales/zh-CN/common.json b/apps/desktop/src/renderer/i18n/locales/zh-CN/common.json
+index dcd22815..6390f694 100644
+--- a/apps/desktop/src/renderer/i18n/locales/zh-CN/common.json
++++ b/apps/desktop/src/renderer/i18n/locales/zh-CN/common.json
+@@ -18879,5 +18879,42 @@
+     "rendered": "查看文稿",
+     "wrap": "自动换行",
+     "lineNumbers": "行号"
++  },
++  "vibelinkAuth": {
++    "title": "同一个账号，接着做事。",
++    "subtitle": "手机和电脑共享你的团队、任务与进度。",
++    "qrTitle": "手机扫码登录",
++    "connection": "连接",
++    "dev": "内网开发版",
++    "beta": "公网内测版",
++    "scanned": "已扫码，请在手机上核对并确认",
++    "denied": "手机已拒绝登录，可重新生成二维码",
++    "expired": "二维码已过期，请重新生成",
++    "scanHint": "用已登录的 VibeLink 手机端扫码",
++    "phoneHint": "在手机上确认，把同一个账号带到电脑",
++    "verificationCode": "核对码",
++    "qrAlt": "VibeLink 手机扫码登录二维码",
++    "refreshQr": "重新生成二维码",
++    "createQr": "生成登录二维码",
++    "betaTitle": "内测用户",
++    "betaIntro": "首次使用，用你的内测码登录。之后也可以用手机扫码。",
++    "inviteLabel": "内测码",
++    "invitePlaceholder": "输入内测码",
++    "betaLogin": "使用内测码登录",
++    "localLogin": "使用本机工作区",
++    "localHint": "连接这台电脑的开发版，继续已有本机历史。",
++    "storageUnavailable": "本机安全存储暂不可用",
++    "loginFailed": "暂时未能登录",
++    "help": "查看解决办法",
++    "account": "VibeLink 账号",
++    "accountSettings": "账号设置",
++    "logout": "退出登录",
++    "workspace": "VibeLink 工作区",
++    "loggedIn": "已登录 {{label}}",
++    "sharedProgress": "任务由你的 Hub 身份执行，手机与电脑共享同一份进度。",
++    "errorNetwork": "暂时无法连接 Hub，请检查连接后重试。",
++    "errorExpired": "登录已过期，请重新登录。",
++    "errorVault": "无法使用本机安全存储，请解锁系统后重试。",
++    "errorLogin": "登录暂时未完成，请重试。"
+   }
+ }
+diff --git a/apps/desktop/src/renderer/i18n/locales/zh-Hans-x-lzh/common.json b/apps/desktop/src/renderer/i18n/locales/zh-Hans-x-lzh/common.json
+index 56395a07..96654da1 100644
+--- a/apps/desktop/src/renderer/i18n/locales/zh-Hans-x-lzh/common.json
++++ b/apps/desktop/src/renderer/i18n/locales/zh-Hans-x-lzh/common.json
+@@ -18879,5 +18879,42 @@
+     "rendered": "观文",
+     "wrap": "折行",
+     "lineNumbers": "行数"
++  },
++  "vibelinkAuth": {
++    "title": "同一个账号，接着做事。",
++    "subtitle": "手机和电脑共享你的团队、任务与进度。",
++    "qrTitle": "手机扫码登录",
++    "connection": "连接",
++    "dev": "内网开发版",
++    "beta": "公网内测版",
++    "scanned": "已扫码，请在手机上核对并确认",
++    "denied": "手机已拒绝登录，可重新生成二维码",
++    "expired": "二维码已过期，请重新生成",
++    "scanHint": "用已登录的 VibeLink 手机端扫码",
++    "phoneHint": "在手机上确认，把同一个账号带到电脑",
++    "verificationCode": "核对码",
++    "qrAlt": "VibeLink 手机扫码登录二维码",
++    "refreshQr": "重新生成二维码",
++    "createQr": "生成登录二维码",
++    "betaTitle": "内测用户",
++    "betaIntro": "首次使用，用你的内测码登录。之后也可以用手机扫码。",
++    "inviteLabel": "内测码",
++    "invitePlaceholder": "输入内测码",
++    "betaLogin": "使用内测码登录",
++    "localLogin": "使用本机工作区",
++    "localHint": "连接这台电脑的开发版，继续已有本机历史。",
++    "storageUnavailable": "本机安全存储暂不可用",
++    "loginFailed": "暂时未能登录",
++    "help": "查看解决办法",
++    "account": "VibeLink 账号",
++    "accountSettings": "账号设置",
++    "logout": "退出登录",
++    "workspace": "VibeLink 工作区",
++    "loggedIn": "已登录 {{label}}",
++    "sharedProgress": "任务由你的 Hub 身份执行，手机与电脑共享同一份进度。",
++    "errorNetwork": "暂时无法连接 Hub，请检查连接后重试。",
++    "errorExpired": "登录已过期，请重新登录。",
++    "errorVault": "无法使用本机安全存储，请解锁系统后重试。",
++    "errorLogin": "登录暂时未完成，请重试。"
+   }
+ }
+diff --git a/apps/desktop/src/renderer/i18n/locales/zh-Hant-x-lzh/common.json b/apps/desktop/src/renderer/i18n/locales/zh-Hant-x-lzh/common.json
+index f35e1826..6e302f59 100644
+--- a/apps/desktop/src/renderer/i18n/locales/zh-Hant-x-lzh/common.json
++++ b/apps/desktop/src/renderer/i18n/locales/zh-Hant-x-lzh/common.json
+@@ -18879,5 +18879,42 @@
+     "rendered": "觀文",
+     "wrap": "折行",
+     "lineNumbers": "行數"
++  },
++  "vibelinkAuth": {
++    "title": "同一個帳號，接著做事。",
++    "subtitle": "手機和電腦共享你的團隊、任務與進度。",
++    "qrTitle": "手機掃碼登入",
++    "connection": "連線",
++    "dev": "內網開發版",
++    "beta": "公網內測版",
++    "scanned": "已掃碼，請在手機上核對並確認",
++    "denied": "手機已拒絕登入，可重新產生 QR 碼",
++    "expired": "QR 碼已過期，請重新產生",
++    "scanHint": "用已登入的 VibeLink 手機端掃碼",
++    "phoneHint": "在手機上確認，將同一個帳號帶到電腦",
++    "verificationCode": "核對碼",
++    "qrAlt": "VibeLink 手機掃碼登入 QR 碼",
++    "refreshQr": "重新產生 QR 碼",
++    "createQr": "產生登入 QR 碼",
++    "betaTitle": "內測使用者",
++    "betaIntro": "首次使用，請用內測碼登入。之後也可以用手機掃碼。",
++    "inviteLabel": "內測碼",
++    "invitePlaceholder": "輸入內測碼",
++    "betaLogin": "使用內測碼登入",
++    "localLogin": "使用本機工作區",
++    "localHint": "連線至這台電腦的開發版，繼續既有本機記錄。",
++    "storageUnavailable": "本機安全儲存暫時無法使用",
++    "loginFailed": "暫時無法登入",
++    "help": "查看解決方法",
++    "account": "VibeLink 帳號",
++    "accountSettings": "帳號設定",
++    "logout": "登出",
++    "workspace": "VibeLink 工作區",
++    "loggedIn": "已登入 {{label}}",
++    "sharedProgress": "任務以你的 Hub 身分執行，手機與電腦共享同一份進度。",
++    "errorNetwork": "暫時無法連線至 Hub，請檢查連線後重試。",
++    "errorExpired": "登入已過期，請重新登入。",
++    "errorVault": "無法使用本機安全儲存，請解鎖系統後重試。",
++    "errorLogin": "登入尚未完成，請重試。"
+   }
+ }
+diff --git a/apps/desktop/src/renderer/i18n/locales/zh-TW/common.json b/apps/desktop/src/renderer/i18n/locales/zh-TW/common.json
+index 7075672e..c4690bea 100644
+--- a/apps/desktop/src/renderer/i18n/locales/zh-TW/common.json
++++ b/apps/desktop/src/renderer/i18n/locales/zh-TW/common.json
+@@ -18879,5 +18879,42 @@
+     "rendered": "查看文件",
+     "wrap": "自動換行",
+     "lineNumbers": "行號"
++  },
++  "vibelinkAuth": {
++    "title": "同一個帳號，接著做事。",
++    "subtitle": "手機和電腦共享你的團隊、任務與進度。",
++    "qrTitle": "手機掃碼登入",
++    "connection": "連線",
++    "dev": "內網開發版",
++    "beta": "公網內測版",
++    "scanned": "已掃碼，請在手機上核對並確認",
++    "denied": "手機已拒絕登入，可重新產生 QR 碼",
++    "expired": "QR 碼已過期，請重新產生",
++    "scanHint": "用已登入的 VibeLink 手機端掃碼",
++    "phoneHint": "在手機上確認，將同一個帳號帶到電腦",
++    "verificationCode": "核對碼",
++    "qrAlt": "VibeLink 手機掃碼登入 QR 碼",
++    "refreshQr": "重新產生 QR 碼",
++    "createQr": "產生登入 QR 碼",
++    "betaTitle": "內測使用者",
++    "betaIntro": "首次使用，請用內測碼登入。之後也可以用手機掃碼。",
++    "inviteLabel": "內測碼",
++    "invitePlaceholder": "輸入內測碼",
++    "betaLogin": "使用內測碼登入",
++    "localLogin": "使用本機工作區",
++    "localHint": "連線至這台電腦的開發版，繼續既有本機記錄。",
++    "storageUnavailable": "本機安全儲存暫時無法使用",
++    "loginFailed": "暫時無法登入",
++    "help": "查看解決方法",
++    "account": "VibeLink 帳號",
++    "accountSettings": "帳號設定",
++    "logout": "登出",
++    "workspace": "VibeLink 工作區",
++    "loggedIn": "已登入 {{label}}",
++    "sharedProgress": "任務以你的 Hub 身分執行，手機與電腦共享同一份進度。",
++    "errorNetwork": "暫時無法連線至 Hub，請檢查連線後重試。",
++    "errorExpired": "登入已過期，請重新登入。",
++    "errorVault": "無法使用本機安全儲存，請解鎖系統後重試。",
++    "errorLogin": "登入尚未完成，請重試。"
+   }
+ }
+diff --git a/apps/desktop/src/renderer/lib/authService.ts b/apps/desktop/src/renderer/lib/authService.ts
+index d59a21c8..a47b26ba 100644
+--- a/apps/desktop/src/renderer/lib/authService.ts
++++ b/apps/desktop/src/renderer/lib/authService.ts
+@@ -36,7 +36,7 @@ export interface User {
+ 
+ export interface AuthState {
+   user: User | null;
+-  mode: 'signed-out' | 'local' | 'cloud';
++  mode: 'signed-out' | 'local' | 'cloud' | 'hub';
+   dataOwnerId: string | null;
+   ownerGeneration: number;
+   /** Main marks the transient signed-out projection while an owner boundary is pending. */
 diff --git a/apps/desktop/src/renderer/router.tsx b/apps/desktop/src/renderer/router.tsx
-index 9b7757f5..2d17b193 100644
+index 9b7757f5..072795cb 100644
 --- a/apps/desktop/src/renderer/router.tsx
 +++ b/apps/desktop/src/renderer/router.tsx
-@@ -1,6 +1,7 @@
+@@ -1,6 +1,9 @@
  import { RemoteBotSessionView } from '@/features/bots/RemoteBotSessionView';
  import { createHashRouter, Navigate } from 'react-router-dom';
  
 +import { VibeLinkControlCenter } from '@/features/vibelink/VibeLinkControlCenter';
++import { VibeLinkLoginPage } from '@/features/vibelink/LoginPage';
++import { HubWorkspace } from '@/features/vibelink/HubWorkspace';
  import { MainLayout } from '@/components/layout/MainLayout';
  import { MainEntryRedirect } from '@/components/layout/MainEntryRedirect';
  import { RouteErrorFallback } from '@/components/error/RouteErrorFallback';
-@@ -93,6 +94,7 @@ export const router = createHashRouter([
+@@ -59,7 +62,7 @@ export const router = createHashRouter([
+     element: <GuestRoute />,
+     // 登录线渲染崩溃时的全屏兜底(没有它 react-router 会渲染开发者默认错误页)。
+     errorElement: <RouteErrorFallback />,
+-    children: [{ index: true, element: <LoginPage /> }],
++    children: [{ index: true, element: window.electronAPI?.vibelink?.enabled ? <VibeLinkLoginPage /> : <LoginPage /> }],
+   },
+   {
+     path: '/',
+@@ -76,6 +79,7 @@ export const router = createHashRouter([
+         // 主功能区入口 —— 经过 LocalDbGate（localDb 就绪）才能进
+         element: <LocalDbGate />,
+         children: [
++          { path: 'hub', element: <HubWorkspace /> },
+           // 右侧栏独立子窗口(?sidebarWindow=1)的根路由 —— 与 MainLayout 平级,
+           // 只挂 SidebarWindowLayout(50px chrome + RightSidebarShell),不挂完整壳。
+           {
+@@ -93,6 +97,7 @@ export const router = createHashRouter([
                  errorElement: <RouteErrorFallback variant="section" />,
                  children: [
                    { index: true, element: <MainEntryRedirect /> },
@@ -398,10 +1614,41 @@ index 9b7757f5..2d17b193 100644
                    {
                      path: 'cc-agent',
                      element: <CCAgentFeatureLayout />,
+diff --git a/apps/desktop/src/renderer/state/modelVisibilityPrefs.ts b/apps/desktop/src/renderer/state/modelVisibilityPrefs.ts
+index 155c4573..93631ab1 100644
+--- a/apps/desktop/src/renderer/state/modelVisibilityPrefs.ts
++++ b/apps/desktop/src/renderer/state/modelVisibilityPrefs.ts
+@@ -123,7 +123,7 @@ let activeOwnerId: string | null = null;
+ let activeOwnerGeneration = 0;
+ let activeOwnerReadyForWrites = false;
+ let activeOwnerMigrationPending = false;
+-let activeOwnerMode: 'signed-out' | 'local' | 'cloud' = 'signed-out';
++let activeOwnerMode: 'signed-out' | 'local' | 'cloud' | 'hub' = 'signed-out';
+ let mayInitializeDefaults = false;
+ interface InitializationState {
+   /** Persisted before migration/override writes; scopes records completion independently. */
+@@ -632,7 +632,7 @@ export function getModelVisibilityVersion(): number {
+ export async function setModelVisibilityOwner(
+   ownerId: string | null,
+   ownerGeneration: number,
+-  mode: 'signed-out' | 'local' | 'cloud',
++  mode: 'signed-out' | 'local' | 'cloud' | 'hub',
+ ): Promise<void> {
+   if (
+     activeOwnerId === ownerId
 diff --git a/apps/desktop/src/renderer/vite-env.d.ts b/apps/desktop/src/renderer/vite-env.d.ts
-index fff86817..e2b28102 100644
+index fff86817..b016981a 100644
 --- a/apps/desktop/src/renderer/vite-env.d.ts
 +++ b/apps/desktop/src/renderer/vite-env.d.ts
+@@ -561,7 +561,7 @@ interface FeishuBotRegistrationStatusPayload {
+ /** Auth state pushed from main → renderer via 'auth:state-change'. */
+ interface AuthStateChangePayload {
+   user: AuthUser | null;
+-  mode: 'signed-out' | 'local' | 'cloud';
++  mode: 'signed-out' | 'local' | 'cloud' | 'hub';
+   dataOwnerId: string | null;
+   ownerGeneration: number;
+   /** Main marks the transient signed-out projection while an owner boundary is pending. */
 @@ -1156,6 +1156,7 @@ type ElectronLocalDbSessionListUsageOptions = Omit<
  };
  
@@ -410,6 +1657,28 @@ index fff86817..e2b28102 100644
    performanceTrace: import('../shared/performanceTrace').PerformanceTraceAPI;
    localAgent: import('../shared/localAgent').LocalAgentSettingsApi;
    botMarket: import('../shared/botMarket').BotMarketApi;
+@@ -2218,7 +2219,7 @@ interface ElectronAPI {
+   authHasPersistedSessionHintSync: () => boolean;
+   authInitialize: () => Promise<{
+     user: AuthUser | null;
+-    mode: 'signed-out' | 'local' | 'cloud';
++    mode: 'signed-out' | 'local' | 'cloud' | 'hub';
+     dataOwnerId: string | null;
+     ownerGeneration: number;
+     ownerBoundaryPending?: boolean;
+diff --git a/apps/desktop/src/shared/startupGateStall.ts b/apps/desktop/src/shared/startupGateStall.ts
+index 9c134caf..b8bb9710 100644
+--- a/apps/desktop/src/shared/startupGateStall.ts
++++ b/apps/desktop/src/shared/startupGateStall.ts
+@@ -28,7 +28,7 @@ const ENV_STATUSES = [
+   'failed',
+ ] as const;
+ const LOCAL_DB_GATE_STATUSES = ['pending', 'ready', 'fatal'] as const;
+-const AUTH_MODES = ['signed-out', 'local', 'cloud'] as const;
++const AUTH_MODES = ['signed-out', 'local', 'cloud', 'hub'] as const;
+ const HANDOFF_PHASES = [
+   'boot',
+   'settle',
 diff --git a/apps/desktop/vite.main.config.ts b/apps/desktop/vite.main.config.ts
 index 12672af3..c01d5685 100644
 --- a/apps/desktop/vite.main.config.ts

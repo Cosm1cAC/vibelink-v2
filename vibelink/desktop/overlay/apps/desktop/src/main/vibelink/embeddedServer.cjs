@@ -43,23 +43,9 @@ const MIME_TYPES = {
   '.pfb': 'application/octet-stream',
 };
 
-function loadHubSettings() {
-  const hub = String(process.env.VIBELINK_HUB || 'http://127.0.0.1:18995').replace(/\/+$/, '');
-  let token = process.env.VIBELINK_TOKEN || '';
-  // A local developer token never authenticates a remote or beta Hub. Explicit
-  // connection settings win, and a remote connection cannot silently switch to localhost.
-  let local = false;
-  try { local = ['127.0.0.1', 'localhost', '[::1]'].includes(new URL(hub).hostname); } catch {}
-  if (!token && local) {
-    const localAppData = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
-    for (const parts of [['data', 'dev', 'token.txt'], ['data', 'token.txt']]) {
-      try {
-        token = fs.readFileSync(path.join(localAppData, 'vibelink-mesh', ...parts), 'utf8').trim();
-        if (token) break;
-      } catch {}
-    }
-  }
-  return { hub, token };
+function authorizeApiRequest(proof, expected, settings, kind) {
+  return Boolean(expected && proof === expected && settings && settings.token &&
+    (kind !== 'action' || settings.localManagement));
 }
 
 function hubRequest(hubUrl, method, reqPath, token, body, contentType = 'application/json') {
@@ -225,7 +211,7 @@ function isAllowedLocalRequest(req, port) {
   return true;
 }
 
-function startEmbeddedRendererAndVibeLinkServer({ rendererRoot, pdfjsRoot, port = 5174 }) {
+function startEmbeddedRendererAndVibeLinkServer({ rendererRoot, pdfjsRoot, port = 5174, ipcSecret, getHubSettings = async () => null }) {
   // Hub/Agent lifecycle is managed by VibeLink; this UI never launches legacy relays.
 
   const server = http.createServer(async (req, res) => {
@@ -238,15 +224,28 @@ function startEmbeddedRendererAndVibeLinkServer({ rendererRoot, pdfjsRoot, port 
       const reqUrl = new URL(req.url || '/', `http://localhost:${port}`);
       const pathname = decodeURIComponent(reqUrl.pathname);
 
+      const apiKind = pathname === '/api/vibelink/state' ? 'state' : pathname === '/api/vibelink/action' ? 'action' : null;
+      if (apiKind && (!ipcSecret || req.headers['x-vibelink-ipc'] !== ipcSecret)) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Native IPC authentication required' }));
+        return;
+      }
+      const settings = apiKind ? await getHubSettings(apiKind === 'action') : null;
+      if (apiKind && !authorizeApiRequest(req.headers['x-vibelink-ipc'], ipcSecret, settings, apiKind)) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: '请登录 VibeLink；本机设备管理仅限本机工作区。' }));
+        return;
+      }
+
       // 1. VibeLink State API
       if (pathname === '/api/vibelink/state' && req.method === 'GET') {
-        const { hub, token } = loadHubSettings();
+        const { hub, token, localManagement } = settings;
         const [devicesRes, eventsRes, configsRes, policyRes, tailscale] = await Promise.all([
           hubRequest(hub, 'GET', '/api/devices', token).catch((e) => ({ __err: e.message })),
           hubRequest(hub, 'GET', '/api/events?limit=60', token).catch(() => '[]'),
           hubRequest(hub, 'GET', '/api/configs', token).catch(() => '[]'),
           hubRequest(hub, 'GET', '/api/policy', token).catch(() => 'null'),
-          checkTailscale(),
+          localManagement ? checkTailscale() : Promise.resolve(null),
         ]);
 
         let hubOk = true;
@@ -281,7 +280,7 @@ function startEmbeddedRendererAndVibeLinkServer({ rendererRoot, pdfjsRoot, port 
           policy = JSON.parse(policyRes);
         } catch {}
 
-        const lanIp = resolveLanIp();
+        const lanIp = localManagement ? resolveLanIp() : '';
         let finalTailscale = tailscale;
         if ((!finalTailscale || finalTailscale.state === 'Missing') && Array.isArray(devices)) {
           const pcDev = devices.find((d) => d.id === 'pc');
@@ -320,7 +319,7 @@ function startEmbeddedRendererAndVibeLinkServer({ rendererRoot, pdfjsRoot, port 
       // 2. VibeLink Action API
       if (pathname === '/api/vibelink/action' && req.method === 'POST') {
         const body = await readJsonBody(req);
-        const { hub, token } = loadHubSettings();
+        const { hub, token, localManagement } = settings;
         const action = body.action;
 
         if (action === 'command') {
@@ -507,4 +506,5 @@ function startEmbeddedRendererAndVibeLinkServer({ rendererRoot, pdfjsRoot, port 
 
 module.exports = {
   startEmbeddedRendererAndVibeLinkServer,
+  authorizeApiRequest,
 };

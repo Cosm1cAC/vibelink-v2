@@ -2,7 +2,9 @@
 
 基于 [makecindy/cindy](https://github.com/makecindy/cindy) 的 Apache-2.0 源码，固定上游 commit `d53e60e099`（完整值见 manifest.json）。保留上游许可，使用可校验补丁和新增源文件分发；不包含 Cindy 的 Git 历史、用户数据、模型凭据或 Clash 配置。
 
-同一个桌面窗口中保留 Cindy 会话、工作区、设置与项目工具，侧栏“设备与连接”打开 VibeLink Hub/Agent 管理。“连接手机”显示由 Hub 签发的一次性二维码。界面通过受信任的 preload IPC 调用 Main，Main 请求本机服务；Hub 管理员凭据只由本机服务读取，不传给 Renderer。不创建模型反代，也不更改 maker-core、数据库 schema 或订阅登录信息。融合模式在订阅翻译入口本机拒绝 GPT/Claude/Gemini，GPT 官方 Codex app-server 使用原生 openai provider，不再接入 Cindy 的本机模型代理；API Key 供应商原有入口保留。
+融合版现在使用 VibeLink 统一登录：登录页提供内测码、手机扫码和显式“使用本机工作区”。不再要求 Cindy 云账号，也不伪造 Cindy membership。开发版 owner 登录后保留 Cindy 会话、项目工具与“设备与连接”；内测主体进入独立 Hub 工作区，本机模型执行被 Main 拒绝。后续任务面板单独交付。
+
+订阅模型仍只走官方 CLI。GPT 官方 Codex app-server 使用原生 OpenAI provider；融合模式拒绝订阅翻译代理以及原语音润色中的直接 ChatGPT OAuth HTTP 调用。非融合上游行为与 API Key 供应商入口保持原有语义。没有修改 maker-core 或数据库 schema。
 
 ## 准备与启动
 
@@ -34,9 +36,15 @@ pnpm --dir "$env:LOCALAPPDATA\vibelink-mesh\desktop\source" install --frozen-loc
 
 ## 连接与凭据
 
-默认连接 `http://127.0.0.1:18995`，读取现有 `%LOCALAPPDATA%\vibelink-mesh\data\dev\token.txt`，兼容旧 `data\token.txt`。没有新建或明文持久化自定义 Token 的入口。Main 环境可显式指定 `VIBELINK_HUB` 与 `VIBELINK_TOKEN`；HTTPS 正常验证证书，远程 Hub 不会误用本机 Token。界面连接设置只显示地址和是否已配置，不显示或编辑凭据。
+开发版登录固定连接 `http://127.0.0.1:18995`；内测码与内测扫码固定连接 `https://hub.vibelink.cloud`。Main 的 Electron 网络层继承当前系统网络设置，不写死代理地址或修改系统代理。Renderer 不能指定凭据目的地址。
 
-扫码流程 `/api/pair/start` → 一次性二维码 → 手机确认 → `/api/pair/status/{id}`，管理员 Token 始终不出 Main 本机服务。二维码为临时配对授权，应仅给本人手机扫描。
+Main 保存由 Hub 验证的 client session，token 和 QR pollSecret 不进入 Renderer；只有一次性扫码 link、核对码和公开 session 信息用于界面。持久凭据通过 Electron safeStorage 加密，保存并刷盘后才确认 QR 消费；ACK 明确 denied/expired 会撤销本机能力与 owner。网络丢 ACK 保留 Main 私有证明重试。空 profile 不主动探测 Keychain；安全存储不可用不降级到明文。退出使用无秘密的持久 tombstone，系统凭据库锁定时同样阻止重启自动恢复。
+
+数据目录以 Hub 稳定 issuer、edition、userId 的散列隔离。只有显式本机管理员交换得到的真实 owner 可以在 Main 建立到旧 `local-v1` 的受信映射，继续本机历史；其他远程或内测同名用户不会套用该映射。原 Cindy 凭据、旧 DB 和原 profile 保留，不复制到源码或发布包。
+
+账号切换、退出、QR 批准的持久化与 owner 交接共用一个提交队列，并检查操作代际；晚到 A 不会覆盖 B。运行中 session 到期撤销能力并沿相同边界退出，不依赖重启。
+
+原设备管理 HTTP fallback 需要 Main 随机私有 IPC proof 与当前已验证会话，不能从网页直接绕过登录。内测只用当前公网 client，不回退读取本机管理员凭据；本机管理动作只向经过显式本机登录的 owner 开放。管理员 token 只留 Main。
 
 ## 自检
 
@@ -48,7 +56,9 @@ pnpm --dir apps/desktop exec vitest run src/renderer/features/vibelink/desktopBr
 pnpm ui:check --page vibelink-desktop --theme all
 ```
 
-首个测试通过临时 HTTP Hub 验证实际认证、dev 凭据路径、状态不泄露 Token，并检查第三方网页 Origin 被拒绝；桥接测试验证原生窗口走 IPC。浏览器场景覆盖深浅色、内嵌导航、命令失败与二维码展示。全量 TypeScript 检查未通过完成：该超大仓库本机检查在 4GB 堆下耗尽内存，12GB 重试耗时较长后中止；不可据此声称全量检查通过。
+HTTP 测试用临时 Hub 验证 Main 注入的当前身份、凭据不回传，以及无 Main proof/第三方 Origin 不能到达 Hub。新增登录测试覆盖 fresh signed_out、发行与恢复、迟到 vault/owner 写入、退出和 B 登录交错、运行中到期、ACK denied、丢 ACK、加密存储和本机执行能力边界。
+
+本轮 49 项定向 Vitest 与真实 HTTP 测试通过；登录页 12 种语言 × 深浅色 × fresh/scanned 共 48 项 UI 变体通过并检查截图。全量 TypeScript 已以 12GB 堆执行，旧 `outbound-fetch.ts` 的 Undici DispatchHandler 以及生成 net-policy IPv6 类型与当前依赖不兼容；不能声称全量 typecheck 通过。新增登录代码的类型问题已逐项修正。
 
 打包说明：父仓 `.gitattributes` 对 `vibelink/desktop/**` 设置 `-text`，保持文件原始字节，避免跨平台 checkout 改写换行导致 SHA256 不匹配。原型中全局替换端点、伪造账号、明文保存Token、旧中继自动启动和禁用沙箱均未纳入交付。完整原生客户端已由发布流程返回 `DESKTOP_DEV_VERDICT=ready`（真实模式、region cn、隔离profile vibelink），最终运行验收由部署方记录。
 

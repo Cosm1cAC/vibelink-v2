@@ -7,7 +7,7 @@ const http = require('node:http');
 const { once } = require('node:events');
 const { startEmbeddedRendererAndVibeLinkServer } = require('./embeddedServer.cjs');
 
-test('local developer Hub token is read from edition directory and never returned to renderer', async (t) => {
+test('only Main-injected verified credentials reach the Hub; browser HTTP cannot read dev credentials', async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vibelink-desktop-test-'));
   const previous = { APPDATA: process.env.APPDATA, LOCALAPPDATA: process.env.LOCALAPPDATA, VIBELINK_HUB: process.env.VIBELINK_HUB, VIBELINK_TOKEN: process.env.VIBELINK_TOKEN };
   process.env.APPDATA = path.join(dir, 'roaming');
@@ -16,7 +16,7 @@ test('local developer Hub token is read from edition directory and never returne
   const tokenDir = path.join(dir, 'vibelink-mesh', 'data', 'dev');
   fs.mkdirSync(tokenDir, { recursive: true });
   const secret = 'temporary-test-token-never-serialize';
-  fs.writeFileSync(path.join(tokenDir, 'token.txt'), secret);
+  fs.writeFileSync(path.join(tokenDir, 'token.txt'), 'fixture-owner-token-must-not-be-read');
   const received = [];
   const hub = http.createServer((req, res) => {
     received.push(req.headers.authorization);
@@ -25,7 +25,10 @@ test('local developer Hub token is read from edition directory and never returne
   }).listen(0, '127.0.0.1');
   await once(hub, 'listening');
   process.env.VIBELINK_HUB = `http://127.0.0.1:${hub.address().port}`;
-  const server = startEmbeddedRendererAndVibeLinkServer({ rendererRoot: dir, pdfjsRoot: dir, port: 0 });
+  const ipcSecret = 'fixture-private-main-proof';
+  const server = startEmbeddedRendererAndVibeLinkServer({ rendererRoot: dir, pdfjsRoot: dir, port: 0, ipcSecret,
+    getHubSettings: async () => ({ hub: process.env.VIBELINK_HUB, token: secret, localManagement: true }),
+  });
   await once(server, 'listening');
   t.after(async () => {
     await Promise.all([new Promise(r => server.close(r)), new Promise(r => hub.close(r))]);
@@ -33,7 +36,7 @@ test('local developer Hub token is read from edition directory and never returne
     fs.rmSync(dir, { recursive: true, force: true });
   });
   const text = await new Promise((resolve, reject) => {
-    http.get({ host: '127.0.0.1', port: server.address().port, path: '/api/vibelink/state', headers: { host: '127.0.0.1:0' } }, res => {
+    http.get({ host: '127.0.0.1', port: server.address().port, path: '/api/vibelink/state', headers: { host: '127.0.0.1:0', 'x-vibelink-ipc': ipcSecret } }, res => {
       let body = ''; res.on('data', c => { body += c; }); res.on('end', () => resolve(body));
     }).on('error', reject);
   });
@@ -50,8 +53,15 @@ test('local developer Hub token is read from edition directory and never returne
   });
   assert.equal(forbidden, 403);
   assert.equal(received.length, 4, 'untrusted page cannot reach the authenticated Hub');
+  const noProof = await new Promise((resolve, reject) => {
+    http.get({ host: '127.0.0.1', port: server.address().port, path: '/api/vibelink/state', headers: { host: '127.0.0.1:0' } }, res => {
+      res.resume(); res.on('end', () => resolve(res.statusCode));
+    }).on('error', reject);
+  });
+  assert.equal(noProof, 401);
+  assert.equal(received.length, 4, 'browser HTTP cannot reach the Hub without the Main-only proof');
   const save = await new Promise((resolve, reject) => {
-    const request = http.request({ host: '127.0.0.1', port: server.address().port, path: '/api/vibelink/action', method: 'POST', headers: { host: '127.0.0.1:0', 'content-type': 'application/json' } }, res => {
+    const request = http.request({ host: '127.0.0.1', port: server.address().port, path: '/api/vibelink/action', method: 'POST', headers: { host: '127.0.0.1:0', 'x-vibelink-ipc': ipcSecret, 'content-type': 'application/json' } }, res => {
       res.resume(); res.on('end', () => resolve(res.statusCode));
     }).on('error', reject);
     request.end(JSON.stringify({ action: 'save-settings', token: 'fixture-not-a-real-token', hub: 'http://127.0.0.1:18995' }));
