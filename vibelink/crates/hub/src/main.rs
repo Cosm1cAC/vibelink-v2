@@ -35,7 +35,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-const VERSION: &str = "0.4.0";
+const VERSION: &str = "0.4.1";
 const OFFLINE_AFTER_MS: u64 = 20_000;
 const EVENT_CAP: usize = 500;
 
@@ -1293,9 +1293,14 @@ async fn bot_group_messages_get(
     Json(json!({ "messages": messages }))
 }
 
-async fn group_work_list(State(app):State<Shared>,Path(id):Path<String>,Query(q):Query<HashMap<String,String>>)->Json<Value> {
+async fn group_work_list(State(app):State<Shared>,Path(id):Path<String>,Query(q):Query<HashMap<String,String>>,axum::Extension(ctx):axum::Extension<auth::AuthCtx>)->Json<Value> {
     let mut rows=app.work.search(&id,q.get("q").map(String::as_str).unwrap_or(""),q.get("archived").is_some_and(|v|v=="true"));
-    for row in &mut rows {row["billing"]=app.usage.work_summary(row["id"].as_str().unwrap_or(""));}
+    let user=model_gateway::identity(&ctx).user_id;
+    for row in &mut rows {
+        let id=row["id"].as_str().unwrap_or("").to_string();
+        row["billing"]=app.usage.work_summary(&id);
+        row["canManage"]=json!(app.work.can_manage(&id,&user));
+    }
     Json(json!({"work":rows}))
 }
 async fn group_work_submit(State(app):State<Shared>,Path(id):Path<String>,axum::Extension(ctx):axum::Extension<auth::AuthCtx>,Json(body):Json<Value>)->Response {

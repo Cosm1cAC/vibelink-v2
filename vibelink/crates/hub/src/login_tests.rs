@@ -482,6 +482,11 @@ async fn a_phone_task_can_be_followed_up_and_cancelled_by_its_qr_authenticated_d
         .poll(&app, id, start["pollSecret"].as_str().unwrap(), false)
         .unwrap();
     let desktop = response["token"].as_str().unwrap();
+    let (_,owned)=request(app.clone(),desktop,Method::GET,"/api/bot-groups/cross-device/work",Value::Null).await;
+    assert_eq!(owned["work"][0]["canManage"],true);
+    let (_,other)=app.auth.issue("Different account",Scope::Client);
+    let (_,readonly)=request(app.clone(),&other,Method::GET,"/api/bot-groups/cross-device/work",Value::Null).await;
+    assert_eq!(readonly["work"][0]["canManage"],false);
     let (status,followup)=request(app.clone(),desktop,Method::POST,"/api/bot-groups/cross-device/work",json!({"requestId":"desktop-request","text":"Also inspect error handling","replyToWorkId":work})).await;
     assert_eq!(status, StatusCode::ACCEPTED, "{followup}");
     assert_eq!(followup["work"]["id"], work);

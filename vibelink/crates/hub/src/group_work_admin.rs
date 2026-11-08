@@ -1,5 +1,8 @@
 use super::*;
 impl WorkStore {
+    pub fn can_manage(&self,id:&str,user:&str)->bool {
+        self.inner.lock().unwrap().work.iter().any(|w|w.id==id&&w.owner.user_id==user)
+    }
     pub fn session_work(&self, sid: &str) -> Option<String> {
         self.inner
             .lock()
