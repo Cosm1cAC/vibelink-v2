@@ -13,6 +13,10 @@ let service: HubAuthService | null = null;
 let initializePromise: Promise<HubAuthResult> | null = null;
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
 let expiryTimer: ReturnType<typeof setTimeout> | null = null;
+let committedHubOwner: string | null = null;
+const hubChangeListeners = new Set<() => void>();
+export function currentHubCommittedOwner(): string | null { return committedHubOwner; }
+export function onHubAuthChanged(listener: () => void): () => void { hubChangeListeners.add(listener); return () => { hubChangeListeners.delete(listener); }; }
 
 function readLocalAdminToken(): string | null {
   const root = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
@@ -39,7 +43,9 @@ function instance(): HubAuthService {
     onStateChanged: () => { publish({ success: true, data: instance().getSnapshot() }); },
     commitOwner: async (owner) => {
       setVerifiedHubIdentity(null);
+      committedHubOwner = null;
       await authManager.commitHubOwner(owner);
+      committedHubOwner = owner;
     },
     readLocalAdmin: async () => readLocalAdminToken(),
     request: async (origin, endpoint, request) => {
@@ -61,6 +67,7 @@ function instance(): HubAuthService {
 function publish(result: HubAuthResult): HubAuthResult {
   const credential = instance().getCredential();
   setVerifiedHubIdentity(credential?.session ?? null);
+  for (const listener of hubChangeListeners) listener();
   // A delayed caller never publishes the snapshot captured before logout/B login.
   if (result.success) result = { success: true, data: instance().getSnapshot() };
   if (expiryTimer) clearTimeout(expiryTimer);

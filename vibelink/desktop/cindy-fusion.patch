@@ -152,17 +152,18 @@ index 8ed676ef..b3b92610 100644
    mode: Extract<AppSessionMode, 'signed-out' | 'local'>,
    reason: string,
 diff --git a/apps/desktop/src/main/bootstrap-electron.ts b/apps/desktop/src/main/bootstrap-electron.ts
-index b842bf8d..c1510407 100644
+index b842bf8d..cb815180 100644
 --- a/apps/desktop/src/main/bootstrap-electron.ts
 +++ b/apps/desktop/src/main/bootstrap-electron.ts
-@@ -1,4 +1,6 @@
+@@ -1,4 +1,7 @@
  import { deliverRoutineResult, listRoutineDeliveryTargets } from './routines/delivery.js';
 +import { currentHubCredential, currentHubControlSettings, initializeHubAppAuth, invokeHubAuth, isVibeLinkMode } from './vibelink/authRuntime.js';
++import { invokeHubWork } from './vibelink/workRuntime.js';
 +import { randomUUID as vibelinkRandomUUID } from 'node:crypto';
  import { flushPluginUsageLifecycle } from './plugin-usage/current.js';
  import { registerAccessibilitySupportIpc } from './accessibility-support-ipc.js';
  import { mcpAppSchemePrivilege, registerMcpAppProtocol } from './mcp-apps/sandboxProtocol.js';
-@@ -97,6 +99,7 @@ import {
+@@ -97,6 +100,7 @@ import {
    WINDOW_BACKDROP_MATERIAL_CHANGED_CHANNEL,
  } from '../shared/windowBackdrop.js';
  import { isAllowedBillingMailtoRequest } from '../shared/billing.js';
@@ -170,7 +171,7 @@ index b842bf8d..c1510407 100644
  import path from 'node:path';
  import fs from 'node:fs';
  import { textFilePreviewResult, TEXT_PREVIEW_LIMIT_MB } from './text-file-preview';
-@@ -631,6 +634,7 @@ import {
+@@ -631,6 +635,7 @@ import {
    handleDeviceLinkSystemResume,
    getControllerName,
    revokeController,
@@ -178,12 +179,16 @@ index b842bf8d..c1510407 100644
  } from './device-link';
  import { closeSharedTasksBeforeLogout } from './device-link/sharedTaskRuntime.js';
  import { closeSharedTasksBeforeAccountHandover } from './device-link/sharedTaskAccountBoundary.js';
-@@ -4564,7 +4568,32 @@ function parseOptionalDeviceLinkDeviceId(value: unknown): string | null | undefi
+@@ -4564,7 +4569,36 @@ function parseOptionalDeviceLinkDeviceId(value: unknown): string | null | undefi
    return trimmed;
  }
  
 +const vibelinkEmbeddedSecret = vibelinkRandomUUID();
  const registerIpcHandlers = () => {
++  ipcMain.handle('vibelink:work', async (event, input: unknown) => {
++    assertTrustedAppRendererEvent(event);
++    return invokeHubWork(input);
++  });
 +  ipcMain.handle('vibelink:auth', async (event, input: unknown) => {
 +    assertTrustedAppRendererEvent(event);
 +    return invokeHubAuth(input);
@@ -211,7 +216,7 @@ index b842bf8d..c1510407 100644
    ipcMain.handle('database-size-warning:get-settings', (event) => {
      assertTrustedAppRendererEvent(event);
      const state = readDatabaseSizeWarningSettingsState();
-@@ -4868,7 +4897,7 @@ const registerIpcHandlers = () => {
+@@ -4868,7 +4902,7 @@ const registerIpcHandlers = () => {
    });
  
    ipcMain.on('get-app-display-version-info', (event) => {
@@ -220,7 +225,7 @@ index b842bf8d..c1510407 100644
    });
  
    // 开屏卡住诊断:renderer 的 r: 日志不进上传,这条快照由 main 校验后写进 renderer-guard。
-@@ -6186,7 +6215,14 @@ const registerIpcHandlers = () => {
+@@ -6186,7 +6220,14 @@ const registerIpcHandlers = () => {
  
    // ── Auth IPC handlers (delegated to authManager) ──
  
@@ -236,7 +241,7 @@ index b842bf8d..c1510407 100644
      try {
        let pendingCompletion: Promise<authManager.AuthState> | null = null;
        const state = await authManager
-@@ -6236,10 +6272,14 @@ const registerIpcHandlers = () => {
+@@ -6236,10 +6277,14 @@ const registerIpcHandlers = () => {
      }
    });
  
@@ -252,7 +257,7 @@ index b842bf8d..c1510407 100644
      // Login can be the first real credential operation to observe an unavailable
      // backend. Reuse the bounded, idle-only recovery after the action settles.
      return authManager.dispatchLoginAction(action).finally(() => authCredentialRecovery.request());
-@@ -6252,17 +6292,21 @@ const registerIpcHandlers = () => {
+@@ -6252,17 +6297,21 @@ const registerIpcHandlers = () => {
      return authManager.getLoginCaptchaChallengeUrl();
    });
  
@@ -275,7 +280,7 @@ index b842bf8d..c1510407 100644
      try {
        return await authManager.syncSavedAccounts();
      } catch (error) {
-@@ -6272,6 +6316,7 @@ const registerIpcHandlers = () => {
+@@ -6272,6 +6321,7 @@ const registerIpcHandlers = () => {
  
    ipcMain.handle('auth:accounts:switch', async (event, accountKey: unknown) => {
      assertTrustedAppRendererEvent(event);
@@ -283,7 +288,7 @@ index b842bf8d..c1510407 100644
      try {
        await authManager.switchSavedAccount(accountKey);
      } catch (error) {
-@@ -6281,6 +6326,7 @@ const registerIpcHandlers = () => {
+@@ -6281,6 +6331,7 @@ const registerIpcHandlers = () => {
  
    ipcMain.handle('auth:accounts:begin-add', async (event) => {
      assertTrustedAppRendererEvent(event);
@@ -291,7 +296,7 @@ index b842bf8d..c1510407 100644
      try {
        return await authManager.beginAddAccountLogin();
      } catch (error) {
-@@ -6293,7 +6339,9 @@ const registerIpcHandlers = () => {
+@@ -6293,7 +6344,9 @@ const registerIpcHandlers = () => {
      authManager.cancelAddAccountLogin();
    });
  
@@ -302,7 +307,7 @@ index b842bf8d..c1510407 100644
      if (getActiveAppSession().mode === 'local') {
        return authManager.getAuthState();
      }
-@@ -6301,7 +6349,9 @@ const registerIpcHandlers = () => {
+@@ -6301,7 +6354,9 @@ const registerIpcHandlers = () => {
      return authManager.enterLocalMode();
    });
  
@@ -313,7 +318,7 @@ index b842bf8d..c1510407 100644
      if (getActiveAppSession().mode !== 'local') {
        throwIpcError('PRECONDITION_FAILED', 'Local mode is not active.');
      }
-@@ -6309,6 +6359,7 @@ const registerIpcHandlers = () => {
+@@ -6309,6 +6364,7 @@ const registerIpcHandlers = () => {
    });
  
    ipcMain.handle('auth:refresh', async () => {
@@ -321,7 +326,7 @@ index b842bf8d..c1510407 100644
      return authManager.refresh();
    });
  
-@@ -9463,6 +9514,27 @@ app.on('ready', async () => {
+@@ -9463,6 +9519,27 @@ app.on('ready', async () => {
    registerCindyMediaProtocolHandler();
    registerMcpAppProtocol();
  
@@ -349,7 +354,7 @@ index b842bf8d..c1510407 100644
    // Inject a Content-Security-Policy response header onto the app's own
    // top-level document (defaultSession mainFrame) before any window loads.
    // Blocks an XSS from escalating to preload privileges via inline / eval
-@@ -10148,6 +10220,9 @@ app.on('ready', async () => {
+@@ -10148,6 +10225,9 @@ app.on('ready', async () => {
    registerProviderShareIpc();
    // 自建中转服务(docs/self-hosted-relay-plan.md):本机中转与加入别的中转。
    registerSelfHostedRelayIpc();
@@ -582,7 +587,7 @@ index 41f002f0..5ca13c3e 100644
  
    it('accumulates output_text deltas, parses JSON, and reports usage', async () => {
 diff --git a/apps/desktop/src/preload/preload.ts b/apps/desktop/src/preload/preload.ts
-index 3e3b5507..320027a9 100644
+index 3e3b5507..a3f8cbc8 100644
 --- a/apps/desktop/src/preload/preload.ts
 +++ b/apps/desktop/src/preload/preload.ts
 @@ -1093,6 +1093,7 @@ interface ComputerDriverUpdateCheck {
@@ -593,13 +598,14 @@ index 3e3b5507..320027a9 100644
  };
  
  // 运行期端点清单(main 在 createWindow 前解析完成;首帧同步可用)。
-@@ -1114,6 +1115,17 @@ const readMicrophonePermissionSnapshot = createMicrophonePermissionSnapshot();
+@@ -1114,6 +1115,18 @@ const readMicrophonePermissionSnapshot = createMicrophonePermissionSnapshot();
  const voiceInputDataSnapshot = createVoiceInputDataSnapshot();
  
  contextBridge.exposeInMainWorld('electronAPI', {
 +  vibelink: {
 +    enabled: appDisplayVersionInfo.vibelinkEnabled === true,
 +    auth: (input: import('../shared/vibelinkAuth').HubAuthInput) => ipcRenderer.invoke('vibelink:auth', input),
++    work: (input: import('../shared/vibelinkWork').HubWorkInput) => ipcRenderer.invoke('vibelink:work', input),
 +    onAuthState: (listener: (result: import('../shared/vibelinkAuth').HubAuthResult) => void) => {
 +      const receive = (_event: Electron.IpcRendererEvent, result: import('../shared/vibelinkAuth').HubAuthResult) => listener(result);
 +      ipcRenderer.on('vibelink:auth-state', receive);
@@ -611,7 +617,7 @@ index 3e3b5507..320027a9 100644
    localAgent: {
      onConfirmation: (listener: (request: import('../shared/localAgent').LocalAgentConfirmation) => void): (() => void) => {
        const receive = (_event: Electron.IpcRendererEvent, request: import('../shared/localAgent').LocalAgentConfirmation) => listener(request);
-@@ -2326,7 +2338,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
+@@ -2326,7 +2339,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
      ipcRenderer.sendSync('auth:has-persisted-session-hint-sync') === true,
    authInitialize: (): Promise<{
      user: unknown;
@@ -847,10 +853,18 @@ index 9de4b99f..94b89a32 100644
  
  export function canAccessUsageSettings(identity: UsageSettingsIdentity): boolean {
 diff --git a/apps/desktop/src/renderer/components/sidebar/SidebarTopNav.tsx b/apps/desktop/src/renderer/components/sidebar/SidebarTopNav.tsx
-index ec5535b1..4b2ccb52 100644
+index ec5535b1..e099652e 100644
 --- a/apps/desktop/src/renderer/components/sidebar/SidebarTopNav.tsx
 +++ b/apps/desktop/src/renderer/components/sidebar/SidebarTopNav.tsx
-@@ -597,8 +597,7 @@ export function SidebarTopNav({
+@@ -27,6 +27,7 @@
+ import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
+ import {
+   CirclePlus,
++  Workflow,
+   Ellipsis,
+   SlidersHorizontal,
+   type LucideIcon,
+@@ -597,8 +598,7 @@ export function SidebarTopNav({
        )}
      >
        {showPinned && (
@@ -860,10 +874,14 @@ index ec5535b1..4b2ccb52 100644
          <button onClick={handleNew} className={ROW_CLASS} aria-label={t('ccAgent.layout.new')}>
            <CirclePlus
              size={15}
-@@ -607,6 +606,11 @@ export function SidebarTopNav({
+@@ -607,6 +607,15 @@ export function SidebarTopNav({
            />
            <span className="leading-none">{t('ccAgent.layout.new')}</span>
          </button>
++        {window.electronAPI?.vibelink?.enabled && <button onClick={() => navigate('/hub')} className={cn(ROW_CLASS, location.pathname === '/hub' && ROW_ACTIVE_CLASS)} aria-label={t('vibelinkWork.title')}>
++          <Workflow size={15} strokeWidth={1.8} className="shrink-0 text-[var(--sidebar-nav-text)]" />
++          <span className="leading-none">{t('vibelinkWork.title')}</span>
++        </button>}
 +        <button onClick={() => navigate('/vibelink')} className={cn(ROW_CLASS, location.pathname === '/vibelink' && ROW_ACTIVE_CLASS)} aria-label="设备与连接">
 +          <span className="shrink-0 inline-block rounded-full" style={{ width: 9, height: 9, background: '#34D399', marginLeft: 3, marginRight: 3 }} />
 +          <span className="leading-none">设备与连接</span>
@@ -999,10 +1017,10 @@ index 8f777768..c3e32412 100644
        try {
          await exitLocalMode();
 diff --git a/apps/desktop/src/renderer/i18n/locales/de/common.json b/apps/desktop/src/renderer/i18n/locales/de/common.json
-index c258b6d1..90a48282 100644
+index c258b6d1..5a928fe9 100644
 --- a/apps/desktop/src/renderer/i18n/locales/de/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/de/common.json
-@@ -18951,5 +18951,42 @@
+@@ -18951,5 +18951,97 @@
      "rendered": "Dokument anzeigen",
      "wrap": "Zeilenumbruch",
      "lineNumbers": "Zeilennummern"
@@ -1043,13 +1061,68 @@ index c258b6d1..90a48282 100644
 +    "errorExpired": "Deine Sitzung ist abgelaufen. Melde dich erneut an.",
 +    "errorVault": "Sicherer Speicher nicht verfügbar. Entsperre dein System und versuche es erneut.",
 +    "errorLogin": "Die Anmeldung ist nicht abgeschlossen. Versuche es erneut."
++  },
++  "vibelinkWork": {
++    "title": "Hub-Arbeitsbereich",
++    "createGroup": "Gruppe erstellen",
++    "refresh": "Aktualisieren",
++    "groupName": "Gruppenname",
++    "members": "Bots auswählen",
++    "emptyGroups": "Erstellen Sie eine Gruppe und wählen Sie Bots für die Zusammenarbeit.",
++    "group": "Gruppe",
++    "search": "Aufgaben suchen",
++    "archived": "Archivierte einbeziehen",
++    "emptyWork": "Noch keine Aufgaben. Beschreiben Sie unten eine Aufgabe.",
++    "selectWork": "Wählen Sie eine Aufgabe für Fortschritt und Ergebnisse.",
++    "unread": "Ungelesenes Ergebnis",
++    "readonly": "Nur Lesen. Verwaltung erfordert den Aufgabeninhaber und einen kompatiblen Hub.",
++    "cancel": "Abbrechen",
++    "retry": "Erneut versuchen",
++    "archive": "Archivieren",
++    "export": "Exportieren",
++    "follow": "Rückfrage",
++    "steps": "Schritte",
++    "session": "Agent-Sitzung",
++    "usage": "Nutzung",
++    "newWork": "Neue Aufgabe",
++    "send": "Senden",
++    "pending": "Lokal gespeichert, Zustellung ausstehend",
++    "offline": "Hub nicht erreichbar. Gespeicherte Übermittlungen behalten ihre Anfrage-ID.",
++    "unknownCancellation": "Weitere Zuweisungen wurden gestoppt. Das Ende des laufenden Prozesses ist nicht bestätigt.",
++    "status": {
++      "queued": "Warteschlange",
++      "running": "Läuft",
++      "needs_input": "Eingabe nötig",
++      "completed": "Abgeschlossen",
++      "failed": "Fehlgeschlagen",
++      "cancelled": "Abgebrochen",
++      "cancelled_unknown": "Stopp unbestätigt",
++      "done": "Fertig",
++      "waiting": "Wartet",
++      "pending": "Ausstehend"
++    },
++    "requests": "Anfragen",
++    "totalTokens": "Gemessene Tokens",
++    "estimatedTokens": "Geschätzte Tokens",
++    "usageMissingRequests": "Anfragen ohne Nutzungsdaten",
++    "subscriptionUnreported": "Die Abonnement-CLI meldet keine Nutzungsdaten.",
++    "mandate": "Aufgabenberechtigung",
++    "authorized": "Autorisiert",
++    "revoked": "Widerrufen",
++    "canWrite": "Schreiben erlaubt",
++    "readOnly": "Nur Lesen",
++    "budget": "Budget",
++    "messages": "Gruppengespräch",
++    "localRecords": "Lokale Sendeprotokolle",
++    "dismissFailed": "Eintrag entfernen",
++    "localHistory": "Lokale Gespräche"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/en/common.json b/apps/desktop/src/renderer/i18n/locales/en/common.json
-index bc45dcdd..806d2b37 100644
+index bc45dcdd..eb77ddd2 100644
 --- a/apps/desktop/src/renderer/i18n/locales/en/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/en/common.json
-@@ -18951,5 +18951,42 @@
+@@ -18951,5 +18951,97 @@
      "rendered": "View document",
      "wrap": "Wrap lines",
      "lineNumbers": "Line numbers"
@@ -1090,13 +1163,68 @@ index bc45dcdd..806d2b37 100644
 +    "errorExpired": "Your session expired. Sign in again.",
 +    "errorVault": "Secure storage is unavailable. Unlock your system and try again.",
 +    "errorLogin": "Sign-in is not complete. Try again."
++  },
++  "vibelinkWork": {
++    "title": "Hub workspace",
++    "createGroup": "Create group",
++    "refresh": "Refresh",
++    "groupName": "Group name",
++    "members": "Choose Bots",
++    "emptyGroups": "Create a group and select Bots to start working together.",
++    "group": "Group",
++    "search": "Search work",
++    "archived": "Include archived",
++    "emptyWork": "No work yet. Describe a task below.",
++    "selectWork": "Select work to see progress and results.",
++    "unread": "Unread result",
++    "readonly": "Read only. Management requires the task owner and a compatible Hub.",
++    "cancel": "Cancel",
++    "retry": "Retry",
++    "archive": "Archive",
++    "export": "Export",
++    "follow": "Follow up",
++    "steps": "Steps",
++    "session": "Agent session",
++    "usage": "Usage",
++    "newWork": "New work",
++    "send": "Send",
++    "pending": "Saved locally, pending delivery",
++    "offline": "Hub is unavailable. Saved submissions retain their original request ID.",
++    "unknownCancellation": "Further dispatch has stopped. The running process has not been confirmed stopped.",
++    "status": {
++      "queued": "Queued",
++      "running": "Running",
++      "needs_input": "Needs input",
++      "completed": "Completed",
++      "failed": "Failed",
++      "cancelled": "Cancelled",
++      "cancelled_unknown": "Stop unconfirmed",
++      "done": "Done",
++      "waiting": "Waiting",
++      "pending": "Pending"
++    },
++    "requests": "Requests",
++    "totalTokens": "Metered tokens",
++    "estimatedTokens": "Estimated tokens",
++    "usageMissingRequests": "Requests without usage",
++    "subscriptionUnreported": "Subscription usage is not reported by the CLI.",
++    "mandate": "Authorization",
++    "authorized": "Authorized",
++    "revoked": "Revoked",
++    "canWrite": "Can write",
++    "readOnly": "Read only",
++    "budget": "Budget",
++    "messages": "Group conversation",
++    "localRecords": "Local delivery records",
++    "dismissFailed": "Remove record",
++    "localHistory": "Local conversations"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/es/common.json b/apps/desktop/src/renderer/i18n/locales/es/common.json
-index d4d5c25a..59995538 100644
+index d4d5c25a..92e4be9a 100644
 --- a/apps/desktop/src/renderer/i18n/locales/es/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/es/common.json
-@@ -19122,5 +19122,42 @@
+@@ -19122,5 +19122,97 @@
      "rendered": "Ver documento",
      "wrap": "Ajustar líneas",
      "lineNumbers": "Números de línea"
@@ -1137,13 +1265,68 @@ index d4d5c25a..59995538 100644
 +    "errorExpired": "Tu sesión ha caducado. Inicia sesión de nuevo.",
 +    "errorVault": "El almacenamiento seguro no está disponible. Desbloquea el sistema y vuelve a intentarlo.",
 +    "errorLogin": "No se ha completado el inicio de sesión. Inténtalo de nuevo."
++  },
++  "vibelinkWork": {
++    "title": "Espacio Hub",
++    "createGroup": "Crear grupo",
++    "refresh": "Actualizar",
++    "groupName": "Nombre del grupo",
++    "members": "Elegir Bots",
++    "emptyGroups": "Cree un grupo y elija Bots para colaborar.",
++    "group": "Grupo",
++    "search": "Buscar tareas",
++    "archived": "Incluir archivadas",
++    "emptyWork": "No hay tareas. Describa el trabajo abajo.",
++    "selectWork": "Seleccione una tarea para ver su progreso y resultados.",
++    "unread": "Resultado sin leer",
++    "readonly": "Solo lectura. La gestión requiere al propietario de la tarea y un Hub compatible.",
++    "cancel": "Cancelar",
++    "retry": "Reintentar",
++    "archive": "Archivar",
++    "export": "Exportar",
++    "follow": "Seguimiento",
++    "steps": "Pasos",
++    "session": "Sesión Agent",
++    "usage": "Uso",
++    "newWork": "Nueva tarea",
++    "send": "Enviar",
++    "pending": "Guardado localmente, pendiente de envío",
++    "offline": "Hub no disponible. Los envíos guardados conservan su ID de solicitud.",
++    "unknownCancellation": "Se detuvieron las nuevas asignaciones. No se ha confirmado la detención del proceso en curso.",
++    "status": {
++      "queued": "En cola",
++      "running": "En curso",
++      "needs_input": "Necesita información",
++      "completed": "Completada",
++      "failed": "Fallida",
++      "cancelled": "Cancelada",
++      "cancelled_unknown": "Parada sin confirmar",
++      "done": "Hecho",
++      "waiting": "Esperando",
++      "pending": "Pendiente"
++    },
++    "requests": "Solicitudes",
++    "totalTokens": "Tokens medidos",
++    "estimatedTokens": "Tokens estimados",
++    "usageMissingRequests": "Solicitudes sin datos",
++    "subscriptionUnreported": "El CLI de suscripción no informa del uso.",
++    "mandate": "Autorización",
++    "authorized": "Autorizada",
++    "revoked": "Revocada",
++    "canWrite": "Escritura permitida",
++    "readOnly": "Solo lectura",
++    "budget": "Presupuesto",
++    "messages": "Conversación del grupo",
++    "localRecords": "Envíos locales",
++    "dismissFailed": "Quitar registro",
++    "localHistory": "Conversaciones locales"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/fr/common.json b/apps/desktop/src/renderer/i18n/locales/fr/common.json
-index 67f0538c..0e5d56c8 100644
+index 67f0538c..4e4cd2be 100644
 --- a/apps/desktop/src/renderer/i18n/locales/fr/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/fr/common.json
-@@ -19122,5 +19122,42 @@
+@@ -19122,5 +19122,97 @@
      "rendered": "Afficher le document",
      "wrap": "Retour à la ligne",
      "lineNumbers": "Numéros de ligne"
@@ -1184,13 +1367,68 @@ index 67f0538c..0e5d56c8 100644
 +    "errorExpired": "Votre session a expiré. Reconnectez-vous.",
 +    "errorVault": "Stockage sécurisé indisponible. Déverrouillez votre système et réessayez.",
 +    "errorLogin": "La connexion n’est pas terminée. Réessayez."
++  },
++  "vibelinkWork": {
++    "title": "Espace Hub",
++    "createGroup": "Créer un groupe",
++    "refresh": "Actualiser",
++    "groupName": "Nom du groupe",
++    "members": "Choisir les Bots",
++    "emptyGroups": "Créez un groupe et choisissez des Bots pour collaborer.",
++    "group": "Groupe",
++    "search": "Rechercher une tâche",
++    "archived": "Inclure les archives",
++    "emptyWork": "Aucune tâche. Décrivez le travail ci-dessous.",
++    "selectWork": "Sélectionnez une tâche pour voir son avancement et ses résultats.",
++    "unread": "Résultat non lu",
++    "readonly": "Lecture seule. La gestion exige le propriétaire de la tâche et un Hub compatible.",
++    "cancel": "Annuler",
++    "retry": "Réessayer",
++    "archive": "Archiver",
++    "export": "Exporter",
++    "follow": "Question de suivi",
++    "steps": "Étapes",
++    "session": "Session Agent",
++    "usage": "Utilisation",
++    "newWork": "Nouvelle tâche",
++    "send": "Envoyer",
++    "pending": "Enregistré localement, en attente d’envoi",
++    "offline": "Hub indisponible. Les envois enregistrés conservent leur identifiant de requête.",
++    "unknownCancellation": "Les nouvelles affectations sont arrêtées. L’arrêt du processus en cours n’est pas confirmé.",
++    "status": {
++      "queued": "En file",
++      "running": "En cours",
++      "needs_input": "Précisions requises",
++      "completed": "Terminé",
++      "failed": "Échec",
++      "cancelled": "Annulé",
++      "cancelled_unknown": "Arrêt non confirmé",
++      "done": "Fait",
++      "waiting": "En attente",
++      "pending": "En attente"
++    },
++    "requests": "Requêtes",
++    "totalTokens": "Tokens mesurés",
++    "estimatedTokens": "Tokens estimés",
++    "usageMissingRequests": "Requêtes sans données",
++    "subscriptionUnreported": "Le CLI d’abonnement ne fournit pas l’utilisation.",
++    "mandate": "Autorisation",
++    "authorized": "Autorisé",
++    "revoked": "Révoqué",
++    "canWrite": "Écriture autorisée",
++    "readOnly": "Lecture seule",
++    "budget": "Budget",
++    "messages": "Conversation du groupe",
++    "localRecords": "Envois locaux",
++    "dismissFailed": "Retirer l’entrée",
++    "localHistory": "Conversations locales"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/ja/common.json b/apps/desktop/src/renderer/i18n/locales/ja/common.json
-index e3383953..372b3b0f 100644
+index e3383953..df7a8fbe 100644
 --- a/apps/desktop/src/renderer/i18n/locales/ja/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/ja/common.json
-@@ -18879,5 +18879,42 @@
+@@ -18879,5 +18879,97 @@
      "rendered": "文書を表示",
      "wrap": "行の折り返し",
      "lineNumbers": "行番号"
@@ -1231,13 +1469,68 @@ index e3383953..372b3b0f 100644
 +    "errorExpired": "ログインの有効期限が切れました。再度ログインしてください。",
 +    "errorVault": "安全なストレージを利用できません。システムのロックを解除して再試行してください。",
 +    "errorLogin": "ログインが完了していません。再試行してください。"
++  },
++  "vibelinkWork": {
++    "title": "Hub ワークスペース",
++    "createGroup": "グループを作成",
++    "refresh": "更新",
++    "groupName": "グループ名",
++    "members": "Bot を選択",
++    "emptyGroups": "グループを作成して Bot を選び、共同作業を始めます。",
++    "group": "グループ",
++    "search": "タスクを検索",
++    "archived": "アーカイブを含む",
++    "emptyWork": "タスクはありません。下に作業内容を入力してください。",
++    "selectWork": "タスクを選択して進捗と成果を確認します。",
++    "unread": "未読の成果",
++    "readonly": "閲覧のみ。管理にはタスク所有者と対応する Hub が必要です。",
++    "cancel": "キャンセル",
++    "retry": "再試行",
++    "archive": "アーカイブ",
++    "export": "エクスポート",
++    "follow": "追加質問",
++    "steps": "実行手順",
++    "session": "Agent セッション",
++    "usage": "使用量",
++    "newWork": "新しいタスク",
++    "send": "送信",
++    "pending": "端末に保存済み、送信待ち",
++    "offline": "Hub に接続できません。保存済みの送信は元のリクエスト ID を維持します。",
++    "unknownCancellation": "以降の割り当ては停止しました。実行中のプロセスの停止は確認されていません。",
++    "status": {
++      "queued": "待機中",
++      "running": "実行中",
++      "needs_input": "入力待ち",
++      "completed": "完了",
++      "failed": "失敗",
++      "cancelled": "キャンセル済み",
++      "cancelled_unknown": "停止未確認",
++      "done": "完了",
++      "waiting": "待機",
++      "pending": "保留"
++    },
++    "requests": "リクエスト数",
++    "totalTokens": "計測済みトークン",
++    "estimatedTokens": "推定トークン",
++    "usageMissingRequests": "使用量未報告のリクエスト",
++    "subscriptionUnreported": "サブスクリプションの CLI は使用量を報告しません。",
++    "mandate": "タスクの権限",
++    "authorized": "承認済み",
++    "revoked": "取り消し済み",
++    "canWrite": "書き込み可",
++    "readOnly": "読み取り専用",
++    "budget": "予算",
++    "messages": "グループの会話",
++    "localRecords": "この端末の送信記録",
++    "dismissFailed": "記録を削除",
++    "localHistory": "この端末の会話"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/ko/common.json b/apps/desktop/src/renderer/i18n/locales/ko/common.json
-index 30577f6d..12e5ea23 100644
+index 30577f6d..dd335438 100644
 --- a/apps/desktop/src/renderer/i18n/locales/ko/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/ko/common.json
-@@ -18879,5 +18879,42 @@
+@@ -18879,5 +18879,97 @@
      "rendered": "문서 보기",
      "wrap": "자동 줄 바꿈",
      "lineNumbers": "줄 번호"
@@ -1278,13 +1571,68 @@ index 30577f6d..12e5ea23 100644
 +    "errorExpired": "로그인이 만료되었습니다. 다시 로그인하세요.",
 +    "errorVault": "보안 저장소를 사용할 수 없습니다. 시스템 잠금을 해제한 후 다시 시도하세요.",
 +    "errorLogin": "로그인이 완료되지 않았습니다. 다시 시도하세요."
++  },
++  "vibelinkWork": {
++    "title": "Hub 작업 공간",
++    "createGroup": "그룹 만들기",
++    "refresh": "새로 고침",
++    "groupName": "그룹 이름",
++    "members": "Bot 선택",
++    "emptyGroups": "그룹을 만들고 Bot을 선택하여 협업을 시작하세요.",
++    "group": "그룹",
++    "search": "작업 검색",
++    "archived": "보관 항목 포함",
++    "emptyWork": "작업이 없습니다. 아래에 작업을 입력하세요.",
++    "selectWork": "작업을 선택하여 진행 상황과 결과를 확인하세요.",
++    "unread": "읽지 않은 결과",
++    "readonly": "읽기 전용입니다. 작업 소유자와 호환되는 Hub가 필요합니다.",
++    "cancel": "취소",
++    "retry": "다시 시도",
++    "archive": "보관",
++    "export": "내보내기",
++    "follow": "후속 질문",
++    "steps": "실행 단계",
++    "session": "Agent 세션",
++    "usage": "사용량",
++    "newWork": "새 작업",
++    "send": "보내기",
++    "pending": "로컬에 저장됨, 전송 대기",
++    "offline": "Hub에 연결할 수 없습니다. 저장된 요청은 원래 요청 ID를 유지합니다.",
++    "unknownCancellation": "추가 배정이 중지되었습니다. 실행 중인 프로세스가 중지되었는지는 확인되지 않았습니다.",
++    "status": {
++      "queued": "대기 중",
++      "running": "실행 중",
++      "needs_input": "입력 필요",
++      "completed": "완료",
++      "failed": "실패",
++      "cancelled": "취소됨",
++      "cancelled_unknown": "중지 미확인",
++      "done": "완료",
++      "waiting": "대기",
++      "pending": "보류"
++    },
++    "requests": "요청 수",
++    "totalTokens": "측정된 토큰",
++    "estimatedTokens": "예상 토큰",
++    "usageMissingRequests": "사용량 미보고 요청",
++    "subscriptionUnreported": "구독 모델 CLI는 사용량을 보고하지 않습니다.",
++    "mandate": "작업 권한",
++    "authorized": "승인됨",
++    "revoked": "철회됨",
++    "canWrite": "쓰기 허용",
++    "readOnly": "읽기 전용",
++    "budget": "예산",
++    "messages": "그룹 대화",
++    "localRecords": "로컬 전송 기록",
++    "dismissFailed": "기록 제거",
++    "localHistory": "로컬 대화"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/pt-BR/common.json b/apps/desktop/src/renderer/i18n/locales/pt-BR/common.json
-index 7b546ee2..5b15f1b2 100644
+index 7b546ee2..ed3a331b 100644
 --- a/apps/desktop/src/renderer/i18n/locales/pt-BR/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/pt-BR/common.json
-@@ -19122,5 +19122,42 @@
+@@ -19122,5 +19122,97 @@
      "rendered": "Ver documento",
      "wrap": "Quebra de linha",
      "lineNumbers": "Números de linha"
@@ -1325,13 +1673,68 @@ index 7b546ee2..5b15f1b2 100644
 +    "errorExpired": "Sua sessão expirou. Entre novamente.",
 +    "errorVault": "Armazenamento seguro indisponível. Desbloqueie o sistema e tente novamente.",
 +    "errorLogin": "A entrada não foi concluída. Tente novamente."
++  },
++  "vibelinkWork": {
++    "title": "Espaço Hub",
++    "createGroup": "Criar grupo",
++    "refresh": "Atualizar",
++    "groupName": "Nome do grupo",
++    "members": "Escolher Bots",
++    "emptyGroups": "Crie um grupo e escolha Bots para colaborar.",
++    "group": "Grupo",
++    "search": "Buscar tarefas",
++    "archived": "Incluir arquivadas",
++    "emptyWork": "Sem tarefas. Descreva o trabalho abaixo.",
++    "selectWork": "Selecione uma tarefa para ver o progresso e os resultados.",
++    "unread": "Resultado não lido",
++    "readonly": "Somente leitura. O gerenciamento exige o dono da tarefa e um Hub compatível.",
++    "cancel": "Cancelar",
++    "retry": "Tentar novamente",
++    "archive": "Arquivar",
++    "export": "Exportar",
++    "follow": "Acompanhamento",
++    "steps": "Etapas",
++    "session": "Sessão Agent",
++    "usage": "Uso",
++    "newWork": "Nova tarefa",
++    "send": "Enviar",
++    "pending": "Salvo localmente, aguardando envio",
++    "offline": "Hub indisponível. Os envios salvos mantêm o ID original da solicitação.",
++    "unknownCancellation": "Novas atribuições foram interrompidas. A parada do processo em execução não foi confirmada.",
++    "status": {
++      "queued": "Na fila",
++      "running": "Em execução",
++      "needs_input": "Precisa de dados",
++      "completed": "Concluída",
++      "failed": "Falhou",
++      "cancelled": "Cancelada",
++      "cancelled_unknown": "Parada não confirmada",
++      "done": "Pronto",
++      "waiting": "Aguardando",
++      "pending": "Pendente"
++    },
++    "requests": "Solicitações",
++    "totalTokens": "Tokens medidos",
++    "estimatedTokens": "Tokens estimados",
++    "usageMissingRequests": "Solicitações sem dados",
++    "subscriptionUnreported": "O CLI da assinatura não informa o uso.",
++    "mandate": "Autorização",
++    "authorized": "Autorizada",
++    "revoked": "Revogada",
++    "canWrite": "Escrita permitida",
++    "readOnly": "Somente leitura",
++    "budget": "Orçamento",
++    "messages": "Conversa do grupo",
++    "localRecords": "Registros locais de envio",
++    "dismissFailed": "Remover registro",
++    "localHistory": "Conversas locais"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/pt-PT/common.json b/apps/desktop/src/renderer/i18n/locales/pt-PT/common.json
-index bae75933..98522e94 100644
+index bae75933..39eb6dee 100644
 --- a/apps/desktop/src/renderer/i18n/locales/pt-PT/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/pt-PT/common.json
-@@ -19122,5 +19122,42 @@
+@@ -19122,5 +19122,97 @@
      "rendered": "Ver documento",
      "wrap": "Moldar linhas",
      "lineNumbers": "Números de linha"
@@ -1372,13 +1775,68 @@ index bae75933..98522e94 100644
 +    "errorExpired": "A sessão expirou. Inicie sessão novamente.",
 +    "errorVault": "Armazenamento seguro indisponível. Desbloqueie o sistema e tente novamente.",
 +    "errorLogin": "A entrada não foi concluída. Tente novamente."
++  },
++  "vibelinkWork": {
++    "title": "Espaço Hub",
++    "createGroup": "Criar grupo",
++    "refresh": "Atualizar",
++    "groupName": "Nome do grupo",
++    "members": "Escolher Bots",
++    "emptyGroups": "Crie um grupo e escolha Bots para colaborar.",
++    "group": "Grupo",
++    "search": "Pesquisar tarefas",
++    "archived": "Incluir arquivadas",
++    "emptyWork": "Sem tarefas. Descreva o trabalho abaixo.",
++    "selectWork": "Selecione uma tarefa para ver o progresso e os resultados.",
++    "unread": "Resultado não lido",
++    "readonly": "Só de leitura. A gestão exige o proprietário da tarefa e um Hub compatível.",
++    "cancel": "Cancelar",
++    "retry": "Tentar novamente",
++    "archive": "Arquivar",
++    "export": "Exportar",
++    "follow": "Seguimento",
++    "steps": "Etapas",
++    "session": "Sessão Agent",
++    "usage": "Utilização",
++    "newWork": "Nova tarefa",
++    "send": "Enviar",
++    "pending": "Guardado localmente, a aguardar envio",
++    "offline": "Hub indisponível. Os envios guardados mantêm o ID original do pedido.",
++    "unknownCancellation": "Novas atribuições foram interrompidas. A paragem do processo em execução não foi confirmada.",
++    "status": {
++      "queued": "Na fila",
++      "running": "Em execução",
++      "needs_input": "Precisa de dados",
++      "completed": "Concluída",
++      "failed": "Falhou",
++      "cancelled": "Cancelada",
++      "cancelled_unknown": "Paragem não confirmada",
++      "done": "Feito",
++      "waiting": "A aguardar",
++      "pending": "Pendente"
++    },
++    "requests": "Pedidos",
++    "totalTokens": "Tokens medidos",
++    "estimatedTokens": "Tokens estimados",
++    "usageMissingRequests": "Pedidos sem dados",
++    "subscriptionUnreported": "O CLI da subscrição não informa a utilização.",
++    "mandate": "Autorização",
++    "authorized": "Autorizada",
++    "revoked": "Revogada",
++    "canWrite": "Escrita permitida",
++    "readOnly": "Só de leitura",
++    "budget": "Orçamento",
++    "messages": "Conversa do grupo",
++    "localRecords": "Registos locais de envio",
++    "dismissFailed": "Remover registo",
++    "localHistory": "Conversas locais"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/zh-CN/common.json b/apps/desktop/src/renderer/i18n/locales/zh-CN/common.json
-index dcd22815..6390f694 100644
+index dcd22815..35daa6d2 100644
 --- a/apps/desktop/src/renderer/i18n/locales/zh-CN/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/zh-CN/common.json
-@@ -18879,5 +18879,42 @@
+@@ -18879,5 +18879,97 @@
      "rendered": "查看文稿",
      "wrap": "自动换行",
      "lineNumbers": "行号"
@@ -1419,13 +1877,68 @@ index dcd22815..6390f694 100644
 +    "errorExpired": "登录已过期，请重新登录。",
 +    "errorVault": "无法使用本机安全存储，请解锁系统后重试。",
 +    "errorLogin": "登录暂时未完成，请重试。"
++  },
++  "vibelinkWork": {
++    "title": "Hub 工作区",
++    "createGroup": "创建群组",
++    "refresh": "刷新",
++    "groupName": "群组名称",
++    "members": "选择 Bot",
++    "emptyGroups": "创建群组并选择 Bot，开始协作。",
++    "group": "群组",
++    "search": "搜索任务",
++    "archived": "包含已归档",
++    "emptyWork": "暂无任务。请在下方描述工作。",
++    "selectWork": "选择任务查看进展和成果。",
++    "unread": "未读成果",
++    "readonly": "只读。仅任务所属账号可管理，且需要兼容的 Hub。",
++    "cancel": "取消",
++    "retry": "重试",
++    "archive": "归档",
++    "export": "导出",
++    "follow": "追问",
++    "steps": "执行步骤",
++    "session": "Agent 会话",
++    "usage": "用量",
++    "newWork": "新任务",
++    "send": "发送",
++    "pending": "已保存到本机，待发送",
++    "offline": "暂时无法连接 Hub，已保存的提交沿用原请求编号。",
++    "unknownCancellation": "后续派发已停止，尚未确认运行中的进程已停止。",
++    "status": {
++      "queued": "排队中",
++      "running": "执行中",
++      "needs_input": "待补充",
++      "completed": "已完成",
++      "failed": "失败",
++      "cancelled": "已取消",
++      "cancelled_unknown": "尚未确认停止",
++      "done": "完成",
++      "waiting": "等待中",
++      "pending": "待处理"
++    },
++    "requests": "请求数",
++    "totalTokens": "实测 Token",
++    "estimatedTokens": "估算 Token",
++    "usageMissingRequests": "未返回用量的请求",
++    "subscriptionUnreported": "订阅模型 CLI 不上报用量。",
++    "mandate": "任务授权",
++    "authorized": "已授权",
++    "revoked": "已撤销",
++    "canWrite": "允许写入",
++    "readOnly": "只读核查",
++    "budget": "预算",
++    "messages": "群聊记录",
++    "localRecords": "本机发送记录",
++    "dismissFailed": "移除记录",
++    "localHistory": "本机对话"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/zh-Hans-x-lzh/common.json b/apps/desktop/src/renderer/i18n/locales/zh-Hans-x-lzh/common.json
-index 56395a07..96654da1 100644
+index 56395a07..0fda4479 100644
 --- a/apps/desktop/src/renderer/i18n/locales/zh-Hans-x-lzh/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/zh-Hans-x-lzh/common.json
-@@ -18879,5 +18879,42 @@
+@@ -18879,5 +18879,97 @@
      "rendered": "观文",
      "wrap": "折行",
      "lineNumbers": "行数"
@@ -1466,13 +1979,68 @@ index 56395a07..96654da1 100644
 +    "errorExpired": "登录已过期，请重新登录。",
 +    "errorVault": "无法使用本机安全存储，请解锁系统后重试。",
 +    "errorLogin": "登录暂时未完成，请重试。"
++  },
++  "vibelinkWork": {
++    "title": "Hub 工作区",
++    "createGroup": "创建群组",
++    "refresh": "刷新",
++    "groupName": "群组名称",
++    "members": "选择 Bot",
++    "emptyGroups": "创建群组并选择 Bot，开始协作。",
++    "group": "群组",
++    "search": "搜索任务",
++    "archived": "包含已归档",
++    "emptyWork": "暂无任务。请在下方描述工作。",
++    "selectWork": "选择任务查看进展和成果。",
++    "unread": "未读成果",
++    "readonly": "只读。仅任务所属账号可管理，且需要兼容的 Hub。",
++    "cancel": "取消",
++    "retry": "重试",
++    "archive": "归档",
++    "export": "导出",
++    "follow": "追问",
++    "steps": "执行步骤",
++    "session": "Agent 会话",
++    "usage": "用量",
++    "newWork": "新任务",
++    "send": "发送",
++    "pending": "已保存到本机，待发送",
++    "offline": "暂时无法连接 Hub，已保存的提交沿用原请求编号。",
++    "unknownCancellation": "后续派发已停止，尚未确认运行中的进程已停止。",
++    "status": {
++      "queued": "排队中",
++      "running": "执行中",
++      "needs_input": "待补充",
++      "completed": "已完成",
++      "failed": "失败",
++      "cancelled": "已取消",
++      "cancelled_unknown": "尚未确认停止",
++      "done": "完成",
++      "waiting": "等待中",
++      "pending": "待处理"
++    },
++    "requests": "请求数",
++    "totalTokens": "实测 Token",
++    "estimatedTokens": "估算 Token",
++    "usageMissingRequests": "未返回用量的请求",
++    "subscriptionUnreported": "订阅模型 CLI 不上报用量。",
++    "mandate": "任务授权",
++    "authorized": "已授权",
++    "revoked": "已撤销",
++    "canWrite": "允许写入",
++    "readOnly": "只读核查",
++    "budget": "预算",
++    "messages": "群聊记录",
++    "localRecords": "本机发送记录",
++    "dismissFailed": "移除记录",
++    "localHistory": "本机对话"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/zh-Hant-x-lzh/common.json b/apps/desktop/src/renderer/i18n/locales/zh-Hant-x-lzh/common.json
-index f35e1826..6e302f59 100644
+index f35e1826..db8909fa 100644
 --- a/apps/desktop/src/renderer/i18n/locales/zh-Hant-x-lzh/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/zh-Hant-x-lzh/common.json
-@@ -18879,5 +18879,42 @@
+@@ -18879,5 +18879,97 @@
      "rendered": "觀文",
      "wrap": "折行",
      "lineNumbers": "行數"
@@ -1513,13 +2081,68 @@ index f35e1826..6e302f59 100644
 +    "errorExpired": "登入已過期，請重新登入。",
 +    "errorVault": "無法使用本機安全儲存，請解鎖系統後重試。",
 +    "errorLogin": "登入尚未完成，請重試。"
++  },
++  "vibelinkWork": {
++    "title": "Hub 工作區",
++    "createGroup": "建立群組",
++    "refresh": "重新整理",
++    "groupName": "群組名稱",
++    "members": "選擇 Bot",
++    "emptyGroups": "建立群組並選擇 Bot，開始協作。",
++    "group": "群組",
++    "search": "搜尋任務",
++    "archived": "包含已封存",
++    "emptyWork": "尚無任務。請在下方描述工作。",
++    "selectWork": "選擇任務查看進度和成果。",
++    "unread": "未讀成果",
++    "readonly": "唯讀。僅任務所屬帳號可管理，且需要相容的 Hub。",
++    "cancel": "取消",
++    "retry": "重試",
++    "archive": "封存",
++    "export": "匯出",
++    "follow": "追問",
++    "steps": "執行步驟",
++    "session": "Agent 工作階段",
++    "usage": "用量",
++    "newWork": "新任務",
++    "send": "傳送",
++    "pending": "已儲存至本機，待傳送",
++    "offline": "暫時無法連線 Hub，已儲存的提交沿用原請求編號。",
++    "unknownCancellation": "後續派發已停止，尚未確認執行中的程序已停止。",
++    "status": {
++      "queued": "排隊中",
++      "running": "執行中",
++      "needs_input": "待補充",
++      "completed": "已完成",
++      "failed": "失敗",
++      "cancelled": "已取消",
++      "cancelled_unknown": "尚未確認停止",
++      "done": "完成",
++      "waiting": "等待中",
++      "pending": "待處理"
++    },
++    "requests": "請求數",
++    "totalTokens": "實測 Token",
++    "estimatedTokens": "估算 Token",
++    "usageMissingRequests": "未回報用量的請求",
++    "subscriptionUnreported": "訂閱模型 CLI 不回報用量。",
++    "mandate": "任務授權",
++    "authorized": "已授權",
++    "revoked": "已撤銷",
++    "canWrite": "允許寫入",
++    "readOnly": "唯讀核查",
++    "budget": "預算",
++    "messages": "群聊記錄",
++    "localRecords": "本機傳送記錄",
++    "dismissFailed": "移除記錄",
++    "localHistory": "本機對話"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/zh-TW/common.json b/apps/desktop/src/renderer/i18n/locales/zh-TW/common.json
-index 7075672e..c4690bea 100644
+index 7075672e..a01237d4 100644
 --- a/apps/desktop/src/renderer/i18n/locales/zh-TW/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/zh-TW/common.json
-@@ -18879,5 +18879,42 @@
+@@ -18879,5 +18879,97 @@
      "rendered": "查看文件",
      "wrap": "自動換行",
      "lineNumbers": "行號"
@@ -1560,6 +2183,61 @@ index 7075672e..c4690bea 100644
 +    "errorExpired": "登入已過期，請重新登入。",
 +    "errorVault": "無法使用本機安全儲存，請解鎖系統後重試。",
 +    "errorLogin": "登入尚未完成，請重試。"
++  },
++  "vibelinkWork": {
++    "title": "Hub 工作區",
++    "createGroup": "建立群組",
++    "refresh": "重新整理",
++    "groupName": "群組名稱",
++    "members": "選擇 Bot",
++    "emptyGroups": "建立群組並選擇 Bot，開始協作。",
++    "group": "群組",
++    "search": "搜尋任務",
++    "archived": "包含已封存",
++    "emptyWork": "尚無任務。請在下方描述工作。",
++    "selectWork": "選擇任務查看進度和成果。",
++    "unread": "未讀成果",
++    "readonly": "唯讀。僅任務所屬帳號可管理，且需要相容的 Hub。",
++    "cancel": "取消",
++    "retry": "重試",
++    "archive": "封存",
++    "export": "匯出",
++    "follow": "追問",
++    "steps": "執行步驟",
++    "session": "Agent 工作階段",
++    "usage": "用量",
++    "newWork": "新任務",
++    "send": "傳送",
++    "pending": "已儲存至本機，待傳送",
++    "offline": "暫時無法連線 Hub，已儲存的提交沿用原請求編號。",
++    "unknownCancellation": "後續派發已停止，尚未確認執行中的程序已停止。",
++    "status": {
++      "queued": "排隊中",
++      "running": "執行中",
++      "needs_input": "待補充",
++      "completed": "已完成",
++      "failed": "失敗",
++      "cancelled": "已取消",
++      "cancelled_unknown": "尚未確認停止",
++      "done": "完成",
++      "waiting": "等待中",
++      "pending": "待處理"
++    },
++    "requests": "請求數",
++    "totalTokens": "實測 Token",
++    "estimatedTokens": "估算 Token",
++    "usageMissingRequests": "未回報用量的請求",
++    "subscriptionUnreported": "訂閱模型 CLI 不回報用量。",
++    "mandate": "任務授權",
++    "authorized": "已授權",
++    "revoked": "已撤銷",
++    "canWrite": "允許寫入",
++    "readOnly": "唯讀核查",
++    "budget": "預算",
++    "messages": "群聊記錄",
++    "localRecords": "本機傳送記錄",
++    "dismissFailed": "移除記錄",
++    "localHistory": "本機對話"
    }
  }
 diff --git a/apps/desktop/src/renderer/lib/authService.ts b/apps/desktop/src/renderer/lib/authService.ts

@@ -305,4 +305,3 @@ it('restores only a server-verified principal and commits its opaque namespace',
   expect(JSON.stringify(result)).not.toContain('fake-session-token');
   expect(ports.readLocalAdmin).not.toHaveBeenCalled();
 });
-

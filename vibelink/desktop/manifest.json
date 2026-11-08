@@ -4,10 +4,6 @@
   "license": "Apache-2.0",
   "files": [
     {
-      "path": "cindy-fusion.patch",
-      "sha256": "9da44b648a5f5de0020923363c72eabe896274d6ca526db06092a9427545e790"
-    },
-    {
       "path": "CINDY-LICENSE.txt",
       "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
     },
@@ -18,6 +14,26 @@
     {
       "path": "Install-DesktopEntry.ps1",
       "sha256": "04757a68c61421e8eb18d00af82a0c298d63139da3a3f9e2614d2c09a2eb9059"
+    },
+    {
+      "path": "Prepare-CindyFusion.ps1",
+      "sha256": "c556f2deeffe7be43992ae0efcb23655a0eb8c0dd270b33361052c2485f5553c"
+    },
+    {
+      "path": "README.md",
+      "sha256": "2c25a6f51bf1fb4d3714340aaba9452cc1c7dc3751f424f053ad4790f9f9cec9"
+    },
+    {
+      "path": "Start-VibeLinkDesktop.ps1",
+      "sha256": "607c008ab8770e3b12e816958d818efcaf3db9e486e79308c36101b54f3e6f86"
+    },
+    {
+      "path": "Test-DesktopPackage.ps1",
+      "sha256": "8c9647db255e67a28515235598a107adf90b0f2efd85d782accaaf4f03d14d60"
+    },
+    {
+      "path": "cindy-fusion.patch",
+      "sha256": "ddec4beaa13ec26e5af7b66f0064e6c2d414607ddc443e2408adda97540caf2f"
     },
     {
       "path": "overlay/apps/desktop/scripts/fixtures/vibelink-desktop/desktop-fixture.tsx",
@@ -36,6 +52,14 @@
       "sha256": "eee04953db3a1e84b82faabc3a761bd4e6a57ed117263352770f5c3b105ed485"
     },
     {
+      "path": "overlay/apps/desktop/scripts/fixtures/vibelink-work/ui-page.mjs",
+      "sha256": "b548cddfde060f7fda494011ab33040e1935910861c1a00026fe16388621f8c0"
+    },
+    {
+      "path": "overlay/apps/desktop/scripts/fixtures/vibelink-work/work-fixture.tsx",
+      "sha256": "546205779abb6e8b6dc5dc0b5fbd2c5c6beb345822c62e117f8ae8b92852c845"
+    },
+    {
       "path": "overlay/apps/desktop/src/main/maker-host/__tests__/vibelinkSubscriptionPolicy.test.ts",
       "sha256": "65acaf5627c09558c102c59c619b26be5efa7d1d1a4cc08a074568c779f2b6b5"
     },
@@ -45,7 +69,7 @@
     },
     {
       "path": "overlay/apps/desktop/src/main/vibelink/__tests__/authService.test.ts",
-      "sha256": "9a3acf6595ff64cbf658d743b32d33585a2b86c0c198afa4e8fc00de5e5e81e6"
+      "sha256": "53cec027956b498e69ffbf55baba84ccce8cd8584ae4f160ce96c678941d0a4d"
     },
     {
       "path": "overlay/apps/desktop/src/main/vibelink/__tests__/authVault.test.ts",
@@ -60,8 +84,16 @@
       "sha256": "07a986e6a74cce895745ab31aa22d992449c39a764f4ae0b69a84f294dc81a75"
     },
     {
+      "path": "overlay/apps/desktop/src/main/vibelink/__tests__/workService.test.ts",
+      "sha256": "f5961d4123e614b3ecc302e52ba958dd8875d39ee9bd9678041d852aa3883ff0"
+    },
+    {
+      "path": "overlay/apps/desktop/src/main/vibelink/__tests__/workStore.test.ts",
+      "sha256": "d407c8dd242fcdc4f0e454835323a82854b52e197572738a11e6cec669be624c"
+    },
+    {
       "path": "overlay/apps/desktop/src/main/vibelink/authRuntime.ts",
-      "sha256": "c3a74eb15bd9de50e97e680c81ffa2382ed1428dd8136106ca11b38e535d59c9"
+      "sha256": "4ec28ad1cf0effb275f16dee22f8d3711e37e1a961de1625a08423623d7bb70d"
     },
     {
       "path": "overlay/apps/desktop/src/main/vibelink/authService.ts",
@@ -84,8 +116,48 @@
       "sha256": "54760f6ec3ccb71fa49e2acbff47b6b302047173b511c6d2f32fb888ef8cb532"
     },
     {
+      "path": "overlay/apps/desktop/src/main/vibelink/workRuntime.ts",
+      "sha256": "2ed628c3380c1e3f58891d7bfc381b3ef0d1c0e910f7d6f2d6160dd71d0e027a"
+    },
+    {
+      "path": "overlay/apps/desktop/src/main/vibelink/workService.ts",
+      "sha256": "45120bf880384d0b6d117883d0ad39a831f0dff6a0cbca6b1f06940240edb438"
+    },
+    {
+      "path": "overlay/apps/desktop/src/main/vibelink/workStore.ts",
+      "sha256": "fdb57292a61ded2ec6456c9e23dc125bce8a013cc0b62e5894e5b102afeaecf9"
+    },
+    {
       "path": "overlay/apps/desktop/src/renderer/features/vibelink/AccountInfo.tsx",
       "sha256": "698cf0c0bfa60cd86f55932b1abea28804cf663765c8d9a52b757d1f012b2c9a"
+    },
+    {
+      "path": "overlay/apps/desktop/src/renderer/features/vibelink/HubPairQr.tsx",
+      "sha256": "5c411f6ef0d5c602197e93d4c1bf4b2e42d5e6904bf2e7cf415cc0209fa41c61"
+    },
+    {
+      "path": "overlay/apps/desktop/src/renderer/features/vibelink/HubWorkPanel.test.tsx",
+      "sha256": "7b37ef770aa94ea5975d28659ba0b115706b1e5a0acf7db11d3f8fe295662225"
+    },
+    {
+      "path": "overlay/apps/desktop/src/renderer/features/vibelink/HubWorkPanel.tsx",
+      "sha256": "2324f20c5ec4fc4474fd33a234b291d580c72118a3208395a8891fb607961169"
+    },
+    {
+      "path": "overlay/apps/desktop/src/renderer/features/vibelink/HubWorkspace.tsx",
+      "sha256": "f92f81eab2ed86dfba1fad616323ebeeac7b92e4ee86aee6380792b1b67281ee"
+    },
+    {
+      "path": "overlay/apps/desktop/src/renderer/features/vibelink/LoginPage.test.tsx",
+      "sha256": "c108bace577ea9307fc5d0c11796d9704190a20cb0886016ea61ad7f339a2127"
+    },
+    {
+      "path": "overlay/apps/desktop/src/renderer/features/vibelink/LoginPage.tsx",
+      "sha256": "560252a85922ae23a23e59528e240caff53aacd5c20e6205aca3d443da41cb7c"
+    },
+    {
+      "path": "overlay/apps/desktop/src/renderer/features/vibelink/VibeLinkControlCenter.tsx",
+      "sha256": "c415eec7406ee4c9cb13659bc39aeac05e954fdd0b79aed62c3772ccb637228d"
     },
     {
       "path": "overlay/apps/desktop/src/renderer/features/vibelink/desktopBridge.test.ts",
@@ -96,28 +168,16 @@
       "sha256": "2a3075379ef7fbc49229e4f278dd803d4ebfab3b544c7fe04b1278080190115c"
     },
     {
-      "path": "overlay/apps/desktop/src/renderer/features/vibelink/HubPairQr.tsx",
-      "sha256": "5c411f6ef0d5c602197e93d4c1bf4b2e42d5e6904bf2e7cf415cc0209fa41c61"
-    },
-    {
-      "path": "overlay/apps/desktop/src/renderer/features/vibelink/HubWorkspace.tsx",
-      "sha256": "60b9bbbde295190d50cbff062c43cf135a1ab04f0652702ff6c287a0795239bd"
-    },
-    {
-      "path": "overlay/apps/desktop/src/renderer/features/vibelink/LoginPage.test.tsx",
-      "sha256": "8ffd2eedbbfb8dbccbfe702f84f25b49960d25a85e752e97df2ab0491952754e"
-    },
-    {
-      "path": "overlay/apps/desktop/src/renderer/features/vibelink/LoginPage.tsx",
-      "sha256": "560252a85922ae23a23e59528e240caff53aacd5c20e6205aca3d443da41cb7c"
-    },
-    {
       "path": "overlay/apps/desktop/src/renderer/features/vibelink/useHubAuth.ts",
       "sha256": "a0cbd58f4de003aa2004bf2caf82133eb7d78edd9771d842d9fa80b78a62c57b"
     },
     {
-      "path": "overlay/apps/desktop/src/renderer/features/vibelink/VibeLinkControlCenter.tsx",
-      "sha256": "c415eec7406ee4c9cb13659bc39aeac05e954fdd0b79aed62c3772ccb637228d"
+      "path": "overlay/apps/desktop/src/renderer/features/vibelink/workPresentation.test.ts",
+      "sha256": "85fa7f28fd44006a1d146f13cbcc8164e40829067d04ef50a0f2c6e6a30baa9d"
+    },
+    {
+      "path": "overlay/apps/desktop/src/renderer/features/vibelink/workPresentation.ts",
+      "sha256": "1b2f6f0753ac2a48d6750ec264ca94bf8ecea450686162d1addf397194697f08"
     },
     {
       "path": "overlay/apps/desktop/src/shared/vibelinkAuth.ts",
@@ -125,23 +185,11 @@
     },
     {
       "path": "overlay/apps/desktop/src/shared/vibelinkDesktop.ts",
-      "sha256": "01f7cf45448a386dac1a937494bf2e0ccce89076c380201fb2b8f1fe0eb16c90"
+      "sha256": "16e69226e6730e324ef22dd51aed4eb08813d31bd074a378b816234bf800bf11"
     },
     {
-      "path": "Prepare-CindyFusion.ps1",
-      "sha256": "c556f2deeffe7be43992ae0efcb23655a0eb8c0dd270b33361052c2485f5553c"
-    },
-    {
-      "path": "README.md",
-      "sha256": "cbae5a7233657b09fa5bb348175cf00fd016ad3843be26e852c06f5ea83b7ee1"
-    },
-    {
-      "path": "Start-VibeLinkDesktop.ps1",
-      "sha256": "607c008ab8770e3b12e816958d818efcaf3db9e486e79308c36101b54f3e6f86"
-    },
-    {
-      "path": "Test-DesktopPackage.ps1",
-      "sha256": "8c9647db255e67a28515235598a107adf90b0f2efd85d782accaaf4f03d14d60"
+      "path": "overlay/apps/desktop/src/shared/vibelinkWork.ts",
+      "sha256": "6d945f650ab8962f83bb4a80a10625bf28e9ce92ee40e857122cc02ec932233c"
     }
   ]
 }
