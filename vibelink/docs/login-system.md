@@ -11,7 +11,7 @@ Hub 是账号与设备会话的签发方。桌面登录不依赖 Cindy 云账号
 
 本轮没有新增邮箱密码或短信平台，也不伪造 Cindy 用户。原 Cindy 数据/凭据与设备本机助手数据不删除；桌面按已验证 Hub 身份选择本机数据空间。
 
-## API 合同（Hub 0.4.0）
+## API 合同（Hub 0.4.0 起）
 
 所有时间为 Unix 毫秒。登录请求最大 8 KB，响应为 `Cache-Control: no-store`。需要身份的操作只接受 Hub 验证的 client/admin，Agent 不能签发登录会话。
 
@@ -27,7 +27,7 @@ Hub 是账号与设备会话的签发方。桌面登录不依赖 Cindy 云账号
 | `POST /api/auth/qr/poll` | `{id, pollSecret}` | `pending/scanned/denied/expired/approved/consumed`；approved 含本设备 `token, session` |
 | `POST /api/auth/qr/ack` | `{id, pollSecret}` | 电脑保存凭据后确认接收，随后不再返回该凭据 |
 
-`session`：`userId, label, displayName, tenantId, edition, sessionId, expiresAt, permissions, issuer, hubId`。issuer/hubId 是同一公开持久标识，Hub 重启或内网 IP 变化不改变。开发和内测各自的数据目录生成各自 issuer。设备凭据有效期 30 天，服务端强制到期，凭据只以哈希落盘。
+`session`：`userId, label, displayName, tenantId, edition, sessionId, expiresAt, permissions, issuer, hubId`。issuer/hubId 是同一公开持久标识，Hub 重启或内网 IP 变化不改变。开发和内测各自的数据目录生成各自 issuer。设备凭据有效期 30 天，服务端强制到期。Hub 只保存凭据哈希；Android 用 Keystore AES-GCM、桌面 Main 用 Electron safeStorage 加密保存本设备凭据。桌面 Renderer 不接触 Token 或轮询证明。
 
 扫码链接形如 `vibelink://login?v=1&purpose=desktop_login&id=…&s=…&u=…`。`s` 仅供手机查看/确认，不等于 pollSecret；链接不包含长期登录 Token。手机确认请求只发向当前登录 Hub，不能按任意二维码地址转发已有 Bearer。电脑在 Main 保存凭据后 ACK；丢回包以原轮询证明取回同一会话，不能另签发。确认后尚未完成交付的授权在下一次来源校验时因手机凭据撤销而拒绝；已 ACK 的设备会话相互独立。
 
@@ -40,3 +40,12 @@ Hub 是账号与设备会话的签发方。桌面登录不依赖 Cindy 云账号
 - 首次安装、失效会话和退出后回登录页；网络暂不可达不能伪装成凭据验证成功，也不删除离线数据。旧版本的静态内测接口保留用于兼容，新登录界面不再保存邀请码或接收共享 Agent 凭据。
 
 设计参考：[RFC 8628](https://www.rfc-editor.org/rfc/rfc8628.html) 的跨设备确认与独立设备证明思路。本协议是 VibeLink 自有登录合同，不宣称实现完整 OAuth 服务。
+
+## 发布与验证（1.6.2 / Android 93）
+
+- Android 开发版、内测版签名 APK 已发布到各自应用内更新通道：开发版通过内网 Hub，内测版通过公网 Hub。两版应用 ID、登录身份、缓存和 outbox 隔离；内测版不种入 Clash 配置。
+- 开发/内测 Hub 已滚动更新到 0.4.1，PC 开发/内测与 Mac Agent 维持 0.4.0 在线。登录不要求重启 Agent；0.4.1 增加任务列表的服务端所有权投影 `canManage`，操作仍由后端校验原主体。
+- Hub 70 项测试通过，覆盖签发、过期、扫码批准/拒绝、丢回包、重启恢复、来源撤销及跨设备任务权限。临时 HTTP 服务也完成扫码、退出和重启身份验证。
+- Android 内测版 99 项测试及开发版 34 项最终受影响测试通过，两版 release 构建和签名校验通过。未在真实手机上验收摄像头扫码，不将协议测试等同于实机扫码。
+- 桌面完成 49 项定向测试和 48 种登录界面组合检查。真实 Electron 验证本机 owner 登录保留原数据、官方 Codex 会话返回，以及公网内测二维码登录和独立数据空间；验证用内测凭据已吊销。全量 TypeScript 检查仍有上游 Undici/网络策略生成类型兼容问题，不宣称全量检查通过。
+- 桌面交付包从固定上游提交与校验清单重放，不包含旧 Cindy 原型工作区的整体未提交改动。`Test-DesktopPackage.ps1` 验证文件摘要；切换源码时沿用原绝对 userData，不迁移或删除原本机数据库。
