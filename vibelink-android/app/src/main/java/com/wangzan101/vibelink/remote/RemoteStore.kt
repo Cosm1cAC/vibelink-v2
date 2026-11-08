@@ -20,13 +20,15 @@ object RemoteStore {
 
     private fun prefs(c: Context) = c.getSharedPreferences(PREF, Context.MODE_PRIVATE)
 
+    @Synchronized
     fun hub(c: Context): String {
-        // 顺手把备用地址交给 RemoteApi：所有调用方都先读 hub 再发请求
-        RemoteApi.extraHubs = extraHubs(c)
-        return prefs(c).getString("hub", "")?.takeIf { it.isNotBlank() } ?: DEFAULT_HUB
+        val hub = prefs(c).getString("hub", "")?.takeIf { it.isNotBlank() } ?: DEFAULT_HUB
+        RemoteApi.configureRoutes(hub, token(c), extraHubs(c))
+        return hub
     }
 
     /** 配对拿到的 token；没配对过为空。 */
+    @Synchronized
     fun token(c: Context): String = prefs(c).getString("token", "").orEmpty()
 
     /** 已配对的电脑名（确认页上显示过的那个）。 */
@@ -37,6 +39,7 @@ object RemoteStore {
 
     fun betaInviteCode(c: Context): String = prefs(c).getString("beta_code", "").orEmpty()
 
+    @Synchronized
     fun saveBetaActivation(c: Context, code: String, hub: String, token: String, label: String) {
         prefs(c).edit()
             .putString("beta_code", code.trim().uppercase())
@@ -44,7 +47,9 @@ object RemoteStore {
             .putString("hub", hub.trim().trimEnd('/'))
             .putString("token", token.trim())
             .putString("host", label.trim())
+            .remove("hubs")
             .apply()
+        this.hub(c)
     }
 
     fun extraHubs(c: Context): List<String> =
@@ -52,11 +57,14 @@ object RemoteStore {
 
     fun isPaired(c: Context): Boolean = token(c).isNotBlank()
 
+    @Synchronized
     fun save(c: Context, hub: String, token: String) {
-        prefs(c).edit().putString("hub", hub.trim().trimEnd('/')).putString("token", token.trim()).apply()
+        prefs(c).edit().putString("hub", hub.trim().trimEnd('/')).putString("token", token.trim()).remove("hubs").apply()
+        this.hub(c)
     }
 
     /** 扫码配对成功：hub = 连得上的那个地址，其余地址留作备用。 */
+    @Synchronized
     fun savePaired(c: Context, hub: String, token: String, link: PairLink, host: String) {
         val extras = link.urls.filter { it != hub }
         prefs(c).edit()
@@ -65,6 +73,6 @@ object RemoteStore {
             .putString("hubs", extras.joinToString("\n"))
             .putString("host", host)
             .apply()
-        RemoteApi.extraHubs = extras
+        this.hub(c)
     }
 }

@@ -1282,8 +1282,13 @@ fn spawn_codex_runner(
     cwd: String,
     prompt: String,
     id_tx: Option<mpsc::Sender<Result<String, String>>>,
+    cancellation: crate::session_cancellation::Ticket,
 ) {
     crate::codex_runtime::spawn(move || {
+        if !cancellation.is_current() {
+            if let Some(tx) = id_tx { let _ = tx.send(Err("codex_cancelled: request was interrupted before launch".into())); }
+            return;
+        }
         let Some(exe) = find_codex_exe() else {
             if let Some(tx) = id_tx {
                 let _ = tx.send(Err("codex CLI not found".into()));
@@ -1343,12 +1348,17 @@ fn spawn_codex_runner(
             cmd.creation_flags(0x0800_0000);
         }
 
-        let mut child = match cmd.spawn() {
+        let mut child = match cancellation.launch(|| {
+            let child = cmd.spawn().map_err(|error| error.to_string())?;
+            let pid = child.id();
+            Ok((child, pid))
+        }) {
             Ok(c) => c,
             Err(e) => {
                 if let Some(tx) = id_tx {
                     let _ = tx.send(Err(format!("spawn codex failed: {e}")));
                 }
+                if !cancellation.is_current() { return; }
                 if let Some(sid) = existing_sid {
                     let real_sid = resolve_session_id(&sid);
                     if let Ok(mut map) = live_map().lock() {
@@ -1368,12 +1378,28 @@ fn spawn_codex_runner(
             }
         };
 
-        if let Some(mut stdin) = child.stdin.take() {
-            let _ = stdin.write_all(prompt.as_bytes());
-            let _ = stdin.flush();
+        let pid = child.id();
+        // The launch fence already owns the PID. Publish it and send stdin only
+        // while this generation is current, closing the pre-LiveSession window.
+        let delivered = cancellation.while_current(|| {
+            if let Some(sid) = &resolved_existing {
+                if let Ok(mut map) = live_map().lock() {
+                    if let Some(live) = map.get_mut(sid) { live.pid = Some(pid); }
+                }
+            }
+            if let Some(mut stdin) = child.stdin.take() {
+                let _ = stdin.write_all(prompt.as_bytes());
+                let _ = stdin.flush();
+            }
+        });
+        if delivered.is_none() {
+            kill_pid(pid);
+            let _ = child.wait();
+            cancellation.finished(pid);
+            if let Some(tx) = id_tx { let _ = tx.send(Err("codex_cancelled: request was interrupted during launch".into())); }
+            return;
         }
 
-        let pid = child.id();
         // Always drain stderr. CLI startup errors must not fill its pipe or leave
         // a rejected tenant launch waiting forever before thread.started.
         if let Some(stderr) = child.stderr.take() {
@@ -1394,147 +1420,150 @@ fn spawn_codex_runner(
             });
         }
         let mut active_id = resolved_existing.clone().unwrap_or_default();
-        if !active_id.is_empty() {
-            if let Ok(mut map) = live_map().lock() {
-                if let Some(l) = map.get_mut(&active_id) {
-                    l.pid = Some(pid);
-                }
-            }
-        }
-
         let mut tx_opt = id_tx;
         if let Some(stdout) = child.stdout.take() {
             for line in BufReader::new(stdout).lines().flatten() {
                 let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
                 let kind = v.get("type").and_then(|x| x.as_str()).unwrap_or("");
                 if kind == "thread.started" {
-                    if let Some(tid) = v.get("thread_id").and_then(|x| x.as_str()) {
-                        if let Some(ref init_sid) = existing_sid {
-                            if init_sid != tid {
-                                register_session_alias(init_sid, tid);
-                            }
-                        }
-                        mark_headless_created(tid);
-                        if active_id != tid {
-                            let started = now_ms();
-                            active_id = tid.to_string();
-                            if let Ok(mut map) = live_map().lock() {
-                                map.insert(
-                                    active_id.clone(),
-                                    LiveSession {
-                                        runtime_scope: crate::codex_runtime::current().scope,
-                                        agent: "codex".into(),
-                                        id: active_id.clone(),
-                                        title: trim_title(&prompt, 60),
-                                        cwd: cwd.clone(),
-                                        updated: started,
-                                        started_ms: started,
-                                        pid: Some(pid),
-                                        base_msg_count: 0,
-                                        user_text: extract_clean_user_prompt(&prompt),
-                                        assistant_text: String::new(),
-                                        reasoning_text: String::new(),
-                                        running: true,
-                                        error: None,
-                                    },
-                                );
-                            }
-                        }
-                        if let Some(tx) = tx_opt.take() {
-                            let _ = tx.send(Ok(active_id.clone()));
-                        }
+                    if let Some(tid) = v.get("thread_id").and_then(Value::as_str) {
+                        if !cancellation.bind(tid, kill_pid) { break; }
                     }
-                } else if kind == "item.completed" || kind == "item.started" {
-                    if let Some(item) = v.get("item") {
-                        let itype = item.get("type").and_then(|x| x.as_str()).unwrap_or("");
-                        if itype == "agent_message" {
-                            if let Some(t) = item.get("text").and_then(|x| x.as_str()) {
-                                if !active_id.is_empty() {
-                                    if let Ok(mut map) = live_map().lock() {
-                                        if let Some(l) = map.get_mut(&active_id) {
-                                            l.assistant_text = t.to_string();
-                                            l.updated = now_ms();
-                                        }
-                                        if let Some(ref init_sid) = existing_sid {
-                                            if init_sid != &active_id {
-                                                if let Some(l) = map.get_mut(init_sid) {
-                                                    l.assistant_text = t.to_string();
-                                                    l.updated = now_ms();
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        } else if itype == "reasoning" {
-                            if let Some(t) = item.get("text").and_then(|x| x.as_str()) {
-                                if !active_id.is_empty() && !t.trim().is_empty() {
-                                    if let Ok(mut map) = live_map().lock() {
-                                        if let Some(l) = map.get_mut(&active_id) {
-                                            l.reasoning_text = t.to_string();
-                                            l.updated = now_ms();
-                                        }
-                                        if let Some(ref init_sid) = existing_sid {
-                                            if init_sid != &active_id {
-                                                if let Some(l) = map.get_mut(init_sid) {
-                                                    l.reasoning_text = t.to_string();
-                                                    l.updated = now_ms();
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        } else if itype == "command_execution" {
-                            if let Some(cmd_str) = item.get("command").and_then(|x| x.as_str()) {
-                                if !active_id.is_empty() {
-                                    if let Ok(mut map) = live_map().lock() {
-                                        if let Some(l) = map.get_mut(&active_id) {
-                                            l.reasoning_text = format!("正在执行命令: {cmd_str}");
-                                            l.updated = now_ms();
-                                        }
-                                        if let Some(ref init_sid) = existing_sid {
-                                            if init_sid != &active_id {
-                                                if let Some(l) = map.get_mut(init_sid) {
-                                                    l.reasoning_text = format!("正在执行命令: {cmd_str}");
-                                                    l.updated = now_ms();
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                } else if kind == "turn.completed" || kind == "turn.failed" {
-                    if !active_id.is_empty() {
-                        if let Ok(mut map) = live_map().lock() {
-                            if let Some(l) = map.get_mut(&active_id) {
-                                l.running = false;
-                                l.pid = None;
-                                l.updated = now_ms();
-                            }
+                }
+                let finished = cancellation.while_current(|| {
+                    if kind == "thread.started" {
+                        if let Some(tid) = v.get("thread_id").and_then(|x| x.as_str()) {
                             if let Some(ref init_sid) = existing_sid {
-                                if let Some(l) = map.get_mut(init_sid) {
+                                if init_sid != tid {
+                                    register_session_alias(init_sid, tid);
+                                }
+                            }
+                            mark_headless_created(tid);
+                            if active_id != tid {
+                                let started = now_ms();
+                                active_id = tid.to_string();
+                                if let Ok(mut map) = live_map().lock() {
+                                    map.insert(
+                                        active_id.clone(),
+                                        LiveSession {
+                                            runtime_scope: crate::codex_runtime::current().scope,
+                                            agent: "codex".into(),
+                                            id: active_id.clone(),
+                                            title: trim_title(&prompt, 60),
+                                            cwd: cwd.clone(),
+                                            updated: started,
+                                            started_ms: started,
+                                            pid: Some(pid),
+                                            base_msg_count: 0,
+                                            user_text: extract_clean_user_prompt(&prompt),
+                                            assistant_text: String::new(),
+                                            reasoning_text: String::new(),
+                                            running: true,
+                                            error: None,
+                                        },
+                                    );
+                                }
+                            }
+                            if let Some(tx) = tx_opt.take() {
+                                let _ = tx.send(Ok(active_id.clone()));
+                            }
+                        }
+                    } else if kind == "item.completed" || kind == "item.started" {
+                        if let Some(item) = v.get("item") {
+                            let itype = item.get("type").and_then(|x| x.as_str()).unwrap_or("");
+                            if itype == "agent_message" {
+                                if let Some(t) = item.get("text").and_then(|x| x.as_str()) {
+                                    if !active_id.is_empty() {
+                                        if let Ok(mut map) = live_map().lock() {
+                                            if let Some(l) = map.get_mut(&active_id).filter(|live| live.pid == Some(pid)) {
+                                                l.assistant_text = t.to_string();
+                                                l.updated = now_ms();
+                                            }
+                                            if let Some(ref init_sid) = existing_sid {
+                                                if init_sid != &active_id {
+                                                    if let Some(l) = map.get_mut(init_sid).filter(|live| live.pid == Some(pid)) {
+                                                        l.assistant_text = t.to_string();
+                                                        l.updated = now_ms();
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            } else if itype == "reasoning" {
+                                if let Some(t) = item.get("text").and_then(|x| x.as_str()) {
+                                    if !active_id.is_empty() && !t.trim().is_empty() {
+                                        if let Ok(mut map) = live_map().lock() {
+                                            if let Some(l) = map.get_mut(&active_id).filter(|live| live.pid == Some(pid)) {
+                                                l.reasoning_text = t.to_string();
+                                                l.updated = now_ms();
+                                            }
+                                            if let Some(ref init_sid) = existing_sid {
+                                                if init_sid != &active_id {
+                                                    if let Some(l) = map.get_mut(init_sid).filter(|live| live.pid == Some(pid)) {
+                                                        l.reasoning_text = t.to_string();
+                                                        l.updated = now_ms();
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            } else if itype == "command_execution" {
+                                if let Some(cmd_str) = item.get("command").and_then(|x| x.as_str()) {
+                                    if !active_id.is_empty() {
+                                        if let Ok(mut map) = live_map().lock() {
+                                            if let Some(l) = map.get_mut(&active_id).filter(|live| live.pid == Some(pid)) {
+                                                l.reasoning_text = format!("正在执行命令: {cmd_str}");
+                                                l.updated = now_ms();
+                                            }
+                                            if let Some(ref init_sid) = existing_sid {
+                                                if init_sid != &active_id {
+                                                    if let Some(l) = map.get_mut(init_sid).filter(|live| live.pid == Some(pid)) {
+                                                        l.reasoning_text = format!("正在执行命令: {cmd_str}");
+                                                        l.updated = now_ms();
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else if kind == "turn.completed" || kind == "turn.failed" {
+                        if !active_id.is_empty() {
+                            if let Ok(mut map) = live_map().lock() {
+                                if let Some(l) = map.get_mut(&active_id).filter(|live| live.pid == Some(pid)) {
                                     l.running = false;
                                     l.pid = None;
                                     l.updated = now_ms();
                                 }
+                                if let Some(ref init_sid) = existing_sid {
+                                    if let Some(l) = map.get_mut(init_sid).filter(|live| live.pid == Some(pid)) {
+                                        l.running = false;
+                                        l.pid = None;
+                                        l.updated = now_ms();
+                                    }
+                                }
                             }
                         }
+                        return true;
                     }
-                    break;
-                }
+                    false
+                });
+                if finished != Some(false) { break; }
+
             }
         }
 
         let status = child.wait().ok();
+        cancellation.finished(pid);
         if let Some(tx) = tx_opt.take() {
             let _ = tx.send(Err("codex exited before starting thread".into()));
         }
         if !active_id.is_empty() {
             if let Ok(mut map) = live_map().lock() {
-                if let Some(l) = map.get_mut(&active_id) {
+                if let Some(l) = map.get_mut(&active_id).filter(|live| live.pid == Some(pid)) {
                     l.running = false;
                     l.pid = None;
                     l.updated = now_ms();
@@ -1543,7 +1572,7 @@ fn spawn_codex_runner(
                     }
                 }
                 if let Some(ref init_sid) = existing_sid {
-                    if let Some(l) = map.get_mut(init_sid) {
+                    if let Some(l) = map.get_mut(init_sid).filter(|live| live.pid == Some(pid)) {
                         l.running = false;
                         l.pid = None;
                         l.updated = now_ms();
@@ -1600,7 +1629,8 @@ pub fn codex_create(cwd: &str, text: &str, files: Option<&Value>) -> Result<Valu
     }
     let prompt = augmented;
     let (tx, rx) = mpsc::channel();
-    spawn_codex_runner(None, resolved_cwd.clone(), prompt.clone(), Some(tx));
+    let cancellation = crate::session_cancellation::Ticket::capture(&crate::codex_runtime::current().scope, None);
+    spawn_codex_runner(None, resolved_cwd.clone(), prompt.clone(), Some(tx), cancellation);
     match rx.recv_timeout(Duration::from_secs(10)) {
         Ok(Ok(tid)) => {
             mark_headless_created(&tid);
@@ -1619,8 +1649,9 @@ pub fn codex_create(cwd: &str, text: &str, files: Option<&Value>) -> Result<Valu
 
 pub fn codex_prompt(id: &str, text: &str, cwd: Option<&str>, files: Option<&Value>) -> Result<Value, String> {
     ensure_codex_scope(id)?;
-    crate::codex_runtime::current().prepare()?;
     let real_id = resolve_session_id(id);
+    let cancellation = crate::session_cancellation::Ticket::capture(&crate::codex_runtime::current().scope, Some(&real_id));
+    crate::codex_runtime::current().prepare()?;
     let disk_cwd = find_codex_file(&real_id)
         .and_then(|p| codex_meta(&p))
         .and_then(|m| m.get("cwd").and_then(|x| x.as_str()).map(str::to_string));
@@ -1644,71 +1675,80 @@ pub fn codex_prompt(id: &str, text: &str, cwd: Option<&str>, files: Option<&Valu
         let queued_clean = clean_user.clone();
         crate::codex_runtime::spawn(move || {
             let wait_start = now_ms();
-            while live_running(&queued_real_id) == Some(true) && now_ms().saturating_sub(wait_start) < 600_000 {
-                thread::sleep(Duration::from_millis(450));
-            }
-            let base_count = read_codex_disk_messages(&queued_real_id).len();
-            let started = now_ms();
-            if let Ok(mut map) = live_map().lock() {
-                let session_entry = LiveSession {
-                    runtime_scope: crate::codex_runtime::current().scope,
-                    agent: "codex".into(),
-                    id: queued_real_id.clone(),
-                    title: trim_title(&queued_clean, 60),
-                    cwd: queued_cwd.clone(),
-                    updated: started,
-                    started_ms: started,
-                    pid: None,
-                    base_msg_count: base_count,
-                    user_text: queued_clean.clone(),
-                    assistant_text: String::new(),
-                    reasoning_text: String::new(),
-                    running: true,
-                    error: None,
-                };
-                map.insert(queued_real_id.clone(), session_entry.clone());
-                if queued_real_id != orig_id {
-                    map.insert(orig_id.clone(), session_entry);
+            if !cancellation.wait_until_ready(
+                || live_running(&queued_real_id) == Some(true) && now_ms().saturating_sub(wait_start) < 600_000,
+                || thread::sleep(Duration::from_millis(450)),
+            ) { return; }
+            let prepared = cancellation.while_current(|| {
+                    let base_count = read_codex_disk_messages(&queued_real_id).len();
+                    let started = now_ms();
+                    if let Ok(mut map) = live_map().lock() {
+                        let session_entry = LiveSession {
+                            runtime_scope: crate::codex_runtime::current().scope,
+                            agent: "codex".into(),
+                            id: queued_real_id.clone(),
+                            title: trim_title(&queued_clean, 60),
+                            cwd: queued_cwd.clone(),
+                            updated: started,
+                            started_ms: started,
+                            pid: None,
+                            base_msg_count: base_count,
+                            user_text: queued_clean.clone(),
+                            assistant_text: String::new(),
+                            reasoning_text: String::new(),
+                            running: true,
+                            error: None,
+                        };
+                        map.insert(queued_real_id.clone(), session_entry.clone());
+                        if queued_real_id != orig_id {
+                            map.insert(orig_id.clone(), session_entry);
+                        }
+                    }
+                    base_count
+                });
+                let Some(base_count) = prepared else { return; };
+                if try_echo_to_interactive_cli(
+                    "codex",
+                    &queued_real_id,
+                    &queued_cwd,
+                    &queued_clean,
+                    &queued_prompt,
+                    base_count,
+                ) {
+                    return;
                 }
-            }
-            if try_echo_to_interactive_cli(
-                "codex",
-                &queued_real_id,
-                &queued_cwd,
-                &queued_clean,
-                &queued_prompt,
-                base_count,
-            ) {
-                return;
-            }
-            spawn_codex_runner(Some(queued_real_id), queued_cwd, queued_prompt, None);
-        });
-        return Ok(json!({ "ok": true, "id": id, "queued": true }));
-    }
-    let base_count = read_codex_disk_messages(&real_id).len();
-    let started = now_ms();
-    if let Ok(mut map) = live_map().lock() {
-        let session_entry = LiveSession {
-            runtime_scope: crate::codex_runtime::current().scope,
-            agent: "codex".into(),
-            id: real_id.clone(),
-            title: trim_title(&clean_user, 60),
-            cwd: resolved_cwd.clone(),
-            updated: started,
-            started_ms: started,
-            pid: None,
-            base_msg_count: base_count,
-            user_text: clean_user.clone(),
-            assistant_text: String::new(),
-            reasoning_text: String::new(),
-            running: true,
-            error: None,
-        };
-        map.insert(real_id.clone(), session_entry.clone());
-        if real_id != id {
-            map.insert(id.to_string(), session_entry);
+                spawn_codex_runner(Some(queued_real_id), queued_cwd, queued_prompt, None, cancellation);
+            });
+            return Ok(json!({ "ok": true, "id": id, "queued": true }));
         }
-    }
+        let prepared = cancellation.while_current(|| {
+        let base_count = read_codex_disk_messages(&real_id).len();
+        let started = now_ms();
+        if let Ok(mut map) = live_map().lock() {
+            let session_entry = LiveSession {
+                runtime_scope: crate::codex_runtime::current().scope,
+                agent: "codex".into(),
+                id: real_id.clone(),
+                title: trim_title(&clean_user, 60),
+                cwd: resolved_cwd.clone(),
+                updated: started,
+                started_ms: started,
+                pid: None,
+                base_msg_count: base_count,
+                user_text: clean_user.clone(),
+                assistant_text: String::new(),
+                reasoning_text: String::new(),
+                running: true,
+                error: None,
+            };
+            map.insert(real_id.clone(), session_entry.clone());
+            if real_id != id {
+                map.insert(id.to_string(), session_entry);
+            }
+        }
+        base_count
+    });
+    let Some(base_count) = prepared else { return Err("codex_cancelled: prompt was interrupted before launch".into()); };
     if try_echo_to_interactive_cli(
         "codex",
         &real_id,
@@ -1722,31 +1762,36 @@ pub fn codex_prompt(id: &str, text: &str, cwd: Option<&str>, files: Option<&Valu
     let is_new_disk_thread = find_codex_file(&real_id).is_none();
     if is_new_disk_thread {
         let (tx, rx) = mpsc::channel();
-        spawn_codex_runner(Some(real_id.clone()), resolved_cwd, final_prompt, Some(tx));
+        spawn_codex_runner(Some(real_id.clone()), resolved_cwd, final_prompt, Some(tx), cancellation);
         if let Ok(Ok(tid)) = rx.recv_timeout(Duration::from_secs(5)) {
             return Ok(json!({ "ok": true, "id": tid, "aliasOf": id }));
         }
         return Ok(json!({ "ok": true, "id": real_id }));
     }
-    spawn_codex_runner(Some(real_id), resolved_cwd, final_prompt, None);
+    spawn_codex_runner(Some(real_id), resolved_cwd, final_prompt, None, cancellation);
     Ok(json!({ "ok": true, "id": id }))
 }
 
 pub fn codex_interrupt(id: &str) -> Result<Value, String> {
     ensure_codex_scope(id)?;
     let real_id = resolve_session_id(id);
-    if let Ok(mut map) = live_map().lock() {
-        for key in [real_id.as_str(), id] {
-            if let Some(live) = map.get_mut(key) {
-                if let Some(pid) = live.pid.take() {
-                    kill_pid(pid);
+    let known = crate::session_cancellation::interrupt_with(&crate::codex_runtime::current().scope, &real_id, kill_pid, || {
+        let mut known = false;
+        if let Ok(mut map) = live_map().lock() {
+            for key in [real_id.as_str(), id] {
+                if let Some(live) = map.get_mut(key) {
+                    known = true;
+                    // The fence owns every in-process Codex child, including those
+                    // not yet visible here. Never kill again via a stale PID.
+                    live.pid = None;
+                    live.running = false;
+                    live.updated = now_ms();
                 }
-                live.running = false;
-                live.updated = now_ms();
             }
         }
-    }
-    Ok(json!({ "ok": true }))
+        known
+    });
+    Ok(json!({ "ok": true, "known": known }))
 }
 
 // ---------------- Claude Code ----------------

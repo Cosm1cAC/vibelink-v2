@@ -10,6 +10,7 @@ pub(super) fn fixture() -> (PathBuf, Shared, String) {
         tenants: Arc::new(tenants),
         beta_mode: false,
         bots: bots::BotFleetStore::load(dir.clone()),
+        work: group_work::WorkStore::load(dir.clone()).unwrap(),
         approvals: approvals::ApprovalGate::load(dir.clone()),
         voice: voice::VoiceService::load(dir.clone()),
         bindings: agent_sessions::Sessions::load(dir.clone()),
@@ -25,6 +26,32 @@ pub(super) fn fixture() -> (PathBuf, Shared, String) {
         http: model_gateway::client(),
     });
     (dir, app, admin)
+}
+
+#[tokio::test]
+async fn group_work_api_is_tenant_scoped_idempotent_and_not_an_agent_authority_source() {
+    let(dir,app,_)=fixture();
+    let(_,a)=app.auth.issue("tenant:beta_01:client",auth::Scope::Client);
+    let(_,b)=app.auth.issue("tenant:beta_02:client",auth::Scope::Client);
+    let(_,agent)=app.auth.issue("worker",auth::Scope::Agent);
+    let path="/api/bot-groups/work-test/work";
+    for token in [&a,&b] {
+        let(status,_)=request(app.clone(),token,Method::GET,path,Value::Null).await;assert_eq!(status,StatusCode::OK);
+        let(status,_)=request(app.clone(),token,Method::POST,"/api/bot-groups",json!({"id":"work-test","name":"Work test","botIds":["bot_cto","bot_dev","bot_qa"]})).await;assert_eq!(status,StatusCode::OK);
+    }
+    let input=json!({"requestId":"mobile-outbox-1","text":"Inspect this task","meterIdentity":{"userId":"beta_02"},"files":[{"filename":"test.txt","mime":"text/plain","base64":"YQ=="}]});
+    let(status,first)=request(app.clone(),&a,Method::POST,path,input.clone()).await;assert_eq!(status,StatusCode::ACCEPTED,"{first}");
+    let(status,repeated)=request(app.clone(),&a,Method::POST,path,input).await;assert_eq!(status,StatusCode::ACCEPTED);assert_eq!(first["work"]["id"],repeated["work"]["id"]);
+    assert!(!first.to_string().contains("YQ=="));assert!(first["work"].get("members").is_none());
+    let(_,own)=request(app.clone(),&a,Method::GET,path,Value::Null).await;assert_eq!(own["work"].as_array().unwrap().len(),1);
+    let(_,other)=request(app.clone(),&b,Method::GET,path,Value::Null).await;assert!(other["work"].as_array().unwrap().is_empty());
+    let(status,_)=request(app.clone(),&b,Method::POST,path,json!({"requestId":"evil-followup","text":"Change another user's task","replyToWorkId":first["work"]["id"]})).await;assert_eq!(status,StatusCode::BAD_REQUEST);
+    let action=format!("{path}/{}/actions",first["work"]["id"].as_str().unwrap());
+    let(status,_)=request(app.clone(),&b,Method::POST,&action,json!({"action":"cancel"})).await;assert_eq!(status,StatusCode::BAD_REQUEST);
+    let(status,_)=request(app.clone(),&agent,Method::POST,path,json!({"requestId":"agent-self-authorize","text":"Do work"})).await;assert_eq!(status,StatusCode::FORBIDDEN);
+    let(status,_)=request(app.clone(),&a,Method::POST,path,json!({"requestId":"outside","text":"Do work","botIds":["outside"]})).await;assert_eq!(status,StatusCode::BAD_REQUEST);
+    let(_,messages)=request(app.clone(),&a,Method::GET,"/api/bot-groups/work-test/messages",Value::Null).await;assert_eq!(messages["messages"].as_array().unwrap().len(),1);
+    fs::remove_dir_all(dir).unwrap();
 }
 
 #[tokio::test]

@@ -46,6 +46,7 @@ GUI 的 129MB 主要是 GL 驱动固定开销（关掉中文字体也有 114MB�
 
 ## 已实现
 
+- 群聊持久任务：Hub 主脑路由、执行、只读审校与验收；追问续接原任务，手机退出和服务重启后恢复。需要 Agent ≥ 0.3.0；[方案、API 与后续阶段](docs/group-work-roadmap.md)。
 - Hub：设备注册 / 心跳 / 离线判定 / 事件流 / 命令队列 / 配置版本库 / `/phone/<name>?t=` 下载
 - Agent：IP / 网关 / 系统代理 / 端口探测 / 出口 CONNECT 延迟 / 内存 / 运行时长
 - Agent 动作（Windows）：`set-proxy` `clear-proxy` `restart-service`（白名单）`probe`

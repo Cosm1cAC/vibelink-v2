@@ -2867,6 +2867,10 @@ impl BotFleetStore {
         Ok(grp)
     }
 
+    pub fn get_group(&self, group_id:&str)->Option<BotGroupRecord> {
+        self.inner.lock().unwrap().groups.iter().find(|g|g.id==group_id).cloned()
+    }
+
     pub fn list_group_messages(&self, group_id: &str) -> Vec<BotGroupMessage> {
         let s = self.inner.lock().unwrap();
         s.group_messages.get(group_id).cloned().unwrap_or_default()

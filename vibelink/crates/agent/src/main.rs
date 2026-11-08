@@ -6,6 +6,8 @@
 //!   VIBELINK_DEVICE=laptop
 mod agents;
 mod codex_runtime;
+mod operation_receipts;
+mod session_cancellation;
 mod subscription_policy;
 mod pty_and_worktree;
 mod roots;
@@ -23,7 +25,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-const AGENT_VERSION: &str = "0.2.9";
+const AGENT_VERSION: &str = "0.3.0";
 const PUSH: Duration = Duration::from_secs(5);
 const SLOW: Duration = Duration::from_secs(30);
 
@@ -512,7 +514,15 @@ fn handle_session_request(kind: &str, payload: &serde_json::Value, data: &std::p
     if is_beta_worker() && (!kind.starts_with("codex.") || !runtime.beta || runtime.model != codex_runtime::DEEPSEEK) {
         return Err("Public worker requires an isolated DeepSeek Codex binding".into());
     }
-    codex_runtime::with(runtime, || handle_scoped_session_request(kind,payload,data))
+    codex_runtime::with(runtime, || {
+        if matches!(kind, "codex.create" | "codex.prompt") {
+            operation_receipts::execute(data, &codex_runtime::current().scope, kind, payload, || {
+                handle_scoped_session_request(kind, payload, data)
+            })
+        } else {
+            handle_scoped_session_request(kind, payload, data)
+        }
+    })
 }
 
 fn handle_scoped_session_request(kind: &str, payload: &serde_json::Value, data: &std::path::Path) -> Result<serde_json::Value, String> {
@@ -543,6 +553,7 @@ fn handle_scoped_session_request(kind: &str, payload: &serde_json::Value, data: 
             }
         }
         "codex.messages" => agents::codex_messages(&sid, cursor),
+        "codex.operation" => operation_receipts::lookup(data, &codex_runtime::current().scope, payload),
         "codex.prompt" => {
             let runtime = codex_runtime::current();
             let isolated_cwd = if runtime.beta { runtime.prepare()?; runtime.workspace().to_string_lossy().to_string() } else { cwd.to_string() };
@@ -688,8 +699,11 @@ fn handle_scoped_session_request(kind: &str, payload: &serde_json::Value, data: 
 }
 
 fn session_worker(base: String, token: String, device: String) {
+    session_worker_in_data(base, token, device, data_dir())
+}
+
+fn session_worker_in_data(base: String, token: String, device: String, data: std::path::PathBuf) {
     let Ok(ep) = parse_endpoint(&base) else { return };
-    let data = data_dir();
     loop {
         let path = format!("/api/agent/session-requests?device={}", urlencode(&device));
         if let Ok((200, body)) = http_call(&ep, "GET", &path, &token, None) {
@@ -1097,3 +1111,6 @@ fn _now(_: u64) {
 
 #[cfg(test)]
 mod gateway_smoke;
+
+#[cfg(test)]
+mod group_work_smoke;

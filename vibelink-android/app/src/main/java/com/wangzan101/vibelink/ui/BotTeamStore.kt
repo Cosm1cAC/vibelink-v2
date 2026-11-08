@@ -2372,13 +2372,15 @@ object BotTeamStore {
         prefs(context).edit().putString(KEY_PENDING_PROFILES, pending.toString()).apply()
     }
 
-    private fun flushProfiles(context: Context, hub: String, token: String) {
+    private fun flushProfiles(context: Context, hub: String, token: String, guard: () -> Unit = {}) {
         val snapshot = synchronized(this) {
             JSONObject(prefs(context).getString(KEY_PENDING_PROFILES, "{}") ?: "{}")
         }
         for (id in snapshot.keys()) {
+            guard()
             val profile = snapshot.getJSONObject(id)
             RemoteApi.botUpsert(hub, token, profile)
+            guard()
             synchronized(this) {
                 val pending = JSONObject(prefs(context).getString(KEY_PENDING_PROFILES, "{}") ?: "{}")
                 // A newer edit made while this request was in flight must remain pending.
@@ -2387,6 +2389,54 @@ object BotTeamStore {
                     prefs(context).edit().putString(KEY_PENDING_PROFILES, pending.toString()).apply()
                 }
             }
+        }
+    }
+
+    /** Flush local model bindings before the Hub snapshots participants for durable work. */
+    suspend fun prepareGroupWork(context: Context, groupId: String, hub: String, token: String, guard: () -> Unit) = withContext(Dispatchers.IO) {
+        profileSyncMutex.withLock {
+            guard()
+            check(hub.isNotBlank() && token.isNotBlank()) { "请先连接 Hub 并完成配对" }
+            val group = getGroup(context, groupId) ?: error("群聊已不存在")
+            synchronized(this@BotTeamStore) {
+                group.botIds.mapNotNull { getBot(context, it) }.forEach { enqueueProfile(context, it) }
+            }
+            flushProfiles(context, hub, token, guard)
+            guard()
+            RemoteApi.botGroupUpsert(hub, token, JSONObject().put("id", group.id).put("name", group.name)
+                .put("description", group.description).put("botIds", JSONArray(group.botIds)).put("cwd", group.cwd))
+            guard()
+        }
+    }
+
+    /** Merge server-owned messages by ID without posting them back to the Hub. */
+    @Synchronized
+    fun mergeHubGroupMessages(context: Context, groupId: String, root: JSONObject, guard: () -> Unit = {}) {
+        guard()
+        val arr = root.optJSONArray("messages") ?: error("Hub group messages response is incompatible")
+        val current = listGroupMessages(context, groupId)
+        val merged = current.associateBy { it.id }.toMutableMap()
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            val id = o.optString("id").takeIf { it.isNotBlank() } ?: continue
+            val toolJson = o.optJSONArray("tools") ?: JSONArray()
+            val tools = (0 until toolJson.length()).mapNotNull { index -> toolJson.optJSONObject(index)?.let { t ->
+                RemoteApi.ToolCall(name = t.optString("name"), title = t.optString("title"), file = t.optString("file"),
+                    command = t.optString("command"), diff = t.optString("diff"))
+            } }
+            merged[id] = TeamGroupMessage(id = id, senderId = o.optString("senderId"),
+                senderName = o.optString("senderName"), senderJobTitle = o.optString("senderJobTitle"),
+                senderEngine = o.optString("senderEngine", "codex"), text = o.optString("text"),
+                reasoning = o.optString("reasoning"), startedAt = o.optLong("startedAt"),
+                at = o.optLong("at"), tools = tools, linkedSessionId = o.optString("linkedSessionId"), status = o.optString("status", "done"))
+        }
+        val updated = merged.values.sortedBy { it.at }.takeLast(200)
+        if (updated != current) {
+            guard()
+            saveGroupMessages(context, groupId, updated)
+            val last = updated.lastOrNull()
+            val group = getGroup(context, groupId)
+            if (last != null && group != null) upsertGroup(context, group.copy(lastText = last.text.take(80), lastAt = last.at))
         }
     }
 
@@ -2526,13 +2576,13 @@ object BotTeamStore {
             var msgChanged = false
             // 优先精确匹配绑定到同一 sessionId 的气泡（避免群聊多任务并发时覆盖同 Bot 的其他并发任务气泡）
             val exactIdx = msgs.indexOfLast { m ->
-                m.senderId == botId && m.linkedSessionId == sessionId
+                !m.id.startsWith("gw_") && !m.id.startsWith("work_") && m.senderId == botId && m.linkedSessionId == sessionId
             }
             val targetIdx = if (exactIdx >= 0) {
                 exactIdx
             } else {
                 msgs.indexOfLast { m ->
-                    m.senderId == botId && m.linkedSessionId.isBlank() && (
+                    !m.id.startsWith("gw_") && !m.id.startsWith("work_") && m.senderId == botId && m.linkedSessionId.isBlank() && (
                         m.status == "thinking" ||
                             m.text.contains("仍在后台持续执行中") ||
                             m.text.contains("正在自己的工位会话")

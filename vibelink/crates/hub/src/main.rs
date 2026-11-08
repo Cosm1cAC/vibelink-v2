@@ -15,6 +15,7 @@ use serde_json::{json, Value};
 mod approvals;
 mod auth;
 mod bots;
+mod group_work;
 mod model_gateway;
 mod model_usage;
 mod agent_sessions;
@@ -31,7 +32,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-const VERSION: &str = "0.1.0";
+const VERSION: &str = "0.2.0";
 const OFFLINE_AFTER_MS: u64 = 20_000;
 const EVENT_CAP: usize = 500;
 
@@ -48,6 +49,7 @@ struct App {
     pub(crate) tenants: Arc<tenants::BetaTenantStore>,
     pub(crate) beta_mode: bool,
     pub(crate) bots: bots::BotFleetStore,
+    work: group_work::WorkStore,
     pub(crate) approvals: approvals::ApprovalGate,
     pub(crate) voice: voice::VoiceService,
     data: PathBuf,
@@ -66,6 +68,7 @@ struct App {
 /// Requests waiting for an agent, plus the oneshot channels the HTTP side waits on.
 #[derive(Default)]
 struct SessionPlane {
+    agent_versions: HashMap<String, (String,u64)>,
     queue: HashMap<String, Vec<Value>>,
     waiters: HashMap<String, tokio::sync::oneshot::Sender<Result<Value, String>>>,
     seq: u64,
@@ -191,19 +194,9 @@ async fn auth_mw(State(app): State<Shared>, mut req: Request, next: Next) -> Res
     req.extensions_mut().insert(ctx);
     if let Some(tid) = tenant_id {
         if !tenant_route_allowed(&path) { return (StatusCode::FORBIDDEN, Json(json!({"error": "not available to public tenants"}))).into_response(); }
-        let tenant_app = {
-            let mut cache = app.tenant_apps.lock().unwrap();
-            cache.entry(tid.clone()).or_insert_with(|| {
-                let dir = app.data.join("tenants").join(&tid);
-                Arc::new(App {
-                    auth: app.auth.clone(), tenants: app.tenants.clone(), beta_mode: true,
-                    bots: bots::BotFleetStore::load_for_edition(dir.clone(), true),
-                    approvals: approvals::ApprovalGate::load(dir.clone()), voice: voice::VoiceService::load(dir.clone()),
-                    bindings: agent_sessions::Sessions::load(dir.clone()), usage: app.usage.clone(), grants: app.grants.clone(), magpie: app.magpie.clone(), tenant_id: Some(tid.clone()), data: dir.clone(), store: Mutex::new(load(&dir)),
-                    policy: Mutex::new(load_policy(&dir)), sessions: app.sessions.clone(),
-                    http: app.http.clone(), tenant_apps: Mutex::new(HashMap::new()),
-                })
-            }).clone()
+        let tenant_app = match tenant_app(&app,&tid) {
+            Ok(a)=>a,
+            Err(e)=>return (StatusCode::SERVICE_UNAVAILABLE,Json(json!({"error":e}))).into_response(),
         };
         // Re-route from a clean request: retaining Axum URL params duplicates path captures.
         let ctx = req.extensions().get::<auth::AuthCtx>().cloned().unwrap();
@@ -212,6 +205,21 @@ async fn auth_mw(State(app): State<Shared>, mut req: Request, next: Next) -> Res
         return api_router(tenant_app).oneshot(req).await.unwrap();
     }
     next.run(req).await
+}
+
+fn tenant_app(app:&Shared,tid:&str)->Result<Shared,String> {
+    let mut cache=app.tenant_apps.lock().unwrap();
+    if let Some(a)=cache.get(tid){return Ok(a.clone());}
+    let dir=app.data.join("tenants").join(tid);
+    let tenant=Arc::new(App {
+        auth:app.auth.clone(),tenants:app.tenants.clone(),beta_mode:true,
+        work:group_work::WorkStore::load(dir.clone())?,
+        bots:bots::BotFleetStore::load_for_edition(dir.clone(),true),
+        approvals:approvals::ApprovalGate::load(dir.clone()),voice:voice::VoiceService::load(dir.clone()),
+        bindings:agent_sessions::Sessions::load(dir.clone()),usage:app.usage.clone(),grants:app.grants.clone(),magpie:app.magpie.clone(),tenant_id:Some(tid.into()),data:dir.clone(),store:Mutex::new(load(&dir)),
+        policy:Mutex::new(load_policy(&dir)),sessions:app.sessions.clone(),http:app.http.clone(),tenant_apps:Mutex::new(HashMap::new()),
+    });
+    cache.insert(tid.into(),tenant.clone());Ok(tenant)
 }
 
 fn tenant_route_allowed(path: &str) -> bool {
@@ -393,6 +401,7 @@ async fn health(State(app): State<Shared>) -> Json<Value> {
         devices: n,
     });
     v["policyTicks"] = json!(policy::ticks());
+    v["groupWork"] = json!({"version":1,"durable":true,"agentMinVersion":"0.3.0"});
     Json(v)
 }
 
@@ -442,6 +451,7 @@ async fn ingest(
     };
     let host = device.report.hostname.clone();
     let id = device.report.id.clone();
+    app.sessions.lock().unwrap().agent_versions.insert(id.clone(),(device.report.agent_version.clone(),now));
     let was_offline = prev.map(|p| now.saturating_sub(p.last_seen) > OFFLINE_AFTER_MS).unwrap_or(true);
     store.devices.insert(id.clone(), device);
     if was_offline {
@@ -668,10 +678,16 @@ async fn call_agent(app: &Shared, device: &str, kind: &str, payload: Value, secs
         }
         actual_device = b.device.clone();
         payload["codexRuntime"] = agent_sessions::runtime(app,&b,matches!(kind,"codex.create"|"codex.prompt"));
+        // Only internal group orchestration sets this flag; HTTP session handlers never copy it.
+        if payload["groupWorkConsult"]==true {payload["codexRuntime"]["readOnly"]=json!(true);}
         if !sid.is_empty() {payload["session"] = json!(b.id);old_session=sid;}
         if kind=="codex.create" || kind=="codex.prompt" {binding=Some(b);}
     } else if app.beta_mode || kind.starts_with("antigravity.") || kind.starts_with("claude.") || kind.starts_with("opencode.") {
         return Err("This runtime or development resource is unavailable".into());
+    }
+    if payload["operationId"].as_str().is_some(){
+        if payload["operationDevice"].as_str().is_some_and(|pinned|pinned!=actual_device){return Err("Work operation is pinned to its original Agent device".into());}
+        group_work::agent_ready(app,&actual_device)?;
     }
     let (id, rx) = {
         let mut s = app.sessions.lock().unwrap();
@@ -1120,7 +1136,18 @@ async fn plugins_post(
 // ---------------- Persistent Bots, Memories, Groups & Fleet Management ----------------
 
 async fn bots_list(State(app): State<Shared>) -> Json<Value> {
-    Json(app.bots.list_snapshot())
+    let mut snapshot=app.bots.list_snapshot();
+    if let Some(groups)=snapshot["groups"].as_array_mut() {
+        for group in groups {
+            if let Some(message)=app.work.latest_message(group["id"].as_str().unwrap_or("")) {
+                if message.at>=group["lastAt"].as_u64().unwrap_or(0) {
+                    group["lastAt"]=json!(message.at);
+                    group["lastText"]=json!(format!("{}：{}",message.sender_name,message.text.chars().take(80).collect::<String>()));
+                }
+            }
+        }
+    }
+    Json(snapshot)
 }
 
 async fn bots_templates_get(State(app): State<Shared>) -> Json<Value> {
@@ -1235,7 +1262,41 @@ async fn bot_group_messages_get(
     State(app): State<Shared>,
     Path(id): Path<String>,
 ) -> Json<Value> {
-    Json(json!({ "messages": app.bots.list_group_messages(&id) }))
+    let mut messages=app.bots.list_group_messages(&id);
+    for message in app.work.messages(&id) {
+        if let Some(old)=messages.iter_mut().find(|m|m.id==message.id){*old=message;}else{messages.push(message);}
+    }
+    messages.sort_by_key(|m|m.at);
+    Json(json!({ "messages": messages }))
+}
+
+async fn group_work_list(State(app):State<Shared>,Path(id):Path<String>)->Json<Value> {
+    Json(json!({"work":app.work.list_public(&id)}))
+}
+async fn group_work_submit(State(app):State<Shared>,Path(id):Path<String>,axum::Extension(ctx):axum::Extension<auth::AuthCtx>,Json(body):Json<Value>)->Response {
+    let Some(group)=app.bots.get_group(&id)else{return (StatusCode::NOT_FOUND,Json(json!({"error":"Group not found; sync the group first"}))).into_response();};
+    let requested:Vec<String>=match serde_json::from_value(body.get("botIds").cloned().unwrap_or(json!([]))) {
+        Ok(v)=>v,Err(_)=>return (StatusCode::BAD_REQUEST,Json(json!({"error":"Invalid botIds"}))).into_response(),
+    };
+    if requested.iter().any(|b|!group.bot_ids.contains(b)){return (StatusCode::BAD_REQUEST,Json(json!({"error":"Selected Bot is not a group member"}))).into_response();}
+    let mut members=Vec::new();
+    for bid in &group.bot_ids {
+        if !requested.is_empty()&&!requested.contains(bid){continue;}
+        if let Some(bot)=app.bots.get_bot(bid).filter(|b|!b.archived){
+            // Model, workspace and permission settings are snapshotted for the work's lifetime.
+            members.push(bot);
+        }
+    }
+    match app.work.submit(&id,&body,model_gateway::identity(&ctx),members) {
+        Ok(w)=>(StatusCode::ACCEPTED,Json(json!({"ok":true,"work":group_work::public(&w)}))).into_response(),
+        Err(e)=>(StatusCode::BAD_REQUEST,Json(json!({"error":e}))).into_response(),
+    }
+}
+async fn group_work_action(State(app):State<Shared>,Path((gid,wid)):Path<(String,String)>,axum::Extension(ctx):axum::Extension<auth::AuthCtx>,Json(body):Json<Value>)->Response {
+    match app.work.action(&gid,&wid,&model_gateway::identity(&ctx).user_id,body["action"].as_str().unwrap_or("")) {
+        Ok(w)=>Json(json!({"ok":true,"work":group_work::public(&w)})).into_response(),
+        Err(e)=>(StatusCode::BAD_REQUEST,Json(json!({"error":e}))).into_response(),
+    }
 }
 
 async fn bot_group_messages_post(
@@ -2257,6 +2318,7 @@ async fn main() {
         tenants: Arc::new(tenants_store),
         beta_mode,
         bots: bots_store,
+        work: group_work::WorkStore::load(data.clone()).expect("load durable group work ledger"),
         approvals: approvals_gate,
         voice: voice_svc,
         bindings: agent_sessions::Sessions::load(data.clone()),
@@ -2277,6 +2339,11 @@ async fn main() {
     });
 
     app.usage.import_legacy(app.tenants.list_summary()).expect("migrate tenant usage");
+    // Restore tenant task runners even when no phone has reconnected since the Hub restart.
+    for row in app.tenants.list_summary() {
+        if let Some(tid)=row["tenantId"].as_str(){tenant_app(&app,tid).expect("load tenant group work");}
+    }
+    group_work::spawn(app.clone());
 
     let router = api_router(app.clone()).layer(middleware::from_fn_with_state(app.clone(), auth_mw));
 
@@ -2355,6 +2422,8 @@ fn api_router(app: Shared) -> Router {
         .route("/api/bots/{id}/memories/{mem_id}", axum::routing::delete(bot_memories_delete))
         .route("/api/bot-groups", post(bot_groups_post))
         .route("/api/bot-groups/{id}/messages", get(bot_group_messages_get).post(bot_group_messages_post))
+        .route("/api/bot-groups/{id}/work",get(group_work_list).post(group_work_submit))
+        .route("/api/bot-groups/{id}/work/{wid}/actions",post(group_work_action))
         .route("/api/fleet/action", post(fleet_action_post))
         .route("/api/approvals", get(approvals_list))
         .route("/api/approvals/policy", get(approvals_policy_get).post(approvals_policy_post))

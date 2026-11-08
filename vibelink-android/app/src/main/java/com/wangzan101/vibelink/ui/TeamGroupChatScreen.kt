@@ -79,6 +79,7 @@ import com.wangzan101.vibelink.ui.theme.VibeLinkIcons
 import com.wangzan101.vibelink.ui.theme.VibeLinkShapes
 import com.wangzan101.vibelink.ui.theme.VibeLinkTheme
 import com.wangzan101.vibelink.ui.theme.VibeLinkType
+import com.wangzan101.vibelink.remote.GroupWorkSubmission
 import com.wangzan101.vibelink.remote.RemoteApi
 import com.wangzan101.vibelink.remote.RemoteStore
 import com.wangzan101.vibelink.remote.RichText
@@ -174,8 +175,8 @@ fun TeamGroupChatScreen(
     }
     val draftKey = remember(groupId) { "group:$groupId" }
     var input by remember(groupId) { mutableStateOf(BotTeamStore.getDraftText(ctx, draftKey)) }
-    // 群协同模式："grok_420" (Captain拆解→主程执行→Lucas红队挑刺) | "relay" (管理+执行双人接力) | "single" (单人响应)
-    var collabMode by remember { mutableStateOf("grok_420") }
+    // Hub 负责 auto 调度、多人分工和接力；页面仅提交所选模式。
+    var collabMode by remember { mutableStateOf("auto") }
     // Open Duet 委派权限模式："work" (全权实操落盘) | "consult" (只读咨询核查围栏)
     var delegationMode by remember { mutableStateOf("work") }
     // Open Duet 单次发言按需挂载的技能 ID 集合 (/skill)
@@ -184,19 +185,16 @@ fun TeamGroupChatScreen(
     var learnSkillTarget by remember { mutableStateOf<Pair<BotFriend, TeamGroupMessage>?>(null) }
     var reworkTarget by remember { mutableStateOf<Pair<BotFriend, TeamGroupMessage>?>(null) }
     var excerptDialogTarget by remember { mutableStateOf<TeamGroupMessage?>(null) }
-    // 多任务并发追踪：thinkingMsgId -> bot.id，支持同一群聊多条指令同时执行、多 Bot / 同 Bot 多工位并发
-    var activeTaskBotMap by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
-    val activeTaskJobs = remember { java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Job>() }
-    val activeTaskSessions = remember { java.util.concurrent.ConcurrentHashMap<String, String>() }
-    val runningBotIds = remember(activeTaskBotMap) { activeTaskBotMap.values.toSet() }
-    val activeTaskCount = activeTaskBotMap.size
-    // 群聊忙时发送策略："parallel" (默认：多任务并发执行) | "queue" (排队顺延) | "interrupt" (立即打断)
-    var busySendMode by remember(draftKey) {
-        mutableStateOf(BotTeamStore.getBusySendMode(draftKey, "parallel"))
-    }
-    var queuedPrompts by remember(draftKey) {
-        mutableStateOf(BotTeamStore.getQueuedPrompts(draftKey))
-    }
+    val workByGroup by GroupWorkStore.work.collectAsState()
+    val workErrors by GroupWorkStore.errors.collectAsState()
+    val pendingByGroup by GroupWorkStore.pending.collectAsState()
+    val workKey = GroupWorkStore.key(ctx, groupId)
+    val workItems = workByGroup[workKey].orEmpty()
+    val runningBotIds = workItems.filter { it.active }.flatMap { work ->
+        work.steps.filter { it.status in setOf("queued", "running", "dispatching", "waiting") }.map { it.botId }
+    }.toSet()
+    val activeTaskCount = workItems.count { it.active }
+    var replyToWorkId by remember(groupId) { mutableStateOf<String?>(null) }
     var showEditGroup by remember { mutableStateOf(false) }
     var showMemberModels by remember { mutableStateOf(false) }
     var showRecruitBot by remember { mutableStateOf(false) }
@@ -235,8 +233,8 @@ fun TeamGroupChatScreen(
 
     suspend fun scrollToBottomImmediate() {
         scrollToBottomState.hideImmediate()
-        if (messages.isEmpty()) return
-        val targetIdx = messages.size
+        if (messages.isEmpty() && workItems.isEmpty()) return
+        val targetIdx = messages.size + workItems.size
         runCatching {
             listState.scrollToItem(targetIdx, scrollOffset = 100_000)
             androidx.compose.runtime.withFrameNanos { }
@@ -271,6 +269,7 @@ fun TeamGroupChatScreen(
 
     LaunchedEffect(
         groupId,
+        workItems.maxOfOrNull { it.updatedAt },
         messages.size,
         messages.lastOrNull()?.text?.length,
         messages.lastOrNull()?.reasoning?.length,
@@ -281,488 +280,37 @@ fun TeamGroupChatScreen(
         }
     }
 
-    fun appendOrUpdateMessage(msg: TeamGroupMessage) {
-        messages = BotTeamStore.upsertGroupMessage(ctx, groupId, msg)
-        group?.let { g ->
-            val previewBody = when {
-                msg.text.isNotBlank() && !msg.text.startsWith("🔧 正在调用工具") -> msg.text
-                msg.tools.isNotEmpty() -> "已调用 ${msg.tools.size} 步工具完成操作"
-                msg.reasoning.isNotBlank() -> "已完成思考与操作"
-                else -> "正在思考…"
-            }
-            val preview = if (msg.senderId == "user") "我: $previewBody" else "[${msg.senderJobTitle} ${msg.senderName}]: $previewBody"
-            val updated = g.copy(lastText = preview.replace("\n", " ").take(60), lastAt = msg.at)
-            BotTeamStore.upsertGroup(ctx, updated)
-        }
-    }
-
-    // 后台自动同步挂起/后台执行中的群聊 Bot 消息，以及为历史已完成消息补齐思考过程与工具调用记录
-    val backfilledMsgIds = remember(groupId) { mutableSetOf<String>() }
+    // Polling may stop at any time; execution belongs to the Hub.
     LaunchedEffect(groupId) {
         while (true) {
+            GroupWorkStore.refresh(ctx, groupId)
             delay(2500L)
-            val currentMsgs = BotTeamStore.listGroupMessages(ctx, groupId)
-            val activeMsgIds = activeTaskBotMap.keys
-            val pendingTargets = currentMsgs.filter { m ->
-                m.senderId != "user" && m.id !in activeMsgIds && (
-                    m.status == "thinking" ||
-                        m.text.contains("仍在后台持续执行中") ||
-                        m.text.contains("正在自己的工位会话")
-                    )
-            }
-            val backfillTargets = currentMsgs.takeLast(10).filter { m ->
-                m.senderId != "user" &&
-                    m.status != "thinking" &&
-                    m.linkedSessionId.isNotBlank() &&
-                    m.reasoning.isBlank() &&
-                    m.tools.isEmpty() &&
-                    m.id !in backfilledMsgIds
-            }
-            if (pendingTargets.isNotEmpty() || backfillTargets.isNotEmpty()) {
-                val hub = RemoteStore.hub(ctx)
-                val token = RemoteStore.token(ctx)
-                if (hub.isNotBlank() && token.isNotBlank()) {
-                    for (pending in pendingTargets) {
-                        val bot = BotTeamStore.getBot(ctx, pending.senderId)
-                        val engine = pending.senderEngine.ifBlank { bot?.engine ?: "codex" }
-                        val device = bot?.device?.ifBlank { "pc" } ?: "pc"
-                        val sid = pending.linkedSessionId.ifBlank { bot?.activeSessionId.orEmpty() }
-                        if (sid.isBlank()) continue
-                        val remoteMsgs = runCatching {
-                            withContext(Dispatchers.IO) {
-                                RemoteApi.messages(hub, token, device, engine, sid)
-                            }
-                        }.getOrDefault(emptyList())
-                        if (remoteMsgs.isNotEmpty()) {
-                            RemoteSessionCache.putCachedMessages(ctx, sid, remoteMsgs)
-                            val lastAssistant = remoteMsgs.lastOrNull { it.role == "assistant" }
-                            if (lastAssistant != null) {
-                                if (lastAssistant.at > 0L) {
-                                    val cleanText = lastAssistant.text.trim()
-                                    val isCorruptedReasoning = cleanText.startsWith("🔧 正在调用工具") ||
-                                        cleanText.startsWith("🔧 已调用") ||
-                                        (lastAssistant.reasoning.isNotBlank() && lastAssistant.reasoning.contains(cleanText))
-                                    val effectiveText = if (isCorruptedReasoning) "" else cleanText
-                                    if (effectiveText.isNotBlank() && !effectiveText.contains("只有 <bot_identity>")) {
-                                        val needsInputQ = BotTeamStore.extractNeedsInput(effectiveText)
-                                        appendOrUpdateMessage(
-                                            pending.copy(
-                                                text = effectiveText,
-                                                reasoning = lastAssistant.reasoning.ifBlank { pending.reasoning },
-                                                startedAt = if (lastAssistant.started > 0L) lastAssistant.started else pending.startedAt,
-                                                tools = lastAssistant.tools.ifEmpty { pending.tools },
-                                                linkedSessionId = sid,
-                                                status = if (needsInputQ != null) "needs_input" else "done",
-                                                at = maxOf(pending.at, lastAssistant.at),
-                                            ),
-                                        )
-                                    } else if (effectiveText.contains("只有 <bot_identity>")) {
-                                        appendOrUpdateMessage(
-                                            pending.copy(
-                                                text = "（旧会话参数截断已自动修复，请重新派发一次任务即可在全新工位会话中执行）",
-                                                linkedSessionId = sid,
-                                                status = "done",
-                                            ),
-                                        )
-                                    } else {
-                                        // 仅有思维链与工具调用，无答复正文；绝不能把 reasoning 填充到 text！
-                                        val updatedReasoning = lastAssistant.reasoning.ifBlank { pending.reasoning }
-                                        val updatedTools = lastAssistant.tools.ifEmpty { pending.tools }
-                                        appendOrUpdateMessage(
-                                            pending.copy(
-                                                text = "",
-                                                reasoning = updatedReasoning,
-                                                startedAt = if (lastAssistant.started > 0L) lastAssistant.started else pending.startedAt,
-                                                tools = updatedTools,
-                                                linkedSessionId = sid,
-                                                status = "done",
-                                                at = maxOf(pending.at, lastAssistant.at),
-                                            ),
-                                        )
-                                    }
-                                } else if (lastAssistant.at == 0L) {
-                                    val updatedReasoning = lastAssistant.reasoning.ifBlank { pending.reasoning }
-                                    val updatedStarted = if (lastAssistant.started > 0L) lastAssistant.started else pending.startedAt
-                                    val cleanText = lastAssistant.text.trim()
-                                    val isCorruptedReasoning = cleanText.startsWith("🔧 正在调用工具") ||
-                                        cleanText.startsWith("🔧 已调用") ||
-                                        (updatedReasoning.isNotBlank() && updatedReasoning.contains(cleanText))
-                                    val effectiveText = if (isCorruptedReasoning) "" else cleanText
-                                    if (
-                                        effectiveText != pending.text ||
-                                        updatedReasoning != pending.reasoning ||
-                                        lastAssistant.tools.size != pending.tools.size
-                                    ) {
-                                        appendOrUpdateMessage(
-                                            pending.copy(
-                                                text = effectiveText,
-                                                reasoning = updatedReasoning,
-                                                startedAt = updatedStarted,
-                                                tools = lastAssistant.tools.ifEmpty { pending.tools },
-                                                linkedSessionId = sid,
-                                                status = "thinking",
-                                            ),
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    for (hist in backfillTargets) {
-                        backfilledMsgIds.add(hist.id)
-                        val bot = BotTeamStore.getBot(ctx, hist.senderId)
-                        val engine = hist.senderEngine.ifBlank { bot?.engine ?: "codex" }
-                        val device = bot?.device?.ifBlank { "pc" } ?: "pc"
-                        val sid = hist.linkedSessionId
-                        val cached = RemoteSessionCache.getCachedMessages(ctx, sid).first
-                        val remoteMsgs = if (cached.isNotEmpty()) {
-                            cached
-                        } else {
-                            val fetched = runCatching {
-                                withContext(Dispatchers.IO) {
-                                    RemoteApi.messages(hub, token, device, engine, sid)
-                                }
-                            }.getOrDefault(emptyList())
-                            if (fetched.isNotEmpty()) RemoteSessionCache.putCachedMessages(ctx, sid, fetched)
-                            fetched
-                        }
-                        val matched = remoteMsgs.lastOrNull {
-                            it.role == "assistant" && (it.text.trim() == hist.text.trim() || hist.text.startsWith(it.text.take(40)))
-                        } ?: remoteMsgs.lastOrNull { it.role == "assistant" }
-                        if (matched != null && (matched.reasoning.isNotBlank() || matched.tools.isNotEmpty())) {
-                            appendOrUpdateMessage(
-                                hist.copy(
-                                    reasoning = matched.reasoning,
-                                    startedAt = if (matched.started > 0L) matched.started else hist.startedAt,
-                                    tools = matched.tools,
-                                ),
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    fun triggerBotsForMessage(
-        userText: String,
-        targetBots: List<BotFriend>,
-        overrideMode: String? = null,
-        filesToSend: List<RemoteAttachment> = emptyList(),
-        skillsOverride: List<String>? = null,
-        interruptBusyFirst: Boolean = false,
-    ) {
-        if (targetBots.isEmpty()) return
-        val skillsForTurn = skillsOverride ?: attachedSkillIds.toList()
-        val filesJson = filesToSend.map { it.toJson() }
-
-        suspend fun runSingleBotTask(
-            bot: BotFriend,
-            priorOutput: String,
-        ): String {
-            val wasBotAlreadyRunning = bot.id in activeTaskBotMap.values
-            if (interruptBusyFirst && wasBotAlreadyRunning) {
-                val hub = RemoteStore.hub(ctx)
-                val token = RemoteStore.token(ctx)
-                // 中断该 Bot 正在群里执行的任务协程与底层会话
-                activeTaskBotMap.filterValues { it == bot.id }.keys.forEach { oldMsgId ->
-                    activeTaskJobs.remove(oldMsgId)?.cancel()
-                    val oldSid = activeTaskSessions.remove(oldMsgId).orEmpty().ifBlank { bot.activeSessionId }
-                    if (oldSid.isNotBlank() && hub.isNotBlank() && token.isNotBlank()) {
-                        runCatching {
-                            withContext(Dispatchers.IO) {
-                                RemoteApi.interrupt(hub, token, bot.device.ifBlank { "pc" }, oldSid, bot.engine)
-                            }
-                        }
-                    }
-                    activeTaskBotMap = activeTaskBotMap - oldMsgId
-                }
-            }
-
-            // 在 Grok 4.20 辩论流水线中，情报侦察(Harper)与红队审校(Lucas)默认走 consult 只读围栏，主程(Benjamin)走 work 实操
-            val effectiveMode = overrideMode ?: when {
-                delegationMode == "consult" -> "consult"
-                collabMode == "grok_420" && (bot.id == "bot_qa" || bot.templateId == "tpl_lucas_critic" || bot.templateId == "tpl_harper_research" || bot.disabledTools.isNotEmpty()) -> "consult"
-                else -> "work"
-            }
-            val isReworkTurn = userText.startsWith("[Rework")
-            // 若该 Bot 当前已有另一条指令在执行且未选择打断，自动开启独立新工位会话实现多任务并发，绝不互相打断或覆盖！
-            val forceNewForTask = (bot.lifecycle == BotLifecycle.PROJECT && !isReworkTurn) ||
-                (wasBotAlreadyRunning && !interruptBusyFirst)
-            val modeBadge = buildString {
-                append(if (effectiveMode == "consult") "🔍 咨询只读 (Consult)" else "🛠️ 实操落盘 (Work)")
-                if (wasBotAlreadyRunning && !interruptBusyFirst) append(" · 🚀 并行新工位")
-            }
-            val thinkingMsgId = "msg_" + UUID.randomUUID().toString().take(8)
-            activeTaskBotMap = activeTaskBotMap + (thinkingMsgId to bot.id)
-            kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]?.let { job ->
-                activeTaskJobs[thinkingMsgId] = job
-            }
-            val baseHeader = "正在自己的工位会话 (${agentDisplayName(bot.engine)} · $modeBadge) 中处理任务…"
-            var currentLinkedSid = if (forceNewForTask) "" else bot.activeSessionId
-            if (currentLinkedSid.isNotBlank()) {
-                activeTaskSessions[thinkingMsgId] = currentLinkedSid
-            }
-            val turnStartMs = System.currentTimeMillis()
-            var latestReasoning = ""
-            var latestStartedAt = turnStartMs
-            var latestTools = emptyList<RemoteApi.ToolCall>()
-            val thinkingMsg = TeamGroupMessage(
-                id = thinkingMsgId,
-                senderId = bot.id,
-                senderName = bot.name,
-                senderJobTitle = bot.jobTitle,
-                senderEngine = bot.engine,
-                text = "",
-                reasoning = baseHeader,
-                startedAt = turnStartMs,
-                at = turnStartMs,
-                linkedSessionId = currentLinkedSid,
-                status = "thinking",
-            )
-            appendOrUpdateMessage(thinkingMsg)
-
-            val recentContext = messages
-                .filter { it.id != thinkingMsgId && (it.status == "done" || it.status == "needs_input") }
-                .takeLast(6)
-                .joinToString("\n") { m ->
-                    val who = if (m.senderId == "user") "用户(群主)" else "${m.senderName}[${m.senderJobTitle}]"
-                    "$who: ${m.text.take(260)}"
-                } + if (priorOutput.isNotBlank()) "\n\n【前序协作 Bot 刚输出的结果】\n$priorOutput" else ""
-
-            try {
-                val (sessionId, replyText) = BotTeamStore.executeBotTurn(
-                    context = ctx,
-                    bot = bot,
-                    userMessage = userText,
-                    groupContextSummary = recentContext,
-                    mode = effectiveMode,
-                    attachedSkillIds = skillsForTurn,
-                    files = filesJson,
-                    forceNewSession = forceNewForTask,
-                    onSessionLinked = { linkedSid ->
-                        currentLinkedSid = linkedSid
-                        if (linkedSid.isNotBlank()) {
-                            activeTaskSessions[thinkingMsgId] = linkedSid
-                        }
-                        scope.launch(Dispatchers.Main) {
-                            appendOrUpdateMessage(
-                                thinkingMsg.copy(
-                                    text = "",
-                                    reasoning = latestReasoning.ifBlank { baseHeader },
-                                    startedAt = latestStartedAt,
-                                    tools = latestTools,
-                                    linkedSessionId = linkedSid,
-                                    status = "thinking",
-                                ),
-                            )
-                        }
-                    },
-                    onProgress = { progressText ->
-                        if (latestReasoning.isBlank() && latestTools.isEmpty()) {
-                            scope.launch(Dispatchers.Main) {
-                                appendOrUpdateMessage(
-                                    thinkingMsg.copy(
-                                        text = "",
-                                        reasoning = "$baseHeader\n\n$progressText",
-                                        startedAt = latestStartedAt,
-                                        at = System.currentTimeMillis(),
-                                        linkedSessionId = currentLinkedSid,
-                                        status = "thinking",
-                                    ),
-                                )
-                            }
-                        }
-                    },
-                    onTurnUpdate = { turnMsg ->
-                        if (turnMsg.reasoning.isNotBlank()) latestReasoning = turnMsg.reasoning
-                        if (turnMsg.started in (turnStartMs - 10_000L)..turnStartMs) {
-                            latestStartedAt = turnMsg.started
-                        }
-                        if (turnMsg.tools.isNotEmpty()) latestTools = turnMsg.tools
-                        scope.launch(Dispatchers.Main) {
-                            appendOrUpdateMessage(
-                                thinkingMsg.copy(
-                                    text = turnMsg.text,
-                                    reasoning = latestReasoning.ifBlank { baseHeader },
-                                    startedAt = latestStartedAt,
-                                    tools = latestTools,
-                                    at = System.currentTimeMillis(),
-                                    linkedSessionId = currentLinkedSid,
-                                    status = "thinking",
-                                ),
-                            )
-                        }
-                    },
-                )
-                val needsInputQ = BotTeamStore.extractNeedsInput(replyText)
-                appendOrUpdateMessage(
-                    thinkingMsg.copy(
-                        text = replyText,
-                        reasoning = latestReasoning,
-                        startedAt = latestStartedAt,
-                        tools = latestTools,
-                        at = System.currentTimeMillis(),
-                        linkedSessionId = sessionId,
-                        status = if (needsInputQ != null) "needs_input" else "done",
-                    ),
-                )
-                return "[${bot.jobTitle} ${bot.name}]:\n$replyText"
-            } finally {
-                activeTaskBotMap = activeTaskBotMap - thinkingMsgId
-                activeTaskJobs.remove(thinkingMsgId)
-                activeTaskSessions.remove(thinkingMsgId)
-            }
-        }
-
-        // 判断本次指令内的多个目标 Bot 是否同时并发执行：
-        // - 当处于「🚀 多Bot并发」模式，或用户在单条消息中同时 @点名了多个 Bot 时，所有目标 Bot 同时并发启动！
-        // - 当处于「🧠 四阶段协同」或「⚡ 双人接力」且未手动点名多人时，本条指令内部按流水线接力，但不同指令之间完全并发！
-        val runTargetsInParallel = collabMode == "parallel" || (
-            targetBots.size > 1 && targetBots.count { b ->
-                userText.contains("@${b.name}") || userText.contains("@${b.jobTitle}")
-            } > 1
-            )
-
-        if (runTargetsInParallel && targetBots.size > 1) {
-            targetBots.forEach { bot ->
-                scope.launch {
-                    runSingleBotTask(bot, priorOutput = "")
-                }
-            }
-        } else {
-            scope.launch {
-                var priorOutput = ""
-                for (bot in targetBots) {
-                    priorOutput = runSingleBotTask(bot, priorOutput = priorOutput)
-                }
-            }
-        }
-    }
-
-    fun resolveTargetsForText(effectiveUserText: String): List<BotFriend> {
-        val mentioned = memberBots.filter { b ->
-            effectiveUserText.contains("@${b.name}") || effectiveUserText.contains("@${b.jobTitle}")
-        }
-        return when {
-            mentioned.isNotEmpty() -> mentioned
-            collabMode == "parallel" -> memberBots.ifEmpty { emptyList() }
-            collabMode == "grok_420" -> {
-                val captain = memberBots.firstOrNull { it.id == "bot_cto" || it.templateId == "tpl_grok_cos" || it.lifecycle == BotLifecycle.MANAGEMENT }
-                val executor = memberBots.firstOrNull {
-                    it.id != captain?.id && (it.id == "bot_dev" || it.templateId == "tpl_benjamin_code" || it.disabledTools.isEmpty())
-                }
-                val critic = memberBots.firstOrNull {
-                    it.id != captain?.id && it.id != executor?.id &&
-                        (it.id == "bot_qa" || it.templateId == "tpl_lucas_critic" || it.disabledTools.isNotEmpty())
-                }
-                listOfNotNull(captain, executor, critic).distinctBy { it.id }.ifEmpty {
-                    listOfNotNull(memberBots.firstOrNull())
-                }
-            }
-            collabMode == "relay" -> {
-                val mgr = memberBots.firstOrNull { it.lifecycle == BotLifecycle.MANAGEMENT }
-                val proj = memberBots.firstOrNull { it.lifecycle == BotLifecycle.PROJECT && it.id != mgr?.id }
-                listOfNotNull(mgr, proj).ifEmpty { listOfNotNull(memberBots.firstOrNull()) }
-            }
-            else -> {
-                val mgr = memberBots.firstOrNull { it.lifecycle == BotLifecycle.MANAGEMENT } ?: memberBots.firstOrNull()
-                listOfNotNull(mgr)
-            }
-        }
-    }
-
-    fun dispatchGroupInstructionNow(
-        rawText: String,
-        filesToSend: List<RemoteAttachment>,
-        skillsForTurn: List<String>,
-        targetBotIds: List<String> = emptyList(),
-        interruptBusyFirst: Boolean = false,
-    ) {
-        val text = rawText.trim()
-        if (text.isBlank() && filesToSend.isEmpty()) return
-        val attachmentBadge = if (filesToSend.isEmpty()) "" else {
-            filesToSend.joinToString("\n") { "📎 ${it.name} (${it.size / 1024} KB)" } +
-                if (text.isNotBlank()) "\n\n" else ""
-        }
-        val effectiveUserText = if (text.isNotBlank()) text else "请查看并处理我上传的附件：${filesToSend.joinToString(", ") { it.name }}"
-        val userMsg = TeamGroupMessage(
-            id = "msg_" + UUID.randomUUID().toString().take(8),
-            senderId = "user",
-            senderName = "我",
-            text = attachmentBadge + text,
-            at = System.currentTimeMillis(),
-            status = "done",
-        )
-        appendOrUpdateMessage(userMsg)
-        val targets = if (targetBotIds.isNotEmpty()) {
-            memberBots.filter { it.id in targetBotIds }.ifEmpty { resolveTargetsForText(effectiveUserText) }
-        } else {
-            resolveTargetsForText(effectiveUserText)
-        }
-        triggerBotsForMessage(
-            userText = effectiveUserText,
-            targetBots = targets,
-            filesToSend = filesToSend,
-            skillsOverride = skillsForTurn,
-            interruptBusyFirst = interruptBusyFirst,
-        )
-    }
-
-    // 当群聊排队队列非空且当前所有并发任务完成时，自动顺延派发下一条排队指令
-    LaunchedEffect(activeTaskCount, queuedPrompts.size) {
-        if (activeTaskCount == 0 && queuedPrompts.isNotEmpty()) {
-            delay(400L)
-            if (activeTaskBotMap.isEmpty()) {
-                val nextItem = BotTeamStore.popNextQueuedPrompt(draftKey)
-                queuedPrompts = BotTeamStore.getQueuedPrompts(draftKey)
-                if (nextItem != null) {
-                    dispatchGroupInstructionNow(
-                        rawText = nextItem.text,
-                        filesToSend = nextItem.attachments,
-                        skillsForTurn = nextItem.skillIds,
-                        targetBotIds = nextItem.targetBotIds,
-                        interruptBusyFirst = false,
-                    )
-                }
-            }
         }
     }
 
     fun sendUserMessage(rawText: String) {
         val text = rawText.trim()
-        val filesToSend = pendingAttachments
-        if (text.isBlank() && filesToSend.isEmpty()) return
-        val currentSkills = attachedSkillIds.toList()
-        input = ""
-        pendingAttachments = emptyList()
-        BotTeamStore.clearDraft(ctx, draftKey)
-        attachOpen = false
-
-        val effectiveUserText = if (text.isNotBlank()) text else "请查看并处理我上传的附件：${filesToSend.joinToString(", ") { it.name }}"
-        val targets = resolveTargetsForText(effectiveUserText)
-        if (activeTaskCount > 0 && busySendMode == "queue") {
-            val qItem = QueuedBotPrompt(
-                text = text,
-                attachments = filesToSend,
-                skillIds = currentSkills,
-                targetBotIds = targets.map { it.id },
-            )
-            queuedPrompts = BotTeamStore.enqueuePrompt(draftKey, qItem)
-            Toast.makeText(
-                ctx,
-                "⏳ 已加入群聊排队队列 (#${queuedPrompts.size})，也可点击「🚀 立即并发」或「⚡ 改为打断」",
-                Toast.LENGTH_SHORT,
-            ).show()
+        val files = pendingAttachments.toList()
+        if (text.isBlank() && files.isEmpty()) return
+        if (workItems.any { it.id == replyToWorkId && it.status == "cancelled" }) {
+            Toast.makeText(ctx, "原任务已取消，请点击“改发新任务”后发送", Toast.LENGTH_LONG).show()
             return
         }
-        dispatchGroupInstructionNow(
-            rawText = text,
-            filesToSend = filesToSend,
-            skillsForTurn = currentSkills,
-            targetBotIds = targets.map { it.id },
-            interruptBusyFirst = activeTaskCount > 0 && busySendMode == "interrupt",
-        )
+        val mentioned = memberBots.filter { bot -> text.contains("@${bot.name}") || text.contains("@${bot.jobTitle}") }
+        try {
+            GroupWorkStore.enqueue(ctx, groupId, GroupWorkSubmission(
+                requestId = UUID.randomUUID().toString(), text = text, mode = collabMode,
+                botIds = mentioned.map { it.id }, replyToWorkId = replyToWorkId,
+                delegationMode = delegationMode, skillIds = attachedSkillIds.toList(),
+            ), files)
+            input = ""
+            pendingAttachments = emptyList()
+            replyToWorkId = null
+            BotTeamStore.clearDraft(ctx, draftKey)
+            attachOpen = false
+        } catch (e: Exception) {
+            Toast.makeText(ctx, e.message ?: "任务保存失败，草稿已保留", Toast.LENGTH_LONG).show()
+        }
     }
 
     val currentGroup = group
@@ -825,32 +373,32 @@ fun TeamGroupChatScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                // 协同模式切换胶囊（Grok 4.20 四阶段辩论 / 多Bot并发 / 双人接力 / 单人响应）
+                // Hub 主脑路由或显式成员分工；执行进度保存在服务端。
                 Box(
                     Modifier
                         .clip(VibeLinkShapes.Pill)
-                        .background(if (collabMode != "single") c.accent.copy(alpha = 0.14f) else c.fill)
-                        .border(0.5.dp, if (collabMode != "single") c.accent else c.edge, VibeLinkShapes.Pill)
+                        .background(c.accent.copy(alpha = 0.14f))
+                        .border(0.5.dp, c.accent, VibeLinkShapes.Pill)
                         .clickable {
                             collabMode = when (collabMode) {
-                                "grok_420" -> "parallel"
+                                "auto" -> "parallel"
                                 "parallel" -> "relay"
-                                "relay" -> "single"
-                                else -> "grok_420"
+                                "relay" -> "auto"
+                                else -> "auto"
                             }
                         }
                         .padding(horizontal = 10.dp, vertical = 6.dp),
                 ) {
                     Text(
                         when (collabMode) {
-                            "grok_420" -> "🧠 四阶段协同: 拆解→执行→红队挑刺"
-                            "parallel" -> "🚀 多Bot并发: 全员/点名同时并行"
-                            "relay" -> "⚡ 双人接力: 管理+主程"
-                            else -> "🎯 单人响应模式"
+                            "auto" -> "主脑调度 · 拆解→执行→验收→交付"
+                            "parallel" -> "多人分工 · 按工位顺序执行"
+                            "relay" -> "成员接力 · 按顺序执行"
+                            else -> "主脑调度"
                         },
                         fontSize = 11.5.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = if (collabMode != "single") c.accent else c.ink2,
+                        color = c.accent,
                         maxLines = 1,
                         softWrap = false,
                     )
@@ -954,6 +502,13 @@ fun TeamGroupChatScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     item { Spacer(Modifier.height(4.dp)) }
+                    items(workItems, key = { "task_${it.id}" }) { work ->
+                        GroupWorkCard(work = work, bots = memberBots,
+                            onCancel = { GroupWorkStore.action(ctx, groupId, work.id, "cancel") },
+                            onRetry = { GroupWorkStore.action(ctx, groupId, work.id, "retry") },
+                            onReply = { replyToWorkId = work.id },
+                            onSession = { botId, sid -> onInspectSession(botId, sid) })
+                    }
                     items(messages, key = { it.id }) { msg ->
                         if (msg.senderId == "user") {
                             // 用户自己的群发言（自适应宽度上限 285dp，支持长按自由选词截取 + 一键复制全文）
@@ -1181,6 +736,7 @@ fun TeamGroupChatScreen(
                                                         .clip(VibeLinkShapes.Pill)
                                                         .background(Color(0xFFD97706))
                                                         .clickable {
+                                                            replyToWorkId = workItems.firstOrNull { work -> msg.id.startsWith("${work.id}_") }?.id
                                                             input = "@$displayName 针对你的待确认问题「${needsInputQuestion.take(36)}」，我的拍板决定是："
                                                         }
                                                         .padding(horizontal = 10.dp, vertical = 4.dp),
@@ -1220,53 +776,6 @@ fun TeamGroupChatScreen(
                                                     maxLines = 1,
                                                     softWrap = false,
                                                 )
-                                            }
-
-                                            if (msg.status == "thinking") {
-                                                Box(
-                                                    Modifier
-                                                        .clip(VibeLinkShapes.Pill)
-                                                        .background(Color(0xFFD97706).copy(alpha = 0.15f))
-                                                        .clickable {
-                                                            activeTaskJobs.remove(msg.id)?.cancel()
-                                                            activeTaskBotMap = activeTaskBotMap - msg.id
-                                                            val sidToStop = activeTaskSessions.remove(msg.id).orEmpty().ifBlank { targetSession }
-                                                            scope.launch {
-                                                                val hub = RemoteStore.hub(ctx)
-                                                                val token = RemoteStore.token(ctx)
-                                                                if (sidToStop.isNotBlank() && hub.isNotBlank() && token.isNotBlank()) {
-                                                                    runCatching {
-                                                                        withContext(Dispatchers.IO) {
-                                                                            RemoteApi.interrupt(
-                                                                                hub = hub,
-                                                                                token = token,
-                                                                                device = bot?.device?.ifBlank { "pc" } ?: "pc",
-                                                                                session = sidToStop,
-                                                                                agent = displayEngine,
-                                                                            )
-                                                                        }
-                                                                    }
-                                                                }
-                                                                appendOrUpdateMessage(
-                                                                    msg.copy(
-                                                                        text = msg.text.ifBlank { "（已手动停止该任务）" },
-                                                                        status = "done",
-                                                                        at = System.currentTimeMillis(),
-                                                                    ),
-                                                                )
-                                                            }
-                                                        }
-                                                        .padding(horizontal = 10.dp, vertical = 4.dp),
-                                                ) {
-                                                    Text(
-                                                        "⏹ 停止此任务",
-                                                        fontSize = 11.sp,
-                                                        fontWeight = FontWeight.SemiBold,
-                                                        color = Color(0xFFD97706),
-                                                        maxLines = 1,
-                                                        softWrap = false,
-                                                    )
-                                                }
                                             }
 
                                             if (msg.status != "thinking" && msg.text.isNotBlank()) {
@@ -1421,6 +930,7 @@ fun TeamGroupChatScreen(
                                                     .clip(VibeLinkShapes.Pill)
                                                     .background(c.fill)
                                                     .clickable {
+                                                        replyToWorkId = workItems.firstOrNull { work -> msg.id.startsWith("${work.id}_") }?.id
                                                         input = ("$input @$displayName ").trimStart()
                                                     }
                                                     .padding(horizontal = 10.dp, vertical = 4.dp),
@@ -1608,115 +1118,23 @@ fun TeamGroupChatScreen(
                     )
                 }
             }
-            // 群聊排队队列提示栏（默认隐藏，仅当存在待执行排队项时展示单行紧凑卡片）
-            if (queuedPrompts.isNotEmpty()) {
-                Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .background(c.surface)
-                        .border(0.5.dp, c.edge)
-                        .padding(horizontal = 12.dp, vertical = 5.dp),
-                    verticalArrangement = Arrangement.spacedBy(5.dp),
-                ) {
-                    queuedPrompts.forEachIndexed { idx, qItem ->
-                        Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(c.bg)
-                                .border(0.5.dp, c.accent.copy(alpha = 0.45f), RoundedCornerShape(8.dp))
-                                .padding(horizontal = 10.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            Text(
-                                "⏳ 排队#${idx + 1}",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = c.accent,
-                            )
-                            Text(
-                                qItem.text.ifBlank { "[附件 ${qItem.attachments.size} 个]" },
-                                style = VibeLinkType.Caption,
-                                color = c.ink,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f),
-                            )
-                            Box(
-                                Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(c.accent.copy(alpha = 0.15f))
-                                    .border(0.5.dp, c.accent, RoundedCornerShape(6.dp))
-                                    .clickable {
-                                        val removed = BotTeamStore.removeQueuedPrompt(draftKey, qItem.id)
-                                        queuedPrompts = BotTeamStore.getQueuedPrompts(draftKey)
-                                        if (removed != null) {
-                                            dispatchGroupInstructionNow(
-                                                rawText = removed.text,
-                                                filesToSend = removed.attachments,
-                                                skillsForTurn = removed.skillIds,
-                                                targetBotIds = removed.targetBotIds,
-                                                interruptBusyFirst = false,
-                                            )
-                                        }
-                                    }
-                                    .padding(horizontal = 7.dp, vertical = 3.dp),
-                            ) {
-                                Text(
-                                    "🚀 立即并发",
-                                    fontSize = 10.5.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = c.accent,
-                                )
-                            }
-                            Box(
-                                Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(Color(0xFFD97706).copy(alpha = 0.16f))
-                                    .border(0.5.dp, Color(0xFFD97706), RoundedCornerShape(6.dp))
-                                    .clickable {
-                                        val removed = BotTeamStore.removeQueuedPrompt(draftKey, qItem.id)
-                                        queuedPrompts = BotTeamStore.getQueuedPrompts(draftKey)
-                                        if (removed != null) {
-                                            dispatchGroupInstructionNow(
-                                                rawText = removed.text,
-                                                filesToSend = removed.attachments,
-                                                skillsForTurn = removed.skillIds,
-                                                targetBotIds = removed.targetBotIds,
-                                                interruptBusyFirst = true,
-                                            )
-                                        }
-                                    }
-                                    .padding(horizontal = 7.dp, vertical = 3.dp),
-                            ) {
-                                Text(
-                                    "⚡ 改为打断",
-                                    fontSize = 10.5.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = Color(0xFFD97706),
-                                )
-                            }
-                            Box(
-                                Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(c.fill)
-                                    .clickable {
-                                        val removed = BotTeamStore.removeQueuedPrompt(draftKey, qItem.id)
-                                        queuedPrompts = BotTeamStore.getQueuedPrompts(draftKey)
-                                        if (removed != null && input.isBlank()) {
-                                            input = removed.text
-                                            if (removed.attachments.isNotEmpty() && pendingAttachments.isEmpty()) {
-                                                pendingAttachments = removed.attachments
-                                            }
-                                        }
-                                    }
-                                    .padding(horizontal = 6.dp, vertical = 3.dp),
-                            ) {
-                                Text("✕ 撤回", fontSize = 10.5.sp, color = c.ink3)
-                            }
-                        }
-                    }
+            workErrors[workKey]?.let { error ->
+                Row(Modifier.fillMaxWidth().background(c.fill).padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Text(error, color = c.ink2, style = VibeLinkType.Caption, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { scope.launch { GroupWorkStore.refresh(ctx, groupId) } }) { Text("重试连接") }
+                }
+            }
+            if ((pendingByGroup[workKey] ?: 0) > 0) {
+                Text("${pendingByGroup[workKey]} 条任务等待 Hub 确认；重试沿用原请求编号。", color = c.ink3,
+                    style = VibeLinkType.Caption, modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
+            }
+            replyToWorkId?.let { id ->
+                Row(Modifier.fillMaxWidth().background(c.accent.copy(alpha = 0.08f)).padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Text("追问：${workItems.firstOrNull { it.id == id }?.title ?: id.take(8)}", color = c.accent,
+                        style = VibeLinkType.Caption, modifier = Modifier.weight(1f), maxLines = 1)
+                    TextButton(onClick = { replyToWorkId = null }) { Text("改发新任务") }
                 }
             }
 
@@ -1731,24 +1149,7 @@ fun TeamGroupChatScreen(
                 hasHistory = messages.isNotEmpty(),
                 onSend = { sendUserMessage(input) },
                 onStop = {
-                    val snapshotMap = activeTaskBotMap
-                    activeTaskBotMap = emptyMap()
-                    snapshotMap.forEach { (msgId, botId) ->
-                        activeTaskJobs.remove(msgId)?.cancel()
-                        val sid = activeTaskSessions.remove(msgId).orEmpty()
-                        val b = memberBots.firstOrNull { it.id == botId }
-                        if (sid.isNotBlank() && b != null) {
-                            scope.launch(Dispatchers.IO) {
-                                val hub = RemoteStore.hub(ctx)
-                                val token = RemoteStore.token(ctx)
-                                if (hub.isNotBlank() && token.isNotBlank()) {
-                                    runCatching {
-                                        RemoteApi.interrupt(hub, token, b.device.ifBlank { "pc" }, sid, b.engine)
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    workItems.filter { it.active }.forEach { GroupWorkStore.action(ctx, groupId, it.id, "cancel") }
                 },
                 attachPanel = {
                     AttachPanelHost(
@@ -1799,8 +1200,8 @@ fun TeamGroupChatScreen(
                 backdrop = glassBackdrop,
                 placeholderOverride = when {
                     pendingAttachments.isNotEmpty() -> "已选 ${pendingAttachments.size} 个附件，输入说明或直接点发送…"
-                    collabMode != "single" -> "发任务给全群协同，或 $hintMentions 指定 Bot…"
-                    else -> "输入消息，可点上方成员 @TA…"
+                    replyToWorkId != null -> "回复当前任务，输入补充或答复…"
+                    else -> "发起新任务，或 $hintMentions 限定参与成员…"
                 },
                 onVoiceInput = {
                     runCatching {
@@ -1936,28 +1337,19 @@ fun TeamGroupChatScreen(
             previousMessage = targetMsg,
             onDismiss = { reworkTarget = null },
             onConfirmRework = { reworkReason, mode ->
-                reworkTarget = null
-                val reworkUserMsg = TeamGroupMessage(
-                    id = "msg_" + UUID.randomUUID().toString().take(8),
-                    senderId = "user",
-                    senderName = "我",
-                    text = "🔄 [打回重做 Rework] @${targetBot.name}：$reworkReason",
-                    at = System.currentTimeMillis(),
-                    status = "done",
-                )
-                appendOrUpdateMessage(reworkUserMsg)
-                val prompt = buildString {
-                    appendLine("[Rework 返工重做指令] 请针对以下验收缺陷或补充要求直接返工修正：")
-                    appendLine(reworkReason)
-                    appendLine()
-                    appendLine("【你上一轮提交的结果摘要】")
-                    appendLine(targetMsg.text.take(600))
+                val sourceWork = workItems.firstOrNull { work ->
+                    targetMsg.id.startsWith("${work.id}_") || work.steps.any { it.sessionId == targetMsg.linkedSessionId && it.sessionId.isNotBlank() }
                 }
-                triggerBotsForMessage(
-                    userText = prompt,
-                    targetBots = listOf(targetBot),
-                    overrideMode = mode,
-                )
+                runCatching {
+                    check(sourceWork?.status != "cancelled") { "原任务已取消，请发起新任务" }
+                    GroupWorkStore.enqueue(ctx, groupId, GroupWorkSubmission(
+                        requestId = UUID.randomUUID().toString(),
+                        text = "[返工要求] $reworkReason\n\n上一轮结果：${targetMsg.text.take(600)}",
+                        mode = "auto", botIds = listOf(targetBot.id), replyToWorkId = sourceWork?.id,
+                        delegationMode = mode,
+                    ), emptyList())
+                }.onSuccess { reworkTarget = null }
+                    .onFailure { Toast.makeText(ctx, it.message ?: "返工请求未保存，请重试", Toast.LENGTH_LONG).show() }
             },
         )
     }

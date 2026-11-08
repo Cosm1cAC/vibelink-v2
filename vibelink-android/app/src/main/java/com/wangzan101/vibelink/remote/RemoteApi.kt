@@ -102,30 +102,22 @@ object RemoteApi {
     private const val TAILSCALE_HUB = "http://100.98.206.126:18995"
     private const val PUBLIC_HUB = "https://hub.vibelink.cloud"
 
-    /** 扫码配对时桌面端给的其他地址（局域网 / tailnet / 公网），由 [RemoteStore] 读写。 */
-    @Volatile
-    var extraHubs: List<String> = emptyList()
+    private val routes = HubRoutes()
 
-    /** 最近一次成功连通的 Hub 地址：优先直连它，避免主配置地址（如未开热点时的 192.168.137.1）每次都白白等待超时。 */
-    @Volatile
-    var activeHub: String = ""
-
-    /**
-     * 先试最近连通的地址与配置地址：
-     * - 公网内测版 (IS_BETA_EDITION = true)：仅使用公网 Hub 与用户自己配对的地址，绝不暴露开发者个人内网/Tailscale IP。
-     * - 本地开发版 (IS_BETA_EDITION = false)：走热点/局域网/Tailscale，不退回公网内测 Hub。
-     */
-    fun candidates(hub: String): List<String> {
-        val raw = if (com.wangzan101.vibelink.BuildConfig.IS_BETA_EDITION) {
-            listOf(activeHub, hub.trimEnd('/')) + extraHubs + listOf(PUBLIC_HUB)
+    internal fun configureRoutes(hub: String, token: String, extras: List<String>) {
+        val normalized = hub.trimEnd('/')
+        val defaults = if (com.wangzan101.vibelink.BuildConfig.IS_BETA_EDITION) {
+            if (normalized == PUBLIC_HUB) listOf(PUBLIC_HUB) else emptyList()
         } else {
-            listOf(activeHub, hub.trimEnd('/')) + extraHubs + listOf(LAN_HUB, TAILSCALE_HUB)
+            if (normalized in setOf(LAN_HUB, TAILSCALE_HUB, "http://192.168.137.1:18995")) listOf(LAN_HUB, TAILSCALE_HUB) else emptyList()
         }
-        return raw
-            .map { it.trim().trimEnd('/') }
-            .filter { it.isNotBlank() }
-            .distinct()
+        routes.configure(hub, token, extras, defaults)
     }
+
+    fun candidates(hub: String): List<String> = routes.candidates(hub)
+    internal fun routeSnapshot(hub: String, token: String): HubRoutes.Snapshot = routes.capture(hub, token)
+    internal fun requireRoute(snapshot: HubRoutes.Snapshot) = routes.requireCurrent(snapshot)
+    internal fun rememberRoute(snapshot: HubRoutes.Snapshot, hub: String) = routes.remember(snapshot, hub)
 
     /** 内测用户使用邀请码（如 VLK-BETA-01）一键激活免费 DeepSeek 模型与内测席位。 */
     fun activateBetaInvite(code: String, deviceName: String): JSONObject {
@@ -137,13 +129,15 @@ object RemoteApi {
 
     fun betaQuota(hub: String, token: String): JSONObject = get(hub, token, "/api/beta/quota")
 
-    private fun <T> withFallback(hub: String, block: (String) -> T): T {
-        val list = candidates(hub)
+    private fun <T> withFallback(hub: String, token: String, block: (String) -> T): T {
+        val snapshot = routeSnapshot(hub, token)
+        val list = snapshot.candidates
         var last: Throwable? = null
         for ((i, h) in list.withIndex()) {
             try {
+                requireRoute(snapshot)
                 val res = block(h)
-                activeHub = h
+                rememberRoute(snapshot, h)
                 return res
             } catch (e: java.io.IOException) {
                 last = e
@@ -158,7 +152,7 @@ object RemoteApi {
         return hub.trimEnd('/') + path + sep + "t=" + URLEncoder.encode(token, "UTF-8")
     }
 
-    private fun get(hub: String, token: String, path: String): JSONObject = withFallback(hub) { h ->
+    private fun get(hub: String, token: String, path: String): JSONObject = withFallback(hub, token) { h ->
         val req = Request.Builder().url(url(h, path, token)).get().build()
         client.newCall(req).execute().use { resp ->
             val body = resp.body?.string().orEmpty()
@@ -167,7 +161,7 @@ object RemoteApi {
         }
     }
 
-    private fun post(hub: String, token: String, path: String, payload: JSONObject): JSONObject = withFallback(hub) { h ->
+    private fun post(hub: String, token: String, path: String, payload: JSONObject): JSONObject = withFallback(hub, token) { h ->
         val req = Request.Builder()
             .url(url(h, path, token))
             .post(payload.toString().toRequestBody(jsonType))
@@ -936,6 +930,44 @@ object RemoteApi {
 
     fun botGroupMessageAppend(hub: String, token: String, groupId: String, payload: JSONObject): JSONObject =
         post(hub, token, "/api/bot-groups/" + URLEncoder.encode(groupId, "UTF-8") + "/messages", payload)
+
+    private fun workPath(groupId: String) = "/api/bot-groups/" + URLEncoder.encode(groupId, "UTF-8") + "/work"
+
+    fun groupWorkList(hub: String, token: String, groupId: String): List<GroupWork> {
+        val root = get(hub, token, workPath(groupId))
+        val records = root.optJSONArray("work") ?: error("Hub work API response is incompatible")
+        return (0 until records.length()).map { parseGroupWork(records.getJSONObject(it)) }
+    }
+
+    fun groupWorkSubmit(hub: String, token: String, groupId: String, payload: JSONObject): GroupWork =
+        parseGroupWork(post(hub, token, workPath(groupId), payload).optJSONObject("work")
+            ?: error("Hub work API response is incompatible"))
+
+    fun groupWorkAction(hub: String, token: String, groupId: String, workId: String, action: String): GroupWork {
+        require(action in setOf("cancel", "retry"))
+        val path = workPath(groupId) + "/" + URLEncoder.encode(workId, "UTF-8") + "/actions"
+        return parseGroupWork(post(hub, token, path, JSONObject().put("action", action)).optJSONObject("work")
+            ?: error("Hub work API response is incompatible"))
+    }
+
+    internal fun parseGroupWork(o: JSONObject): GroupWork {
+        check(o.optString("id").isNotBlank()) { "Hub work API response has no task ID" }
+        val steps = o.optJSONArray("steps") ?: org.json.JSONArray()
+        val inputs = o.optJSONArray("inputs") ?: org.json.JSONArray()
+        return GroupWork(
+            id = o.getString("id"), groupId = o.optString("groupId"), status = o.optString("status"),
+            phase = o.optString("phase"), title = o.optString("title"), text = o.optString("text"),
+            ownerBotId = o.optString("ownerBotId"), createdAt = o.optLong("createdAt"), updatedAt = o.optLong("updatedAt"),
+            error = o.optString("error"), result = o.optString("result"), retryable = o.optBoolean("retryable", false),
+            steps = (0 until steps.length()).map { i -> steps.getJSONObject(i).let { s ->
+                GroupWorkStep(s.optString("id"), s.optString("botId"), s.optString("kind"), s.optString("status"),
+                    s.optString("sessionId"), s.optString("output"), s.optString("error"))
+            } },
+            inputs = (0 until inputs.length()).map { i -> inputs.getJSONObject(i).let { v ->
+                GroupWorkInput(v.optString("id"), v.optString("text"), v.optLong("createdAt"), v.optString("status"), v.optString("detail"))
+            } },
+        )
+    }
 
     fun fleetAction(hub: String, token: String, payload: JSONObject): JSONObject =
         post(hub, token, "/api/fleet/action", payload)

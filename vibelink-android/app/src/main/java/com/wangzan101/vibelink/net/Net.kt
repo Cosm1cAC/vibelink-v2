@@ -79,9 +79,11 @@ object Net {
                 val currentHub = ctx?.let { com.wangzan101.vibelink.remote.RemoteStore.hub(it) }
                     ?: rawUrl.substring(0, idx)
                 val latestToken = ctx?.let { com.wangzan101.vibelink.remote.RemoteStore.token(it) }.orEmpty()
-                val candidates = com.wangzan101.vibelink.remote.RemoteApi.candidates(currentHub)
+                val route = com.wangzan101.vibelink.remote.RemoteApi.routeSnapshot(currentHub, latestToken)
+                val candidates = route.candidates
                 var lastErr: IOException? = null
                 for ((i, baseHub) in candidates.withIndex()) {
+                    com.wangzan101.vibelink.remote.RemoteApi.requireRoute(route)
                     val targetUrl = baseHub.trimEnd('/') + suffix
                     val newReqBuilder = req.newBuilder().url(targetUrl)
                     if (latestToken.isNotBlank()) {
@@ -92,7 +94,12 @@ object Net {
                         val resp = chain
                             .withConnectTimeout(3000, java.util.concurrent.TimeUnit.MILLISECONDS)
                             .proceed(newReqBuilder.build())
-                        com.wangzan101.vibelink.remote.RemoteApi.activeHub = baseHub
+                        try {
+                            com.wangzan101.vibelink.remote.RemoteApi.rememberRoute(route, baseHub)
+                        } catch (e: Exception) {
+                            resp.close()
+                            throw e
+                        }
                         return@addInterceptor resp
                     } catch (e: IOException) {
                         lastErr = e

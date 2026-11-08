@@ -300,6 +300,7 @@ open class VibeLinkApp : Application(), WebOwner, SandboxOwner, TaskEnvironment.
         }
         // 网络代理：启动先按上次的设置生效；自动模式再从 hub 里找一次出口
         Net.init(this)
+        com.wangzan101.vibelink.ui.GroupWorkStore.recoverPending(this)
         if (ProxyStore.mode(this) == ProxyStore.Mode.Auto) {
             scope.launch(Dispatchers.IO) {
                 ProxyStore.refreshAuto(this@VibeLinkApp)
