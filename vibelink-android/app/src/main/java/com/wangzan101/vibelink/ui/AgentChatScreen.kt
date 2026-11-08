@@ -1228,17 +1228,18 @@ fun AgentChatScreen(
                         }
                         delay(200)
                     }
+                    var sessionFailure: Throwable? = null
                     val targetSession: RemoteApi.Session? = existingSession ?: if (botFriend != null) {
-                        val sid = BotTeamStore.ensureBotRemoteSession(
+                        val sid = runCatching { BotTeamStore.ensureBotRemoteSession(
                             ctx,
                             botFriend,
                             text.ifBlank { "上传附件任务" },
-                        )
+                        ) }.getOrElse { sessionFailure = it; "" }
                         if (sid.isNotBlank()) {
                             RemoteApi.Session(
                                 id = sid,
                                 title = "[${botFriend.jobTitle}-${botFriend.name}] ${text.take(24)}",
-                                model = "",
+                                model = botFriend.model,
                                 updated = now,
                                 agent = effectiveEngine,
                                 device = effectiveDevice,
@@ -1256,7 +1257,7 @@ fun AgentChatScreen(
                         latest = latest.filter { it !== pending && it !== pendingAssistant }
                         input = text
                         pendingAttachments = filesToSend
-                        fail(RuntimeException("未能连接电脑端建立底层会话，请检查 Hub 在线状态"))
+                        fail(sessionFailure ?: RuntimeException("Codex 未返回可用会话 ID"))
                         sending = false
                         return@launch
                     }

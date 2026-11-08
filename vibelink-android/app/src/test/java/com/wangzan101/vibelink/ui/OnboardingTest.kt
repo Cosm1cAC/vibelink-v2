@@ -6,9 +6,13 @@ import org.junit.Test
 
 class OnboardingTest {
     private fun inputs(hasMain: Boolean = false, modelDone: Boolean = false, phoneNeeded: Boolean = true, phoneSeen: Boolean = false) =
-        Onboarding.Inputs(hasMain, modelDone, phoneNeeded, phoneSeen)
+        Onboarding.Inputs(hasMain, modelDone, phoneNeeded, phoneSeen, assistantRequested = true)
 
-    @Test fun freshInstallStartsWithWelcomeThenModelThenPhone() {
+    @Test fun freshHomeDoesNotStartPhoneAssistantSetup() {
+        assertNull(Onboarding.start(Onboarding.Inputs(false, false, true, false)))
+    }
+
+    @Test fun openingMikaOnFreshInstallStartsWithWelcomeThenModelThenPhone() {
         val i = inputs()
         assertEquals(OnboardingStep.Welcome, Onboarding.start(i))
         assertEquals(OnboardingStep.Model, Onboarding.next(OnboardingStep.Welcome, i))
@@ -30,6 +34,10 @@ class OnboardingTest {
     @Test fun phoneStepSkippedWhenReadyOrSeen() {
         assertNull(Onboarding.next(OnboardingStep.Model, inputs(phoneNeeded = false)))
         assertNull(Onboarding.next(OnboardingStep.Model, inputs(phoneSeen = true)))
+    }
+
+    @Test fun homeNeverRequestsSetupEvenWhenOnlyPhonePermissionIsMissing() {
+        assertNull(Onboarding.start(Onboarding.Inputs(true, true, true, false)))
     }
 
     @Test fun dotsFollowSteps() {

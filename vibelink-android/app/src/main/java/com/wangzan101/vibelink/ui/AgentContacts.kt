@@ -39,7 +39,7 @@ data class AgentContact(
 const val VIBELINK_AGENT_ID = "vibelink"
 
 fun agentDisplayName(id: String): String = when (id) {
-    VIBELINK_AGENT_ID -> "VibeLink"
+    VIBELINK_AGENT_ID -> "Mika"
     "opencode" -> "opencode"
     "deepseek" -> "DeepSeek"
     "codex" -> "Codex"
@@ -293,7 +293,7 @@ suspend fun loadVibeLinkContact(context: Context): AgentContact = withContext(Di
     val seen = AgentPrefs.ensureSeen(context, VIBELINK_AGENT_ID)
     AgentContact(
         id = VIBELINK_AGENT_ID,
-        name = "VibeLink",
+        name = BotTeamStore.getBot(context, VIBELINK_AGENT_ID)?.name?.takeIf { it.isNotBlank() } ?: "Mika",
         kind = AgentKind.Phone,
         online = true,
         deviceCount = 1,

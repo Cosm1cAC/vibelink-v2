@@ -198,6 +198,7 @@ fun TeamGroupChatScreen(
         mutableStateOf(BotTeamStore.getQueuedPrompts(draftKey))
     }
     var showEditGroup by remember { mutableStateOf(false) }
+    var showMemberModels by remember { mutableStateOf(false) }
     var showRecruitBot by remember { mutableStateOf(false) }
     var presetAppliedToast by remember { mutableStateOf("") }
     var voiceCallBot by remember { mutableStateOf<BotFriend?>(null) }
@@ -800,12 +801,15 @@ fun TeamGroupChatScreen(
                         }
                     }
                     Text(
-                        memberBots.joinToString(" · ") { "${it.name}[${it.jobTitle}]" }.ifBlank { "点击添加 Bot 群成员" },
+                        memberBots.joinToString(" · ") { "${it.name} ${if (it.model == BotModelPolicy.DEEPSEEK_MODEL) "DeepSeek" else "GPT"}" }.ifBlank { "点击添加 Bot 群成员" },
                         style = VibeLinkType.Hint,
                         color = c.ink3,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                }
+                TextButton(onClick = { showMemberModels = true }) {
+                    Text("模型", color = c.accent, fontWeight = FontWeight.SemiBold)
                 }
                 BarIconButton(VibeLinkIcons.Plus, "招募新 Bot", { showRecruitBot = true })
                 BarIconButton(VibeLinkIcons.Gear, "群设置与成员管理", { showEditGroup = true })
@@ -862,7 +866,7 @@ fun TeamGroupChatScreen(
                             scope.launch {
                                 BotTeamStore.applyGrok420Preset(ctx)
                                 refreshState()
-                                presetAppliedToast = "✅ 已同步 Gemini/Claude/GPT/GLM 标准配置"
+                                presetAppliedToast = "已重置团队职责配置"
                             }
                         }
                         .padding(horizontal = 10.dp, vertical = 6.dp),
@@ -1817,6 +1821,55 @@ fun TeamGroupChatScreen(
             fullText = targetMsg.text.ifBlank { targetMsg.reasoning },
             reasoningText = if (targetMsg.text.isNotBlank()) targetMsg.reasoning else "",
             onDismiss = { excerptDialogTarget = null },
+        )
+    }
+
+    if (showMemberModels) {
+        AlertDialog(
+            onDismissRequest = { showMemberModels = false },
+            title = { Text("成员模型", color = c.ink) },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Text("按成员绑定模型，下次发送时使用。会话由 Codex 管理。", style = VibeLinkType.Hint, color = c.ink2)
+                    memberBots.forEach { bot ->
+                        val busy = bot.id in runningBotIds
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                Text(bot.name, style = VibeLinkType.BodyStrong, color = c.ink, modifier = Modifier.weight(1f))
+                                Text(if (busy) "执行中" else "Codex", style = VibeLinkType.Hint, color = c.ink3)
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                BotModelPolicy.models.forEach { choice ->
+                                    val selected = if (choice.isEmpty()) bot.model.isEmpty() || bot.model.startsWith("gpt-") else bot.model == choice
+                                    Box(
+                                        Modifier.weight(1f)
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(if (selected) c.accent.copy(alpha = 0.12f) else c.fill)
+                                            .border(1.dp, if (selected) c.accent else c.edge, RoundedCornerShape(12.dp))
+                                            .clickable(enabled = !busy) {
+                                                if (!selected) {
+                                                    val latest = BotTeamStore.getBot(ctx, bot.id) ?: bot
+                                                    BotTeamStore.upsertBot(ctx, latest.copy(engine = "codex", model = choice))
+                                                }
+                                            }
+                                            .padding(horizontal = 10.dp, vertical = 12.dp),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        Text(
+                                            (if (selected) "✓ " else "") + if (choice == BotModelPolicy.DEEPSEEK_MODEL) "DeepSeek" else "GPT",
+                                            style = VibeLinkType.BodyStrong,
+                                            color = if (selected) c.accent else c.ink2,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (memberBots.isEmpty()) Text("先添加群成员，再绑定模型。", color = c.ink2)
+                }
+            },
+            confirmButton = { TextButton(onClick = { showMemberModels = false }) { Text("完成") } },
+            containerColor = c.surface,
         )
     }
 

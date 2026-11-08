@@ -22,7 +22,7 @@
     </plurals>
     <string name="chat_background_note">在后台进行，可以继续用手机。点小画面可以放大看。</string>
     <string name="chat_placeholder_busy">补充或改要求…</string>
-    <string name="chat_placeholder_answer">回答 VibeLink 的问题</string>
+    <string name="chat_placeholder_answer">回答 Mika 的问题</string>
     <string name="chat_placeholder_more">继续说点什么…</string>
     <string name="chat_cannot_start">还不能开始任务</string>
     <string name="chat_missing">还缺:%1$s</string>

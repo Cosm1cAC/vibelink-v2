@@ -23,7 +23,7 @@
     </plurals>
     <string name="chat_background_note">Running in the background — keep using your phone. Tap the small view to enlarge it.</string>
     <string name="chat_placeholder_busy">Add or change details…</string>
-    <string name="chat_placeholder_answer">Answer VibeLink’s question</string>
+    <string name="chat_placeholder_answer">Answer Mika’s question</string>
     <string name="chat_placeholder_more">Say something more…</string>
     <string name="chat_cannot_start">Can’t start tasks yet</string>
     <string name="chat_missing">Missing: %1$s</string>

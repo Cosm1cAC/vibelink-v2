@@ -247,6 +247,22 @@ async fn paired_clients_cannot_read_or_interrupt_another_users_agent_session() {
     fs::remove_dir_all(dir).unwrap();
 }
 
+#[test]
+fn resetting_roles_keeps_the_selected_model_device_and_agent_session() {
+    let (dir, app, _) = fixture();
+    app.bots.upsert_bot(&json!({"id":"bot_cto","name":"Dispatcher","engine":"codex",
+        "model":model_policy::DEEPSEEK_MODEL,"device":"test-device","cwd":"test-project",
+        "activeSessionId":"bound-codex-session"})).unwrap();
+    app.bots.apply_preset_fleet("grok_420").unwrap();
+    let after = app.bots.get_bot("bot_cto").unwrap();
+    assert_eq!(after.model, model_policy::DEEPSEEK_MODEL);
+    assert_eq!(after.engine, "codex");
+    assert_eq!(after.device, "test-device");
+    assert_eq!(after.cwd, "test-project");
+    assert_eq!(after.active_session_id, "bound-codex-session");
+    fs::remove_dir_all(dir).unwrap();
+}
+
 #[tokio::test]
 async fn legacy_app_update_channel_and_explicit_channel_select_matching_apks() {
     let (dir, mut app, _) = fixture();

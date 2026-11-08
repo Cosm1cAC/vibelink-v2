@@ -201,6 +201,8 @@ fun ChatScreen(
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val bots by BotTeamStore.botsFlow.collectAsState()
+    val assistantName = bots.firstOrNull { it.id == VIBELINK_AGENT_ID }?.name?.takeIf { it.isNotBlank() } ?: ChatCopy.APP_TITLE
     val convStore = remember { ConversationStore.shared(context) }
     val voiceLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult(),
@@ -302,9 +304,9 @@ fun ChatScreen(
         val sub = ChatCopy.subtitle(last, last?.let(vm::livePlace))
         Column(Modifier.onSizeChanged { topHeight = it.height }) {
             TopBar(
-                ChatCopy.APP_TITLE,
+                assistantName,
                 left = VibeLinkIcons.Back, leftLabel = "返回", onLeft = onBack,
-                leading = { AgentAvatar(VIBELINK_AGENT_ID, "VibeLink", 30.dp, onClick = onOpenAgentProfile) },
+                leading = { AgentAvatar(VIBELINK_AGENT_ID, assistantName, 30.dp, onClick = onOpenAgentProfile) },
                 right = {
                     var sessionMenu by remember { mutableStateOf(false) }
                     Box {

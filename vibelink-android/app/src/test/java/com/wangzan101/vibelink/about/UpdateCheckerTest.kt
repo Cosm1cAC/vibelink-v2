@@ -64,6 +64,7 @@ class UpdateCheckerTest {
         assertEquals(1, s.manualRounds)
         assertEquals(listOf("/api"), hits)
         val req = server.takeRequest()
+        assertEquals("dev", req.requestUrl?.queryParameter("edition"))
         assertEquals("application/vnd.github+json", req.getHeader("Accept"))
         assertTrue(req.getHeader("User-Agent")!!.startsWith("VibeLink/"))
     }

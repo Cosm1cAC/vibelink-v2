@@ -3,7 +3,13 @@ package com.wangzan101.vibelink.ui
 import android.content.Context
 import com.wangzan101.vibelink.remote.RemoteApi
 import com.wangzan101.vibelink.remote.RemoteStore
+import com.wangzan101.vibelink.remote.BotSessionBootstrap
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -197,6 +203,9 @@ object BotTeamStore {
     private const val KEY_GEMINI_AGY_FIX_V6 = "seeded_gemini_agy_fix_v6"
     private const val KEY_CLEAN_STALE_SESSIONS_V7 = "seeded_clean_stale_sessions_v7"
     private const val KEY_BOTS = "bots_json"
+    private const val KEY_PENDING_PROFILES = "pending_hub_profiles_v1"
+    private val profileSyncMutex = Mutex()
+    private val profileSyncScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private const val KEY_GROUPS = "groups_json"
     private const val KEY_GROUP_MSGS_PREFIX = "group_msgs_"
     const val MEMORY_BUDGET_MAX_ACTIVE = 40
@@ -1371,6 +1380,10 @@ object BotTeamStore {
                 if (old != null) {
                     val keepCustomAvatar = old.avatar.isNotBlank() && !old.avatar.startsWith("preset:")
                     fresh.copy(
+                        engine = old.engine,
+                        model = old.model,
+                        device = old.device,
+                        cwd = old.cwd,
                         avatar = if (keepCustomAvatar) old.avatar else fresh.avatar,
                         activeSessionId = old.activeSessionId,
                         sessionIds = old.sessionIds,
@@ -1384,6 +1397,9 @@ object BotTeamStore {
         }
         current.filter { c -> specList.none { it.first == c.id } }.forEach { merged.add(it) }
         saveBots(context, merged)
+        synchronized(this@BotTeamStore) {
+            merged.forEach { enqueueProfile(context, it) }
+        }
 
         val groups = listGroups(context).toMutableList()
         val grokGroup = TeamGroup(
@@ -1405,7 +1421,7 @@ object BotTeamStore {
         val hub = RemoteStore.hub(context)
         val token = RemoteStore.token(context)
         if (hub.isNotBlank() && token.isNotBlank()) {
-            runCatching { RemoteApi.botsApplyPreset(hub, token, "grok_420") }
+            syncWithHub(context)
         }
         true
     }
@@ -1983,6 +1999,7 @@ object BotTeamStore {
     /**
      * 新增或修改 Bot 好友，并将新昵称、新职位、新引擎、新头像实时同步到所有群聊摘要与历史消息中。
      */
+    @Synchronized
     fun upsertBot(context: Context, bot: BotFriend) {
         val previous = getBot(context, bot.id)
         val normalized = bot.copy(
@@ -1998,6 +2015,11 @@ object BotTeamStore {
         val oldBot = if (idx >= 0) all[idx] else null
         if (idx >= 0) all[idx] = normalized else all.add(0, normalized)
         saveBots(context, all)
+        if (previous == null || hubProfile(previous).toString() != hubProfile(normalized).toString()) {
+            enqueueProfile(context, normalized)
+            val appContext = context.applicationContext
+            profileSyncScope.launch { syncWithHub(appContext) }
+        }
 
         // 全局同步所有群聊中的历史发言人名字、职位及群摘要
         val groups = listGroups(context).toMutableList()
@@ -2338,30 +2360,66 @@ object BotTeamStore {
     /**
      * 与 Hub 控制面 (`/api/bots`) 双向同步 Bot 舰队、Grok Bot × Open Duet 配方、技能剧本与长期记忆
      */
-    suspend fun syncWithHub(context: Context): Boolean = withContext(Dispatchers.IO) {
+    // Conversation IDs, memories and server history are not profile edits.
+    private fun hubProfile(bot: BotFriend): JSONObject = botToJson(bot).apply {
+        listOf("activeSessionId", "sessionIds", "lastText", "lastAt", "memories", "openWork", "instructionsHistory", "instructionsVersion")
+            .forEach { remove(it) }
+    }
+
+    private fun enqueueProfile(context: Context, bot: BotFriend) {
+        val pending = JSONObject(prefs(context).getString(KEY_PENDING_PROFILES, "{}") ?: "{}")
+        pending.put(bot.id, hubProfile(bot))
+        prefs(context).edit().putString(KEY_PENDING_PROFILES, pending.toString()).apply()
+    }
+
+    private fun flushProfiles(context: Context, hub: String, token: String) {
+        val snapshot = synchronized(this) {
+            JSONObject(prefs(context).getString(KEY_PENDING_PROFILES, "{}") ?: "{}")
+        }
+        for (id in snapshot.keys()) {
+            val profile = snapshot.getJSONObject(id)
+            RemoteApi.botUpsert(hub, token, profile)
+            synchronized(this) {
+                val pending = JSONObject(prefs(context).getString(KEY_PENDING_PROFILES, "{}") ?: "{}")
+                // A newer edit made while this request was in flight must remain pending.
+                if (pending.optJSONObject(id)?.toString() == profile.toString()) {
+                    pending.remove(id)
+                    prefs(context).edit().putString(KEY_PENDING_PROFILES, pending.toString()).apply()
+                }
+            }
+        }
+    }
+
+    suspend fun syncWithHub(context: Context): Boolean = withContext(Dispatchers.IO) { profileSyncMutex.withLock {
         ensureSeeded(context)
         val hub = RemoteStore.hub(context)
         val token = RemoteStore.token(context)
-        if (hub.isBlank() || token.isBlank()) return@withContext false
+        if (hub.isBlank() || token.isBlank()) return@withLock false
         runCatching {
+            flushProfiles(context, hub, token)
             val root = RemoteApi.botsList(hub, token)
             val bArr = root.optJSONArray("bots")
+            synchronized(this@BotTeamStore) {
             if (bArr != null && bArr.length() > 0) {
                 val remoteBots = (0 until bArr.length()).mapNotNull { i ->
                     bArr.optJSONObject(i)?.let { parseBotJson(it) }
                 }
                 val localBots = listBots(context, includeArchived = true)
+                val pending = JSONObject(prefs(context).getString(KEY_PENDING_PROFILES, "{}") ?: "{}")
                 val mergedMap = LinkedHashMap<String, BotFriend>()
                 for (rb in remoteBots) {
                     val lb = localBots.firstOrNull { it.id == rb.id }
-                    val merged = if (lb != null) {
+                    val merged = if (lb != null && pending.has(lb.id)) {
+                        lb
+                    } else if (lb != null) {
+                        val sameBinding = lb.engine == rb.engine && lb.model == rb.model && lb.device == rb.device && lb.cwd == rb.cwd
                         val preferLocalName = isDefaultOrLegacyBotName(rb.name) && rb.name != lb.name && lb.name in setOf("DeepSeek", "Claude", "GPT", "GLM", "Gemini", "Grok")
                         val preferLocalAvatar = lb.avatar.startsWith("data:image") || (rb.avatar.isBlank() && lb.avatar.isNotBlank())
                         rb.copy(
                             name = if (preferLocalName) lb.name else rb.name,
                             avatar = if (preferLocalAvatar) lb.avatar else rb.avatar.ifBlank { defaultAvatarForEngine(rb.engine) },
-                            activeSessionId = rb.activeSessionId.ifBlank { lb.activeSessionId },
-                            sessionIds = (rb.sessionIds + lb.sessionIds).distinct(),
+                            activeSessionId = rb.activeSessionId.ifBlank { if (sameBinding) lb.activeSessionId else "" },
+                            sessionIds = (rb.sessionIds + if (sameBinding) lb.sessionIds else emptyList()).distinct(),
                             publicDescription = rb.publicDescription.ifBlank { lb.publicDescription },
                             exampleRequests = rb.exampleRequests.ifEmpty { lb.exampleRequests },
                             requires = rb.requires.ifEmpty { lb.requires },
@@ -2385,9 +2443,10 @@ object BotTeamStore {
                 }
                 saveBots(context, mergedMap.values.toList())
             }
+            }
             true
         }.getOrDefault(false)
-    }
+    } }
 
     /**
      * 确保某个 Bot 拥有一个可用的底层远程会话 ID。
@@ -2400,49 +2459,48 @@ object BotTeamStore {
         bot: BotFriend,
         taskTitle: String,
         forceNew: Boolean = false,
-    ): String =
-        withContext(Dispatchers.IO) {
+    ): String = withContext(Dispatchers.IO) {
+        profileSyncMutex.withLock {
             val latestBot = getBot(context, bot.id) ?: bot
             val hub = RemoteStore.hub(context)
             val token = RemoteStore.token(context)
             val engine = BotModelPolicy.requireEngine(latestBot.engine)
-            if (!forceNew && latestBot.activeSessionId.isNotBlank() && !latestBot.activeSessionId.startsWith("01a1a0")) {
-                val sessions = runCatching { loadAgentSessions(context, engine) }.getOrDefault(emptyList())
-                val matched = sessions.firstOrNull { it.id == latestBot.activeSessionId }
-                val cwdMismatch = matched != null &&
-                    matched.cwd.isNotBlank() &&
-                    latestBot.cwd.isNotBlank() &&
-                    !matched.cwd.replace('/', '\\').trimEnd('\\').equals(
-                        latestBot.cwd.replace('/', '\\').trimEnd('\\'),
-                        ignoreCase = true,
-                    ) &&
-                    !matched.cwd.contains(".vibelink-worktrees", ignoreCase = true)
-                if (!cwdMismatch) {
-                    return@withContext latestBot.activeSessionId
-                }
-            }
-            val created = runCatching {
-                RemoteApi.createSession(
-                    hub = hub,
-                    token = token,
-                    device = latestBot.device.ifBlank { "pc" },
-                    agent = engine,
-                    model = latestBot.model,
-                    cwd = latestBot.cwd,
-                    text = "",
-                    botId = latestBot.id,
-                    thinkingEffort = latestBot.thinkingEffort,
-                    isolationMode = latestBot.isolationMode,
-                )
-            }.getOrNull()
-            if (created != null && created.id.isNotBlank()) {
-                bindSessionToBot(context, latestBot.id, created.id, taskTitle.take(40))
-                val cachedList = RemoteSessionCache.getCachedSessions(context, engine)
-                RemoteSessionCache.putCachedSessions(context, engine, listOf(created) + cachedList.filterNot { it.id == created.id })
-                return@withContext created.id
-            }
-            ""
+            check(hub.isNotBlank() && token.isNotBlank()) { "请先在远程连接中配置 Hub 并完成配对" }
+            BotSessionBootstrap.create(
+                synchronize = {
+                    // Repairs model choices saved by older versions without an outbox too.
+                    synchronized(this@BotTeamStore) { enqueueProfile(context, latestBot) }
+                    flushProfiles(context, hub, token)
+                    check(getBot(context, bot.id)?.let { it.engine == latestBot.engine && it.model == latestBot.model } != false) {
+                        "模型配置已变化，请重新发送"
+                    }
+                },
+                start = {
+                    if (!forceNew && latestBot.activeSessionId.isNotBlank() && !latestBot.activeSessionId.startsWith("01a1a0")) {
+                        val sessions = runCatching { loadAgentSessions(context, engine) }.getOrDefault(emptyList())
+                        val matched = sessions.firstOrNull { it.id == latestBot.activeSessionId }
+                        val sameBinding = matched != null && matched.model == latestBot.model &&
+                            matched.device == latestBot.device.ifBlank { "pc" } &&
+                            matched.cwd.replace('\\', '/').trimEnd('/').equals(
+                                latestBot.cwd.replace('\\', '/').trimEnd('/'), ignoreCase = true,
+                            )
+                        if (sameBinding) return@create latestBot.activeSessionId
+                    }
+                    val created = RemoteApi.createSession(
+                        hub = hub, token = token, device = latestBot.device.ifBlank { "pc" },
+                        agent = engine, model = latestBot.model, cwd = latestBot.cwd, text = "",
+                        botId = latestBot.id, thinkingEffort = latestBot.thinkingEffort,
+                        isolationMode = latestBot.isolationMode,
+                    )
+                    check(created.id.isNotBlank()) { "Codex 未返回可用会话 ID" }
+                    bindSessionToBot(context, latestBot.id, created.id, taskTitle.take(40))
+                    val cachedList = RemoteSessionCache.getCachedSessions(context, engine)
+                    RemoteSessionCache.putCachedSessions(context, engine, listOf(created) + cachedList.filterNot { it.id == created.id })
+                    created.id
+                },
+            )
         }
+    }
 
     /**
      * 当某个 Bot 的底层会话产生最新完整回复时，自动同步回所有群聊中该 Bot 挂起 (`thinking` 或 `仍在后台持续执行中`) 的消息气泡。
@@ -2684,9 +2742,10 @@ object BotTeamStore {
         val hub = RemoteStore.hub(context)
         val token = RemoteStore.token(context)
         val engine = BotModelPolicy.requireEngine(liveBot.engine)
-        var sessionId = ensureBotRemoteSession(context, liveBot, userMessage, forceNew = forceNewSession)
-        if (sessionId.isBlank()) {
-            return@withContext "" to "（未能连接到电脑端 ${agentDisplayName(engine)} 引擎，请检查 Hub 连接）"
+        var sessionId = try {
+            ensureBotRemoteSession(context, liveBot, userMessage, forceNew = forceNewSession)
+        } catch (e: Exception) {
+            return@withContext "" to "（建立 ${agentDisplayName(engine)} 会话失败：${redactSecrets(e.message.orEmpty()).first.take(600)}）"
         }
         onSessionLinked?.invoke(sessionId)
 

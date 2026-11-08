@@ -267,7 +267,7 @@ private fun VibeLinkRoot(store: ProviderStore, monitor: SystemStatusMonitor, act
     // 扫了 vibelink 配对二维码：打开远程会话页，那里弹「连接到 xx？」
     val pairLink by com.wangzan101.vibelink.remote.PairInbox.pending.collectAsState()
     LaunchedEffect(pairLink) { if (pairLink != null) nav.push(Route.Remote) }
-    // 第一次打开:欢迎 → 配置模型 → 手机操作;配过模型的跳过前两步,手机操作已就绪或看过引导的跳过最后一步
+    // 使用 Mika 时按需进入：欢迎 → 配置模型 → 手机操作；首页不触发。
     val onboardingState = remember { OnboardingState(context) }
     fun onboardingInputs() = Onboarding.Inputs(
         hasMainModel = store.roles.value.main != null,
@@ -285,8 +285,12 @@ private fun VibeLinkRoot(store: ProviderStore, monitor: SystemStatusMonitor, act
             null -> nav.openChat()
         }
     }
-    LaunchedEffect(Unit) {
-        if (onboarding == null) Onboarding.start(onboardingInputs())?.let(::goOnboarding)
+    // 首页仅展示联系人。点击 Mika、打开她的通知或历史会话后才进入必要配置。
+    LaunchedEffect(nav.current) {
+        if (nav.current == Route.Home) onboarding = null
+        if (nav.current == Route.Chat && onboarding == null) {
+            Onboarding.start(onboardingInputs().copy(assistantRequested = true))?.let(::goOnboarding)
+        }
     }
     val phoneSetupNeeded by phoneSetup.needed.collectAsState()
     // 页面有自己的返回处理时(设置页里的子页、侧栏)由它们先接;这里只管退回上一页

@@ -6,7 +6,7 @@ import android.content.Context
 enum class OnboardingStep { Welcome, Model, Phone }
 
 /**
- * 首次打开时走哪几步(纯函数,便于测试)。和手机引导一样按「看过没有」判断,不每次都弹:
+ * 显式使用手机助手时走哪几步(纯函数,便于测试)。和手机引导一样按「看过没有」判断,不每次都弹:
  * - 欢迎和配置模型:还没有主模型、也没在上手流程里配过模型时才走。已经配过模型的(包括老用户)直接跳过。
  * - 手机操作:系统够新、手机操作还没就绪、引导没看过时走。
  */
@@ -17,9 +17,12 @@ object Onboarding {
         /** 系统够新且手机操作还没就绪。 */
         val phoneNeeded: Boolean,
         val phoneGuideSeen: Boolean,
+        /** 用户已经点击 Mika 或打开她的通知会话。首页本身不触发引导。 */
+        val assistantRequested: Boolean = false,
     )
 
     fun start(i: Inputs): OnboardingStep? = when {
+        !i.assistantRequested -> null
         !i.hasMainModel && !i.modelSetupDone -> OnboardingStep.Welcome
         i.phoneNeeded && !i.phoneGuideSeen -> OnboardingStep.Phone
         else -> null

@@ -479,7 +479,7 @@ object RemoteApi {
         if (botId.isNotBlank()) body.put("botId", botId)
         if (thinkingEffort.isNotBlank()) body.put("thinkingEffort", thinkingEffort)
         if (isolationMode.isNotBlank()) body.put("isolationMode", isolationMode)
-        if (model.isNotEmpty()) body.put("model", model)
+        if (model.isNotEmpty() || botId.isNotBlank()) body.put("model", model)
         if (files.isNotEmpty()) body.put("files", org.json.JSONArray(files))
         return post(hub, token, "/api/sessions/$device/$session/prompt", body)
     }
@@ -509,7 +509,7 @@ object RemoteApi {
         if (botId.isNotBlank()) body.put("botId", botId)
         if (thinkingEffort.isNotBlank()) body.put("thinkingEffort", thinkingEffort)
         if (isolationMode.isNotBlank()) body.put("isolationMode", isolationMode)
-        if (model.isNotEmpty()) body.put("model", model)
+        if (model.isNotEmpty() || botId.isNotBlank()) body.put("model", model)
         if (files.isNotEmpty()) body.put("files", org.json.JSONArray(files))
         val res = post(hub, token, "/api/sessions/$device/create", body)
         val id = res.optString("id").ifBlank { error("创建会话失败: 未返回会话 ID") }

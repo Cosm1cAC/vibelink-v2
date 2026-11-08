@@ -129,7 +129,7 @@ fun AgentProfileScreen(
             latest = list.maxByOrNull { it.updatedAt }?.title
             contact = AgentContact(
                 id = VIBELINK_AGENT_ID,
-                name = botFriend?.name ?: "DeepSeek",
+                name = botFriend?.name?.takeIf { it.isNotBlank() } ?: "Mika",
                 kind = AgentKind.Phone,
                 online = true,
                 deviceCount = 1,

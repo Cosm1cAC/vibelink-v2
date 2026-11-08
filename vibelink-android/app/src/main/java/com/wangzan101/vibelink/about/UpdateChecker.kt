@@ -123,7 +123,9 @@ class UpdateChecker(
             listOf(releaseApi()) + publicFallback
         }
         for (u in sources.distinct()) {
-            val info = runCatching { Releases.fromGitHub(get(if (currentVersion.endsWith("-beta") && !u.contains("api.github.com")) u + if (u.contains('?')) "&edition=beta" else "?edition=beta" else u), betaEdition = currentVersion.endsWith("-beta")) }.getOrNull()
+            val edition = if (currentVersion.endsWith("-beta")) "beta" else "dev"
+            val source = if (u.contains("api.github.com")) u else u + (if (u.contains('?')) "&" else "?") + "edition=$edition"
+            val info = runCatching { Releases.fromGitHub(get(source), betaEdition = edition == "beta") }.getOrNull()
             if (info != null) return info
         }
         return null

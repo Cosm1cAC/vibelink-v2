@@ -1998,9 +1998,7 @@ impl BotFleetStore {
                 existing.job_title = seeded.job_title;
                 existing.department = seeded.department;
                 existing.lifecycle = seeded.lifecycle;
-                if existing.engine != seeded.engine { existing.active_session_id.clear(); existing.session_ids.clear(); }
-                existing.engine = seeded.engine;
-                existing.model = seeded.model;
+                // Applying a role recipe must not change the user's model/Agent binding.
                 existing.thinking_effort = seeded.thinking_effort;
                 existing.isolation_mode = seeded.isolation_mode;
                 existing.approval_mode = seeded.approval_mode;
