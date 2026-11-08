@@ -120,6 +120,10 @@
             android:windowSoftInputMode="adjustResize" />
 
         <!-- 应用内更新的安装结果回调（PackageInstaller 会话） -->
+        <activity
+            android:name=".about.UpdateInstallActivity"
+            android:exported="false"
+            android:theme="@style/Theme.VibeLink" />
         <receiver
             android:name=".about.UpdateInstallReceiver"
             android:exported="false" />
