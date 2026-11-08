@@ -19,6 +19,7 @@ internal class AuthHttpFailure(val code: Int) : IllegalStateException(when (code
 })
 
 internal data class AuthResult(val token: String, val session: ClientSession, val hubUrl: String)
+internal data class LocatedIdentity(val origin: String, val session: ClientSession)
 internal data class DesktopScan(val hub: String, val status: String, val deviceName: String, val edition: String, val verificationCode: String, val expiresAt: Long, val issuer: String, val hubId: String)
 
 internal object AuthApi {
@@ -45,6 +46,22 @@ internal object AuthApi {
         val root = request(hub, "/api/auth/me", token)
         check(root.optBoolean("ok", false)) { "Hub 未确认当前登录身份" }
         return SessionJson.parse(root.getJSONObject("session"))
+    }
+    /** Callers supply only previously stored, edition-filtered origins, never URLs from a new QR. */
+    fun meTrusted(origins: List<String>, token: String, guard: () -> Unit = {}): LocatedIdentity {
+        var failure: Throwable? = null
+        for (origin in origins.distinct()) {
+            guard()
+            try {
+                val identity = me(origin, token)
+                guard()
+                return LocatedIdentity(origin, identity)
+            } catch (e: AuthHttpFailure) {
+                if (e.code < 500) throw e
+                failure = e
+            } catch (e: java.io.IOException) { failure = e }
+        }
+        throw failure ?: IllegalStateException("没有可用的已配对 Hub 地址，请重新配置连接")
     }
     fun exchange(hub: String, token: String, device: String): AuthResult = result(request(hub, "/api/auth/session", token, JSONObject().put("deviceName", device)), hub)
     fun beta(code: String, device: String): AuthResult {

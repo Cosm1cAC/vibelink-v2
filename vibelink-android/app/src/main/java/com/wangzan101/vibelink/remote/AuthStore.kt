@@ -90,18 +90,21 @@ object AuthStore {
         if (cached != null && cached.expiresAt in 1..System.currentTimeMillis()) { clear(context, "登录已过期，请重新登录"); return@withLock }
         var expectedConnection = captured
         try {
-            val origin = LoginPolicy.allowedUrls(listOf(captured.hub), com.wangzan101.vibelink.BuildConfig.IS_BETA_EDITION).firstOrNull()
-                ?: error("已保存的 Hub 地址不属于当前版本，请重新登录对应的内网或公网 Hub")
+            val trusted = LoginPolicy.allowedUrls(listOf(captured.hub) + RemoteStore.extraHubs(context),
+                com.wangzan101.vibelink.BuildConfig.IS_BETA_EDITION)
+            check(trusted.isNotEmpty()) { "已保存的 Hub 地址不属于当前版本，请重新登录对应的内网或公网 Hub" }
+            val preferred = RemoteApi.candidates(captured.hub).mapNotNull(LoginPolicy::normalizedOrigin).filter { it in trusted }
+            val located = AuthApi.meTrusted((preferred + trusted).distinct(), captured.token) { guard(context, captured) }
             val verified = validateLoginCandidate(captured.token, System.currentTimeMillis(),
-                read = { AuthApi.me(captured.hub, captured.token) },
-                exchange = { AuthApi.exchange(captured.hub, captured.token, deviceName()).let { ValidatedLogin(it.token, it.session) } },
+                read = { located.session },
+                exchange = { AuthApi.exchange(located.origin, captured.token, deviceName()).let { ValidatedLogin(it.token, it.session) } },
                 guard = { guard(context, captured) })
             if (cached != null) check(cached.userId == verified.session.userId && cached.issuer == verified.session.issuer) {
                 "已保存的登录身份发生变化，请明确退出后重新登录"
             }
             val migrationScope = RemoteStore.legacyScope(context) ?: if (cached == null) RemoteStore.scopeHash(captured.hub.trimEnd('/') + "|" + captured.token) else null
-            val extras = RemoteStore.extraHubs(context)
-            install(context, AuthResult(verified.token, verified.session, origin), extras, migrationScope)
+            val extras = trusted.filter { it != located.origin }
+            install(context, AuthResult(verified.token, verified.session, located.origin), extras, migrationScope)
             expectedConnection = RemoteStore.connection(context)
             if (migrationScope != null) {
                 RemoteStore.migrateLegacyPreferences(context, listOf("vibelink_bot_team_store", "vibelink_remote_session_cache_v3", "vibelink_agent_cache"))

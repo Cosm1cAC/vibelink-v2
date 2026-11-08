@@ -66,4 +66,46 @@ class AuthApiTest {
             assertEquals(1, server.requestCount)
         }
     }
+
+    @Test fun unreachableSavedPrimaryCanMigrateThroughSavedAliasWithoutChangingPrincipal() {
+        val primary = MockWebServer()
+        primary.start()
+        val unavailable = primary.url("/").toString().trimEnd('/')
+        primary.shutdown()
+        MockWebServer().use { alias ->
+            alias.enqueue(MockResponse().setBody(JSONObject().put("ok", true).put("session", session(true)).toString()))
+            alias.enqueue(MockResponse().setBody(JSONObject().put("ok", true).put("token", "migrated-fixture-token").put("session", session()).toString()))
+            val reachable = alias.url("/").toString().trimEnd('/')
+            val located = AuthApi.meTrusted(listOf(unavailable, reachable), "legacy-fixture-token")
+            val validated = validateLoginCandidate("legacy-fixture-token", System.currentTimeMillis(), read = { located.session },
+                exchange = { AuthApi.exchange(located.origin, "legacy-fixture-token", "Fixture Android").let { ValidatedLogin(it.token, it.session) } })
+            assertEquals(reachable, located.origin)
+            assertEquals("fixture-owner", validated.session.userId)
+            assertEquals("/api/auth/me", alias.takeRequest().path)
+            assertEquals("/api/auth/session", alias.takeRequest().path)
+            assertEquals(2, alias.requestCount)
+        }
+    }
+    @Test fun unauthorizedSavedPrimaryNeverTriesAnAlias() {
+        MockWebServer().use { primary -> MockWebServer().use { alias ->
+            primary.enqueue(MockResponse().setResponseCode(401).setBody("{}"))
+            alias.enqueue(MockResponse().setBody(JSONObject().put("ok", true).put("session", session()).toString()))
+            assertThrows(AuthHttpFailure::class.java) {
+                AuthApi.meTrusted(listOf(primary.url("/").toString(), alias.url("/").toString()), "revoked-fixture-token")
+            }
+            assertEquals(1, primary.requestCount)
+            assertEquals(0, alias.requestCount)
+        } }
+    }
+    @Test fun serviceUnavailableMayTryOnlySuppliedTrustedAlias() {
+        MockWebServer().use { primary -> MockWebServer().use { alias ->
+            primary.enqueue(MockResponse().setResponseCode(503).setBody("{}"))
+            alias.enqueue(MockResponse().setBody(JSONObject().put("ok", true).put("session", session()).toString()))
+            val reachable = alias.url("/").toString()
+            val located = AuthApi.meTrusted(listOf(primary.url("/").toString(), reachable), "client-fixture-token")
+            assertEquals(reachable, located.origin)
+            assertEquals("fixture-owner", located.session.userId)
+            assertEquals(1, alias.requestCount)
+        } }
+    }
 }

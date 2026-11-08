@@ -75,17 +75,21 @@ object Net {
                     return@addInterceptor chain.proceed(req)
                 }
                 val suffix = rawUrl.substring(idx) // e.g. /api/llm/v1/chat/completions
-                val ctx = app
-                val currentHub = ctx?.let { com.wangzan101.vibelink.remote.RemoteStore.hub(it) }
-                    ?: rawUrl.substring(0, idx)
-                val latestToken = ctx?.let { com.wangzan101.vibelink.remote.RemoteStore.token(it) }.orEmpty()
-                check(latestToken.isNotBlank() && ctx?.let {
+                val ctx = app ?: error("请先登录 VibeLink")
+                val connection = com.wangzan101.vibelink.remote.RemoteStore.connection(ctx)
+                val currentHub = connection.hub
+                val latestToken = connection.token
+                check(latestToken.isNotBlank() && ctx.let {
                     com.wangzan101.vibelink.remote.RemoteStore.session(it)?.usableOffline(System.currentTimeMillis())
                 } == true) { "请先登录 VibeLink" }
+                check(HubModelCredentialPolicy.matches(req.headers.values("Authorization"), req.headers.values("x-mesh-token"), latestToken)) {
+                    "登录身份已变化，请重新发送这条消息"
+                }
                 val route = com.wangzan101.vibelink.remote.RemoteApi.routeSnapshot(currentHub, latestToken)
                 val candidates = route.candidates
                 var lastErr: IOException? = null
                 for ((i, baseHub) in candidates.withIndex()) {
+                    check(com.wangzan101.vibelink.remote.RemoteStore.matches(ctx, connection)) { "登录身份已变化，请重新发送这条消息" }
                     com.wangzan101.vibelink.remote.RemoteApi.requireRoute(route)
                     val targetUrl = baseHub.trimEnd('/') + suffix
                     val newReqBuilder = req.newBuilder().url(targetUrl)
@@ -98,6 +102,7 @@ object Net {
                             .withConnectTimeout(3000, java.util.concurrent.TimeUnit.MILLISECONDS)
                             .proceed(newReqBuilder.build())
                         try {
+                            check(com.wangzan101.vibelink.remote.RemoteStore.matches(ctx, connection)) { "登录身份已变化，请重新发送这条消息" }
                             com.wangzan101.vibelink.remote.RemoteApi.rememberRoute(route, baseHub)
                         } catch (e: Exception) {
                             resp.close()
