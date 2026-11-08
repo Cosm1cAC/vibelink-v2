@@ -137,7 +137,7 @@
     },
     {
       "path": "overlay/apps/desktop/src/renderer/features/vibelink/HubWorkPanel.test.tsx",
-      "sha256": "7b37ef770aa94ea5975d28659ba0b115706b1e5a0acf7db11d3f8fe295662225"
+      "sha256": "102c2264868eda12b986a202f4ac010a5b4a06c338db5b01325601665741af2c"
     },
     {
       "path": "overlay/apps/desktop/src/renderer/features/vibelink/HubWorkPanel.tsx",
