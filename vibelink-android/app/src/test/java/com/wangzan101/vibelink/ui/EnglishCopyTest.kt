@@ -14,7 +14,7 @@ class EnglishCopyTest {
 
     @Test fun chatPage() {
         assertEquals("Good morning", ChatCopy.greeting(7))
-        assertEquals("What should VibeLink do?", ChatCopy.EMPTY_PROMPT)
+        assertEquals("What should Mika do?", ChatCopy.EMPTY_PROMPT)
         assertEquals("Open WeChat and message Wang Zan to add me to the VibeLink beta group", ChatCopy.examples.first().text)
         assertEquals("1 earlier step", ChatCopy.earlierSteps(1))
         assertEquals("3 earlier steps", ChatCopy.earlierSteps(3))
@@ -23,7 +23,7 @@ class EnglishCopyTest {
     @Test fun settingsAndSetup() {
         assertEquals("No usable model yet", StatusCopy.banner(Problem.NoModel).title)
         assertEquals("Set up phone control", PhoneSetupCopy.TITLE)
-        assertEquals("Hi, I’m VibeLink", WelcomeCopy.TITLE)
+        assertEquals("Hi, I’m Mika", WelcomeCopy.TITLE)
         assertEquals("About VibeLink", AboutCopy.TITLE)
     }
 

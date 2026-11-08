@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="welcome_title">Hi, I’m VibeLink</string>
+    <string name="welcome_title">Hi, I’m Mika</string>
     <string name="welcome_lead">Your personal assistant on your phone.\nTell me what to do and I’ll get it done in the background.</string>
     <string name="welcome_note">Before you start: set up a model and turn on phone control. About 3 minutes.</string>
     <string name="welcome_start">Get started</string>

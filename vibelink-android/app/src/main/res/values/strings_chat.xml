@@ -5,7 +5,7 @@
     <string name="chat_greeting_afternoon">Good afternoon</string>
     <string name="chat_greeting_evening">Good evening</string>
     <string name="chat_greeting_night">Up late</string>
-    <string name="chat_empty_prompt">What should VibeLink do?</string>
+    <string name="chat_empty_prompt">What should Mika do?</string>
     <string name="chat_example_message">Open WeChat and message Wang Zan to add me to the VibeLink beta group</string>
     <string name="chat_example_group_summary">Summarize what the VibeLink beta group on WeChat talked about today</string>
     <string name="chat_example_jobs">Apply to 150 AI product manager jobs on BOSS Zhipin</string>

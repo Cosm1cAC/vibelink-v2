@@ -5,7 +5,7 @@
     <string name="chat_greeting_afternoon">下午好</string>
     <string name="chat_greeting_evening">晚上好</string>
     <string name="chat_greeting_night">夜深了</string>
-    <string name="chat_empty_prompt">想让 VibeLink 做什么？</string>
+    <string name="chat_empty_prompt">想让 Mika 做什么？</string>
     <string name="chat_example_message">打开微信，给王赞发消息，让他拉我进VibeLink内测体验群</string>
     <string name="chat_example_group_summary">帮我总结微信群聊，VibeLink内测体验群今天都聊了些啥</string>
     <string name="chat_example_jobs">在Boss直聘上帮我投递AI产品经理岗位，150个投满</string>
