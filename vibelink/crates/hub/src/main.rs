@@ -2036,7 +2036,15 @@ fn apk_dir(app: &App, query: &HashMap<String, String>) -> PathBuf {
     }
 }
 
-async fn apk_latest(State(app): State<Shared>, Query(q): Query<HashMap<String, String>>, headers: axum::http::HeaderMap) -> Response {
+async fn apk_latest(State(app): State<Shared>, Query(mut q): Query<HashMap<String, String>>, headers: axum::http::HeaderMap) -> Response {
+    // Existing developer APKs omit edition even when checking the public beta Hub.
+    // Keep explicit selection authoritative; use the app UA only for legacy clients.
+    if !q.contains_key("edition") {
+        if let Some(version) = headers.get("user-agent").and_then(|h| h.to_str().ok())
+            .and_then(|ua| ua.strip_prefix("VibeLink/")) {
+            q.insert("edition".into(), if version.trim().ends_with("-beta") {"beta"} else {"dev"}.into());
+        }
+    }
     let dir = apk_dir(&app, &q);
     let Ok(raw) = fs::read_to_string(dir.join("meta.json")) else {
         return (StatusCode::NOT_FOUND, Json(json!({"error": "no apk published"}))).into_response();

@@ -246,3 +246,39 @@ async fn paired_clients_cannot_read_or_interrupt_another_users_agent_session() {
     assert!(app.sessions.lock().unwrap().queue.is_empty());
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[tokio::test]
+async fn legacy_app_update_channel_and_explicit_channel_select_matching_apks() {
+    let (dir, mut app, _) = fixture();
+    let settings = Arc::get_mut(&mut app).unwrap();
+    settings.data = dir.join("beta");
+    settings.beta_mode = true;
+    for edition in ["dev", "beta"] {
+        let path = dir.join(edition).join("apk");
+        fs::create_dir_all(&path).unwrap();
+        let version = if edition == "beta" {"1.5.3-beta"} else {"1.5.3"};
+        let file = format!("vibelink-1.5.3-{edition}.apk");
+        fs::write(path.join(&file), edition).unwrap();
+        fs::write(path.join("meta.json"), json!({"version":version,"file":file,"version_code":86}).to_string()).unwrap();
+    }
+    for (ua, query, expected) in [
+        ("VibeLink/1.5.1", "", "dev"),
+        ("VibeLink/1.5.1-beta", "", "beta"),
+        ("VibeLink/1.5.1", "?edition=beta", "beta"),
+        ("browser", "", "beta"),
+    ] {
+        let router = api_router(app.clone()).layer(middleware::from_fn_with_state(app.clone(), auth_mw));
+        let response = router.oneshot(HttpRequest::builder().uri(format!("/api/apk/latest{query}"))
+            .header("user-agent", ua).header("host", "hub.vibelink.cloud").header("x-forwarded-proto", "https")
+            .body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), 10000).await.unwrap();
+        let manifest: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(manifest["edition"], expected, "{ua} {query}");
+        assert_eq!(manifest["version_code"], 86);
+        let url = manifest["assets"][0]["browser_download_url"].as_str().unwrap();
+        assert!(url.starts_with("https://hub.vibelink.cloud/apk/"));
+        assert!(url.ends_with(&format!("?edition={expected}")));
+    }
+    fs::remove_dir_all(dir).unwrap();
+}
