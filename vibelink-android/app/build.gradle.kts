@@ -21,8 +21,8 @@ android {
         applicationId = if (isBetaEdition) "com.wangzan101.vibelink.beta" else "com.wangzan101.vibelink"
         minSdk = 30
         targetSdk = 35
-        versionCode = 91
-        versionName = if (isBetaEdition) "1.6.0-beta" else "1.6.0"
+        versionCode = 92
+        versionName = if (isBetaEdition) "1.6.1-beta" else "1.6.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "GIT_HASH", "\"$gitHash\"")
         // 关于页版本号后的 Beta 标记;出正式版时改成 false
@@ -106,6 +106,7 @@ dependencies {
     implementation(libs.mlkit.text.recognition.chinese)
 
     testImplementation(libs.junit)
+    testImplementation("org.json:json:20180813")
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.okhttp.mockwebserver)
     // 沙箱路径契约(core 的 testFixtures):AndroidSandbox 在 JVM 与真机上都跑同一套

@@ -988,7 +988,7 @@ fun TeamGroupChatScreen(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            "⚡ 按需挂载 6-Section 技能剧本 (/skill · 已挂载 ${attachedSkillIds.size} 项)",
+                            "技能 · 已选择 ${attachedSkillIds.size} 项",
                             fontSize = 11.5.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = c.ink,
@@ -1377,10 +1377,11 @@ fun CreateOrEditBotDialog(
     var templateId by remember { mutableStateOf(initialBot?.templateId ?: selectedTemplate.id) }
     var engine by remember { mutableStateOf(initialBot?.engine ?: BotModelPolicy.defaultEngine(selectedTemplate.id)) }
     var model by remember { mutableStateOf(initialBot?.model ?: BotModelPolicy.defaultModel(selectedTemplate.id)) }
+    var modelExplicitlySelected by remember { mutableStateOf(initialBot != null) }
     var name by remember {
         mutableStateOf(
-            initialBot?.name?.ifBlank { BotTeamStore.defaultModelNameForEngine(engine) }
-                ?: selectedTemplate.defaultName.ifBlank { BotTeamStore.defaultModelNameForEngine(engine) },
+            initialBot?.name?.ifBlank { selectedTemplate.defaultName.ifBlank { selectedTemplate.jobTitle } }
+                ?: selectedTemplate.defaultName.ifBlank { selectedTemplate.jobTitle },
         )
     }
     var avatar by remember {
@@ -1461,6 +1462,7 @@ fun CreateOrEditBotDialog(
     fun applyTemplateToFields(tpl: BotTemplate) {
         selectedTemplate = tpl
         templateId = tpl.id
+        model = BotModelPolicy.modelAfterTemplateChange(model, modelExplicitlySelected, tpl.id)
         name = tpl.defaultName.ifBlank { tpl.jobTitle }
         if (avatar.isBlank() || avatar.startsWith("preset:")) {
             avatar = tpl.defaultAvatar
@@ -1644,13 +1646,14 @@ fun CreateOrEditBotDialog(
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     BotModelPolicy.models.forEach { selectedModel ->
-                        val active = model == selectedModel
+                        val active = model == selectedModel || (selectedModel.isEmpty() && model.startsWith("gpt-"))
                         Box(
                             Modifier
                                 .clip(VibeLinkShapes.Pill)
                                 .background(if (active) c.ink else c.fill)
                                 .clickable {
                                     model = selectedModel
+                                    modelExplicitlySelected = true
                                 }
                                 .padding(horizontal = 12.dp, vertical = 6.dp),
                         ) {
@@ -1681,7 +1684,7 @@ fun CreateOrEditBotDialog(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            "🛡️ 工具边界 (Layer 3)",
+                            "🛡️ 工具权限",
                             fontSize = 11.5.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = c.ink,
@@ -1706,7 +1709,7 @@ fun CreateOrEditBotDialog(
                     }
                     if (skills.isNotEmpty()) {
                         Text(
-                            "📚 绑定 6-Section 技能剧本 (Layer 4 · 共 ${skills.size} 项 SKILL.md · 点击切换启停)：",
+                            "技能 · ${skills.size} 项（点击启用或停用）：",
                             fontSize = 11.5.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = c.ink,
@@ -1757,7 +1760,7 @@ fun CreateOrEditBotDialog(
                     }
                     if (defaultRoutines.isNotEmpty()) {
                         Text(
-                            "⏰ 预置例行巡检 (Layer 5)：${defaultRoutines.joinToString("；") { "${it.name} [${it.cron}]" }}",
+                            "⏰ 例行巡检：${defaultRoutines.joinToString("；") { "${it.name} [${it.cron}]" }}",
                             fontSize = 11.sp,
                             color = c.ink3,
                         )
@@ -1799,6 +1802,7 @@ fun CreateOrEditBotDialog(
                     currentAvatar = avatar,
                     engine = "codex",
                     name = name,
+                    defaultAvatar = selectedTemplate.defaultAvatar,
                     onAvatarChange = { avatar = it },
                 )
 
@@ -1829,8 +1833,8 @@ fun CreateOrEditBotDialog(
                     OutlinedTextField(
                         value = name,
                         onValueChange = { name = it },
-                        label = { Text("Bot 名 (默认底层模型名)") },
-                        placeholder = { Text(BotTeamStore.defaultModelNameForEngine(engine)) },
+                        label = { Text("显示昵称") },
+                        placeholder = { Text(selectedTemplate.defaultName.ifBlank { jobTitle }) },
                         singleLine = true,
                         modifier = Modifier.weight(1f),
                     )
@@ -2198,7 +2202,7 @@ fun LearnSkillDraftDialog(
         onDismissRequest = onDismiss,
         title = {
             Text(
-                "✨ 提炼 6-Section 技能剧本 → ${bot.name}",
+                "✨ 提炼为技能 → ${bot.name}",
                 style = VibeLinkType.Title,
             )
         },
@@ -2267,7 +2271,7 @@ fun LearnSkillDraftDialog(
                 OutlinedTextField(
                     value = skillContent,
                     onValueChange = { skillContent = it },
-                    label = { Text("6-Section 技能剧本正文 (SKILL.md)") },
+                    label = { Text("技能步骤") },
                     modifier = Modifier.fillMaxWidth().heightIn(min = 180.dp, max = 300.dp),
                 )
             }

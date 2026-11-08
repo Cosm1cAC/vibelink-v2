@@ -78,20 +78,13 @@ fun AgentProfileScreen(
 
     var conversations by remember { mutableStateOf(0) }
     var latest by remember { mutableStateOf<String?>(null) }
-    var sessions by remember(targetEngine) {
+    var sessions by remember(agentId, targetEngine, botFriend?.model, botFriend?.sessionIds, botFriend?.activeSessionId) {
         val cached = RemoteSessionCache.getCachedSessions(ctx, targetEngine)
-        val boundIds = botFriend?.sessionIds.orEmpty().toSet()
-        val sorted = if (boundIds.isNotEmpty()) {
-            cached.sortedWith(
-                compareByDescending<com.wangzan101.vibelink.remote.RemoteApi.Session> { it.id in boundIds }
-                    .thenByDescending { it.updated },
-            )
-        } else {
-            cached
-        }
+        val boundIds = botFriend?.let { (it.sessionIds + it.activeSessionId).filter { id -> id.isNotBlank() }.toSet() }
+        val sorted = BotProfilePresentation.sessions(cached, boundIds) { it.id }
         mutableStateOf(sorted)
     }
-    var contact by remember(targetEngine) {
+    var contact by remember(agentId, targetEngine) {
         val latestSession = sessions.firstOrNull()
         val initialContact = if (sessions.isNotEmpty()) {
             AgentContact(
@@ -117,9 +110,11 @@ fun AgentProfileScreen(
     var showCapabilitySheet by remember { mutableStateOf(false) }
     var showSessionsSheet by remember { mutableStateOf(false) }
 
-    LaunchedEffect(agentId, refreshTick, storeVersion) {
+    LaunchedEffect(agentId, refreshTick) {
         BotTeamStore.ensureSeeded(ctx)
         BotTeamStore.syncWithHub(ctx)
+    }
+    LaunchedEffect(agentId, refreshTick, storeVersion) {
         muted = AgentPrefs.muted(ctx, agentId)
         botFriend = BotTeamStore.getBot(ctx, agentId)
         val engineToLoad = botFriend?.engine ?: agentId
@@ -140,15 +135,8 @@ fun AgentProfileScreen(
         } else {
             val allEngineSessions = runCatching { loadAgentSessions(ctx, engineToLoad) }
                 .getOrElse { RemoteSessionCache.getCachedSessions(ctx, engineToLoad) }
-            val boundIds = botFriend?.sessionIds.orEmpty().toSet()
-            sessions = if (boundIds.isNotEmpty()) {
-                allEngineSessions.sortedWith(
-                    compareByDescending<com.wangzan101.vibelink.remote.RemoteApi.Session> { it.id in boundIds }
-                        .thenByDescending { it.updated },
-                )
-            } else {
-                allEngineSessions
-            }
+            val boundIds = botFriend?.let { (it.sessionIds + it.activeSessionId).filter { id -> id.isNotBlank() }.toSet() }
+            sessions = BotProfilePresentation.sessions(allEngineSessions, boundIds) { it.id }
             val latestSession = sessions.firstOrNull()
             contact = AgentContact(
                 id = agentId,
@@ -165,8 +153,8 @@ fun AgentProfileScreen(
     }
 
     val currentBot = botFriend
-    val underlyingModelName = BotTeamStore.defaultModelNameForEngine(targetEngine, contact?.model.orEmpty())
-    val name = currentBot?.name?.ifBlank { underlyingModelName } ?: contact?.name ?: underlyingModelName
+    val underlyingModelName = BotProfilePresentation.modelName(targetEngine, currentBot?.model, contact?.model)
+    val name = currentBot?.name?.takeIf { it.isNotBlank() } ?: currentBot?.jobTitle?.takeIf { it.isNotBlank() } ?: contact?.name ?: agentDisplayName(targetEngine)
     val weChatLinkBlue = Color(0xFF576B95)
     val weChatGrayBg = if (c.bg.red > 0.5f) Color(0xFFF2F3F5) else c.bg
 
@@ -260,13 +248,19 @@ fun AgentProfileScreen(
                             }
                         }
                         Spacer(Modifier.height(6.dp))
-                        // 第二行：昵称（底层模型与驱动 Agent）
+                        // 模型由当前 Bot 绑定决定，Agent 单独展示。
                         Text(
-                            "昵称：  $underlyingModelName (${agentDisplayName(targetEngine)})",
+                            "运行模型：  $underlyingModelName",
                             fontSize = 13.5.sp,
                             color = c.ink3,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
+                        )
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            "Agent：  ${agentDisplayName(targetEngine)}${if (targetEngine == "codex") " · 官方 CLI" else ""}",
+                            fontSize = 13.5.sp,
+                            color = c.ink3,
                         )
                         Spacer(Modifier.height(3.dp))
                         // 第三行：工位 ID / 引擎标识
@@ -645,7 +639,7 @@ fun AgentProfileScreen(
                     )
                     if (currentBot.skills.isNotEmpty()) {
                         Text(
-                            "📚 绑定 6-Section 技能剧本（点击切换启停）：",
+                            "技能（点击启用或停用）：",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold,
                             color = c.ink,
@@ -874,6 +868,7 @@ fun AgentProfileScreen(
             .distinct()
             .take(5)
         NewRemoteSessionDialog(
+            boundBot = currentBot,
             initialAgent = if (targetEngine in BotModelPolicy.engines.toSet()) targetEngine else "codex",
             initialDevice = currentBot?.device ?: sessions.firstOrNull()?.device ?: "pc",
             initialCwd = currentBot?.cwd ?: recentCwds.firstOrNull() ?: "D:\\AI\\VibeLink",

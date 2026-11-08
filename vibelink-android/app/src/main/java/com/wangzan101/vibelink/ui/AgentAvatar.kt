@@ -188,7 +188,7 @@ fun AgentAvatar(
         decodeCustomAvatarBitmap(effectiveSpec)
     }
     val presetDrawable = remember(effectiveSpec, id, bot?.engine, name) {
-        resolveAvatarDrawableRes(effectiveSpec, bot?.engine ?: id, name)
+        resolveAvatarDrawableRes(effectiveSpec.ifBlank { bot?.let { BotTeamStore.defaultAvatarForRole(it.templateId) }.orEmpty() }, id, name)
     }
     val shape = RoundedCornerShape(cornerRadius ?: (size * 0.22f))
 
@@ -228,6 +228,7 @@ fun BotAvatarPickerSection(
     engine: String,
     name: String,
     onAvatarChange: (String) -> Unit,
+    defaultAvatar: String = "preset:deepseek",
 ) {
     val ctx = LocalContext.current
     val c = VibeLinkTheme.colors
@@ -246,7 +247,7 @@ fun BotAvatarPickerSection(
         }
     }
 
-    val effectiveSpec = currentAvatar.ifBlank { BotTeamStore.defaultAvatarForEngine(engine) }
+    val effectiveSpec = currentAvatar.ifBlank { defaultAvatar }
     val isCustomImage = effectiveSpec.startsWith("data:image") || effectiveSpec.startsWith("base64:")
 
     Column(
@@ -264,21 +265,21 @@ fun BotAvatarPickerSection(
         ) {
             AgentAvatar(
                 id = engine,
-                name = name.ifBlank { BotTeamStore.defaultModelNameForEngine(engine) },
+                name = name.ifBlank { "Bot" },
                 size = 60.dp,
                 avatarOverride = effectiveSpec,
                 onClick = { galleryLauncher.launch("image/*") },
             )
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
-                    "Bot 头像设置（默认绑定底层模型 AI 拟人图）",
+                    "角色头像（不影响运行模型）",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = c.ink,
                 )
                 Text(
                     if (isCustomImage) "当前：自定义相册头像（点击下方可切换回 AI 拟人图）"
-                    else "当前：AI 拟人默认图（随底层模型自动匹配，也可自定义）",
+                    else "当前：预设形象，可自由选择或上传",
                     fontSize = 11.sp,
                     color = c.ink3,
                 )
@@ -304,13 +305,13 @@ fun BotAvatarPickerSection(
                                 .background(c.surface)
                                 .border(0.5.dp, c.edge, VibeLinkShapes.Pill)
                                 .clickable {
-                                    onAvatarChange(BotTeamStore.defaultAvatarForEngine(engine))
-                                    uploadHint = "已恢复底层模型默认 AI 拟人头像"
+                                    onAvatarChange(defaultAvatar)
+                                    uploadHint = "已恢复角色默认头像"
                                 }
                                 .padding(horizontal = 10.dp, vertical = 5.dp),
                         ) {
                             Text(
-                                "🔄 恢复模型默认",
+                                "🔄 恢复角色默认",
                                 fontSize = 11.sp,
                                 color = c.ink2,
                             )
@@ -401,7 +402,7 @@ fun AvatarQuickEditDialog(
     var selectedAvatar by remember {
         mutableStateOf(
             initialAvatar.ifBlank {
-                AgentPrefs.avatar(ctx, agentId).ifBlank { BotTeamStore.defaultAvatarForEngine(engine) }
+                AgentPrefs.avatar(ctx, agentId).ifBlank { BotTeamStore.defaultAvatarForRole(BotTeamStore.getBot(ctx, agentId)?.templateId.orEmpty()) }
             },
         )
     }
@@ -416,6 +417,7 @@ fun AvatarQuickEditDialog(
                 currentAvatar = selectedAvatar,
                 engine = engine,
                 name = currentName,
+                defaultAvatar = BotTeamStore.defaultAvatarForRole(BotTeamStore.getBot(ctx, agentId)?.templateId.orEmpty()),
                 onAvatarChange = { selectedAvatar = it },
             )
         },

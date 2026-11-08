@@ -496,15 +496,7 @@ object RemoteApi {
         isolationMode: String = "",
         model: String = "",
     ): Session {
-        val body = JSONObject()
-            .put("agent", agent)
-            .put("cwd", cwd)
-            .put("text", text)
-        if (botId.isNotBlank()) body.put("botId", botId)
-        if (thinkingEffort.isNotBlank()) body.put("thinkingEffort", thinkingEffort)
-        if (isolationMode.isNotBlank()) body.put("isolationMode", isolationMode)
-        if (model.isNotEmpty() || botId.isNotBlank()) body.put("model", model)
-        if (files.isNotEmpty()) body.put("files", org.json.JSONArray(files))
+        val body = createSessionPayload(agent, cwd, text, files, botId, thinkingEffort, isolationMode, model)
         val res = post(hub, token, "/api/sessions/$device/create", body)
         val id = res.optString("id").ifBlank { error("创建会话失败: 未返回会话 ID") }
         return Session(
@@ -517,6 +509,22 @@ object RemoteApi {
             cwd = res.optString("cwd").ifBlank { cwd },
             running = res.optBoolean("running", text.isNotBlank() || files.isNotEmpty()),
         )
+    }
+
+    internal fun createSessionPayload(
+        agent: String, cwd: String, text: String, files: List<JSONObject> = emptyList(),
+        botId: String = "", thinkingEffort: String = "", isolationMode: String = "", model: String = "",
+    ): JSONObject {
+        val body = JSONObject()
+            .put("agent", agent)
+            .put("cwd", cwd)
+            .put("text", text)
+        if (botId.isNotBlank()) body.put("botId", botId)
+        if (thinkingEffort.isNotBlank()) body.put("thinkingEffort", thinkingEffort)
+        if (isolationMode.isNotBlank()) body.put("isolationMode", isolationMode)
+        if (model.isNotEmpty() || botId.isNotBlank()) body.put("model", model)
+        if (files.isNotEmpty()) body.put("files", org.json.JSONArray(files))
+        return body
     }
 
     private fun parseEntry(o: JSONObject): WorkspaceEntry {

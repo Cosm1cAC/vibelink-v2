@@ -1604,6 +1604,7 @@ fun AgentChatScreen(
 
     if (showNewSessionDialog) {
         NewRemoteSessionDialog(
+            boundBot = botFriend,
             initialAgent = if (effectiveEngine in BotModelPolicy.engines.toSet()) effectiveEngine else "codex",
             initialDevice = effectiveDevice,
             initialCwd = effectiveCwd,
@@ -1638,6 +1639,7 @@ fun AgentChatScreen(
  */
 @Composable
 fun NewRemoteSessionDialog(
+    boundBot: BotFriend? = null,
     initialAgent: String = "codex",
     initialDevice: String = "pc",
     initialCwd: String = "C:\\Users\\22771\\Desktop\\项目\\VibeLink",
@@ -1651,7 +1653,8 @@ fun NewRemoteSessionDialog(
     val hub = remember { RemoteStore.hub(ctx) }
     val token = remember { RemoteStore.token(ctx) }
 
-    var selectedAgent by remember { mutableStateOf(initialAgent) }
+    var selectedAgent by remember { mutableStateOf(boundBot?.engine ?: initialAgent) }
+    var selectedModel by remember { mutableStateOf(boundBot?.model ?: BotModelPolicy.defaultModel("")) }
     var selectedDevice by remember { mutableStateOf(initialDevice.ifBlank { "pc" }) }
     var devices by remember { mutableStateOf<List<RemoteApi.Device>>(emptyList()) }
     var cwd by remember { mutableStateOf(initialCwd) }
@@ -1666,7 +1669,7 @@ fun NewRemoteSessionDialog(
         }
         devices = list
         val online = list.filter { it.online }
-        if (online.isNotEmpty() && online.none { it.id == selectedDevice }) {
+        if (boundBot == null && online.isNotEmpty() && online.none { it.id == selectedDevice }) {
             selectedDevice = online.first().id
         }
     }
@@ -1691,12 +1694,12 @@ fun NewRemoteSessionDialog(
         title = {
             Column {
                 Text("新建远程会话", style = VibeLinkType.Title, color = c.ink)
-                Text("选择引擎与电脑工作目录，直接发起远程开发会话", style = VibeLinkType.Hint, color = c.ink3)
+                Text(if (boundBot != null) "使用 ${boundBot.name} 的模型、Agent 与工作区" else "选择运行模型与电脑工作目录", style = VibeLinkType.Hint, color = c.ink3)
             }
         },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("引擎", style = VibeLinkType.Label, color = c.ink2)
+                Text("Agent", style = VibeLinkType.Label, color = c.ink2)
                 Row(
                     modifier = Modifier.horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1708,7 +1711,7 @@ fun NewRemoteSessionDialog(
                                 .clip(RoundedCornerShape(8.dp))
                                 .background(if (active) c.accent else c.surface)
                                 .border(1.dp, if (active) c.accent else c.edge, RoundedCornerShape(8.dp))
-                                .clickable(enabled = !creating) { selectedAgent = id }
+                                .clickable(enabled = !creating && boundBot == null) { selectedAgent = id }
                                 .padding(horizontal = 10.dp, vertical = 6.dp),
                         ) {
                             Text(
@@ -1721,7 +1724,20 @@ fun NewRemoteSessionDialog(
                     }
                 }
 
-                if (devices.size > 1) {
+                Text("运行模型", style = VibeLinkType.Label, color = c.ink2)
+                if (boundBot != null) {
+                    Text(BotModelPolicy.modelLabel(boundBot.model), style = VibeLinkType.Body, color = c.ink)
+                } else {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        BotModelPolicy.models.forEach { model ->
+                            TextButton(enabled = !creating, onClick = { selectedModel = model }) {
+                                Text((if (selectedModel == model) "✓ " else "") + BotModelPolicy.modelLabel(model))
+                            }
+                        }
+                    }
+                }
+
+                if (devices.size > 1 && boundBot == null) {
                     Text("设备", style = VibeLinkType.Label, color = c.ink2)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         devices.filter { it.online }.forEach { d ->
@@ -1754,7 +1770,7 @@ fun NewRemoteSessionDialog(
                         Modifier
                             .clip(RoundedCornerShape(6.dp))
                             .background(c.accent.copy(alpha = 0.14f))
-                            .clickable(enabled = !creating) { browsingCwd = true }
+                            .clickable(enabled = !creating && boundBot == null) { browsingCwd = true }
                             .padding(horizontal = 8.dp, vertical = 3.dp),
                     ) {
                         Text("📁 浏览远端目录", style = VibeLinkType.Hint, color = c.accent, fontWeight = FontWeight.SemiBold)
@@ -1772,7 +1788,7 @@ fun NewRemoteSessionDialog(
                                 .clip(RoundedCornerShape(6.dp))
                                 .background(if (active) c.accent.copy(alpha = 0.16f) else c.surface)
                                 .border(1.dp, if (active) c.accent else c.edge, RoundedCornerShape(6.dp))
-                                .clickable(enabled = !creating) { cwd = preset }
+                                .clickable(enabled = !creating && boundBot == null) { cwd = preset }
                                 .padding(horizontal = 8.dp, vertical = 4.dp),
                         ) {
                             Text(shortName, style = VibeLinkType.Hint, color = if (active) c.accent else c.ink2)
@@ -1784,7 +1800,7 @@ fun NewRemoteSessionDialog(
                     onValueChange = { cwd = it },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
-                    enabled = !creating,
+                    enabled = !creating && boundBot == null,
                     placeholder = { Text("C:\\Users\\22771\\Desktop\\项目\\VibeLink") },
                 )
 
@@ -1813,11 +1829,19 @@ fun NewRemoteSessionDialog(
                     scope.launch {
                         runCatching {
                             withContext(Dispatchers.IO) {
-                                RemoteApi.createSession(
+                                if (boundBot != null) {
+                                    val sid = BotTeamStore.ensureBotRemoteSession(
+                                        context = ctx, bot = boundBot, taskTitle = prompt.trim().ifBlank { "新会话" },
+                                        forceNew = true, initialText = prompt.trim(),
+                                    )
+                                    RemoteSessionCache.getCachedSessions(ctx, boundBot.engine).firstOrNull { it.id == sid }
+                                        ?: error("会话已创建但缓存未就绪，请重新打开资料页")
+                                } else RemoteApi.createSession(
                                     hub = hub,
                                     token = token,
                                     device = selectedDevice.ifBlank { "pc" },
                                     agent = selectedAgent,
+                                    model = selectedModel,
                                     cwd = cwd.trim(),
                                     text = prompt.trim(),
                                 )

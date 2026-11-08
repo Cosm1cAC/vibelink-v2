@@ -127,7 +127,7 @@ data class BotFriend(
     val department: String,
     val lifecycle: BotLifecycle,
     val engine: String,
-    val model: String = "",
+    val model: String = BotModelPolicy.DEEPSEEK_MODEL,
     val device: String = "pc",
     val cwd: String = "D:\\AI\\VibeLink",
     /** 对外协作名片（How other bots see it in `<bot_directory>`） */
@@ -279,31 +279,9 @@ object BotTeamStore {
         return null
     }
 
-    /** 根据底层驱动引擎返回默认的底层模型名称（Bot 名默认为底层模型名） */
-    fun defaultModelNameForEngine(engine: String, model: String = ""): String {
-        val m = model.trim()
-        if (m.isNotEmpty()) return m
-        return when (engine.trim().lowercase()) {
-            "codex", "gpt", "openai" -> "GPT"
-            "claude", "anthropic" -> "Claude"
-            "antigravity", "gemini", "google" -> "Gemini"
-            "grok", "xai" -> "Grok"
-            "opencode", "glm", "zhipu" -> "GLM"
-            "deepseek", "vibelink" -> "DeepSeek"
-            else -> "DeepSeek"
-        }
-    }
-
-    /** 根据底层驱动引擎返回默认的 AI 拟人头像预设标识 */
-    fun defaultAvatarForEngine(engine: String): String =
-        when (engine.trim().lowercase()) {
-            "codex", "gpt", "openai" -> "preset:gpt"
-            "claude", "anthropic" -> "preset:claude"
-            "antigravity", "gemini", "google" -> "preset:gemini"
-            "grok", "xai" -> "preset:grok"
-            "opencode", "glm", "zhipu" -> "preset:glm"
-            else -> "preset:deepseek"
-        }
+    /** Role artwork is an appearance choice; the agent does not select a model or avatar. */
+    fun defaultAvatarForRole(templateId: String): String =
+        TEMPLATES.firstOrNull { it.id == templateId }?.defaultAvatar?.takeIf { it.isNotBlank() } ?: "preset:deepseek"
 
     /** 判断某个名称是否属于默认模型名或旧版拟人模板名（切换底层模型时可自动联动更新） */
     fun isDefaultOrLegacyBotName(name: String): Boolean {
@@ -726,11 +704,11 @@ object BotTeamStore {
             approvalMode = "ask",
             manageOtherBots = false,
             dailyCheckIns = true,
-            summary = "Grok Bot Watcher · 全天候代理链路监控、端口巡检、NO_RESPONSE 零噪音值守与自愈",
+            summary = "运维值守 · 监控服务与网络、例行巡检、故障诊断与恢复",
             publicDescription = "全天候哨兵与基础设施运维官（Sentinel · Watchdog & SRE）：负责 Hub/Agent 进程保活、Tailnet/Mihomo 代理拓扑诊断、端口冲突排查与故障自愈。",
             rolePrompt = """
                 # Role & Persona (SOUL.md)
-                你是团队的 **Watchdog & SRE Loop（哨兵值守 · 运维总监）**，源自 Grok Bot (`x.ai/bot`) 官方的 **Watcher / Inbox Manager** 配方。
+                你是团队的 **哨兵值守 · 运维总监**，负责服务巡检、告警分诊与故障恢复。
                 你守卫着整个 VibeLink + Mihomo + Cindy 的本地与跨网运行环境。
 
                 # Core Operating Rules (AGENTS.md)
@@ -1024,7 +1002,7 @@ object BotTeamStore {
                     rolePrompt = tpl.rolePrompt,
                     updatedBy = "system",
                     updatedAt = now,
-                    note = "Seeded from Grok Bot Recipe (${tpl.id})",
+                    note = "来自角色模板 (${tpl.id})",
                 ),
             ),
             manageOtherBots = tpl.manageOtherBots,
@@ -1038,7 +1016,7 @@ object BotTeamStore {
                 BotOpenWorkItem(
                     id = "work_${botId}_$idx",
                     title = w,
-                    notes = "Grok Bot Recipe 预置待办",
+                    notes = "角色模板预置待办",
                     status = "open",
                     updatedAt = now,
                 )
@@ -1155,7 +1133,7 @@ object BotTeamStore {
                     val isCustomUploadedAvatar = old.avatar.startsWith("data:image") || old.avatar.startsWith("base64:")
                     val mergedSkills = (fresh.skills + old.skills.filter { s -> fresh.skills.none { it.id == s.id } })
                     val resolvedName = if (shouldAdoptModelName) fresh.name else old.name
-                    val resolvedAvatar = if (isCustomUploadedAvatar) old.avatar else defaultAvatarForEngine(newEngine)
+                    val resolvedAvatar = if (isCustomUploadedAvatar) old.avatar else defaultAvatarForRole(old.templateId)
                     AgentPrefs.setAvatar(context, old.id, resolvedAvatar)
                     old.copy(
                         templateId = old.templateId.ifBlank { tpl.id },
@@ -1183,9 +1161,9 @@ object BotTeamStore {
                     )
                 } else {
                     val fixedName = if (old.engine.equals("antigravity", ignoreCase = true) && old.name == "Grok") "Gemini"
-                    else old.name.ifBlank { defaultModelNameForEngine(old.engine) }
+                    else old.name.ifBlank { old.jobTitle.ifBlank { "Bot" } }
                     val fixedAvatar = if (old.engine.equals("antigravity", ignoreCase = true) && old.avatar == "preset:grok") "preset:gemini"
-                    else old.avatar.ifBlank { defaultAvatarForEngine(old.engine) }
+                    else old.avatar.ifBlank { defaultAvatarForRole(old.templateId) }
                     AgentPrefs.setAvatar(context, old.id, fixedAvatar)
                     old.copy(
                         name = fixedName,
@@ -1230,9 +1208,9 @@ object BotTeamStore {
                 val engine = BotModelPolicy.defaultEngine(old.templateId)
                 old.copy(
                     engine = engine,
-                    model = BotModelPolicy.defaultModel(old.templateId),
+                    model = old.model,
                     name = if (isDefaultOrLegacyBotName(old.name)) tpl?.defaultName ?: old.jobTitle else old.name,
-                    avatar = if (old.avatar.startsWith("preset:")) "" else old.avatar,
+                    avatar = old.avatar,
                     publicDescription = tpl?.publicDescription ?: old.publicDescription,
                     rolePrompt = if (listOf("Antigravity", "Gemini", "@情报官", "@代码主程", "@审校官", "Harper", "Benjamin", "Lucas").any { old.rolePrompt.contains(it) }) tpl?.rolePrompt ?: old.rolePrompt else old.rolePrompt,
                     activeSessionId = if (old.engine != engine) "" else old.activeSessionId,
@@ -1378,8 +1356,9 @@ object BotTeamStore {
             val fresh = buildBotFromTemplate(tpl, customId = botId, offsetMs = idx * 30_000L)
             merged.add(
                 if (old != null) {
-                    val keepCustomAvatar = old.avatar.isNotBlank() && !old.avatar.startsWith("preset:")
+                    val keepCustomAvatar = old.avatar.isNotBlank()
                     fresh.copy(
+                        name = old.name,
                         engine = old.engine,
                         model = old.model,
                         device = old.device,
@@ -1648,15 +1627,15 @@ object BotTeamStore {
 
                 parsed.copy(
                     id = targetBotId ?: parsed.id.ifBlank { "bot_" + UUID.randomUUID().toString().take(8) },
-                    name = redactSecrets(parsed.name.ifBlank { defaultModelNameForEngine(parsed.engine) }).first,
-                    avatar = parsed.avatar.ifBlank { defaultAvatarForEngine(parsed.engine) },
+                    name = redactSecrets(parsed.name.ifBlank { parsed.jobTitle.ifBlank { "Bot" } }).first,
+                    avatar = parsed.avatar.ifBlank { defaultAvatarForRole(parsed.templateId) },
                     jobTitle = r.optString("job_title").ifBlank { parsed.jobTitle },
                     publicDescription = redactSecrets(r.optString("description").ifBlank { parsed.publicDescription }).first,
                     rolePrompt = cleanInstructions,
                     approvalMode = if (isOpenDuet) "ask" else parsed.approvalMode,
                     skills = importedSkills,
                     memories = (parsed.memories + extraMemories).distinctBy { "${it.topic}:${it.fact}" },
-                    lastText = parsed.publicDescription.ifBlank { "通过 Open Duet / Grok Bot 配方安全沙箱导入" },
+                    lastText = parsed.publicDescription.ifBlank { "已导入角色配置" },
                     lastAt = System.currentTimeMillis(),
                 )
             } else {
@@ -1670,9 +1649,9 @@ object BotTeamStore {
                 BotFriend(
                     id = targetBotId ?: ("bot_" + UUID.randomUUID().toString().take(8)),
                     templateId = "custom_markdown",
-                    name = firstHeading.ifBlank { defaultModelNameForEngine("antigravity") },
-                    avatar = defaultAvatarForEngine("antigravity"),
-                    jobTitle = "Grok 配方专家",
+                    name = firstHeading.ifBlank { "自定义 Bot" },
+                    avatar = defaultAvatarForRole(""),
+                    jobTitle = "自定义角色",
                     department = "自定义智囊团",
                     lifecycle = BotLifecycle.PROJECT,
                     engine = BotModelPolicy.defaultEngine(""),
@@ -1703,7 +1682,7 @@ object BotTeamStore {
             val desc = b.publicDescription.ifBlank { b.rolePrompt.lineSequence().firstOrNull()?.take(42) ?: "随时待命" }
             "- $icon **${b.name} [${b.jobTitle}]** (`${b.engine}` · 思考:${b.thinkingEffort} · $boundary$skillBadge)：$desc"
         }
-        return "老板好！我们已在 **$groupName** 按 **Grok 4.20 × Open Duet (`open-dots`)** 架构集结完毕：\n$roster\n\n支持 **「🔍 咨询只读 (Consult) / 🛠️ 实操落地 (Work)」** 双模切换、**「⚡ 挂载 6 段式技能 (/skill)」**、**「✨ 从对话提炼新技能」** 与 **「🔄 原帖打回重做 (Rework)」**。"
+        return "**$groupName** 的团队成员已就绪：\n$roster\n\n发送任务或 @成员 即可开始协作。可选择只读咨询或执行任务，添加技能，并对结果追问或要求返工。"
     }
 
     private fun parseStringList(arr: JSONArray?): List<String> {
@@ -1713,7 +1692,7 @@ object BotTeamStore {
         }
     }
 
-    private fun parseBotJson(o: JSONObject): BotFriend {
+    internal fun parseBotJson(o: JSONObject): BotFriend {
         val sIds = parseStringList(o.optJSONArray("sessionIds"))
         val mArr = o.optJSONArray("memories")
         val memories = if (mArr == null) emptyList() else (0 until mArr.length()).mapNotNull { k ->
@@ -1792,7 +1771,7 @@ object BotTeamStore {
         val parsedName = if (parsedEngine.equals("antigravity", ignoreCase = true) && rawName == "Grok") {
             "Gemini"
         } else {
-            rawName.ifBlank { defaultModelNameForEngine(parsedEngine, parsedModel) }
+            rawName.ifBlank { TEMPLATES.firstOrNull { it.id == o.optString("templateId") }?.defaultName ?: o.optString("jobTitle").ifBlank { "Bot" } }
         }
         val rawAvatar = o.optString("avatar").trim()
         val parsedAvatar = if (parsedEngine.equals("antigravity", ignoreCase = true) && rawAvatar == "preset:grok") {
@@ -1850,11 +1829,11 @@ object BotTeamStore {
         )
     }
 
-    private fun botToJson(b: BotFriend): JSONObject =
+    internal fun botToJson(b: BotFriend): JSONObject =
         JSONObject().apply {
             put("id", b.id)
             put("templateId", b.templateId)
-            put("name", b.name.ifBlank { defaultModelNameForEngine(b.engine) })
+            put("name", b.name.ifBlank { b.jobTitle.ifBlank { "Bot" } })
             put("avatar", b.avatar)
             put("jobTitle", b.jobTitle)
             put("department", b.department)
@@ -2185,7 +2164,7 @@ object BotTeamStore {
             val senderTitle = liveBot?.jobTitle ?: lastMsg.senderJobTitle
             val senderName = liveBot?.name ?: lastMsg.senderName
             val summary = if (lastMsg.id == "msg_welcome_1") {
-                "Grok 4.20 × Open Duet 智囊团已就位，发任务或 @成员 即可开始协同"
+                "团队已就绪，发任务或 @成员 即可开始协作"
             } else {
                 lastMsg.text.replace("\n", " ").take(45)
             }
@@ -2234,7 +2213,7 @@ object BotTeamStore {
                     senderJobTitle = liveBot?.jobTitle ?: o.optString("senderJobTitle"),
                     senderEngine = liveBot?.engine ?: o.optString("senderEngine"),
                     text = if (id == "msg_welcome_1" && memberBots.isNotEmpty()) {
-                        buildWelcomeMessageText(group?.name ?: "Grok 4.20 核心四人组", memberBots)
+                        buildWelcomeMessageText(group?.name ?: "核心研发协作组", memberBots)
                     } else {
                         rawText
                     },
@@ -2467,7 +2446,7 @@ object BotTeamStore {
                         val preferLocalAvatar = lb.avatar.startsWith("data:image") || (rb.avatar.isBlank() && lb.avatar.isNotBlank())
                         rb.copy(
                             name = if (preferLocalName) lb.name else rb.name,
-                            avatar = if (preferLocalAvatar) lb.avatar else rb.avatar.ifBlank { defaultAvatarForEngine(rb.engine) },
+                            avatar = if (preferLocalAvatar) lb.avatar else rb.avatar.ifBlank { defaultAvatarForRole(rb.templateId) },
                             activeSessionId = rb.activeSessionId.ifBlank { if (sameBinding) lb.activeSessionId else "" },
                             sessionIds = (rb.sessionIds + if (sameBinding) lb.sessionIds else emptyList()).distinct(),
                             publicDescription = rb.publicDescription.ifBlank { lb.publicDescription },
@@ -2509,6 +2488,7 @@ object BotTeamStore {
         bot: BotFriend,
         taskTitle: String,
         forceNew: Boolean = false,
+        initialText: String = "",
     ): String = withContext(Dispatchers.IO) {
         profileSyncMutex.withLock {
             val latestBot = getBot(context, bot.id) ?: bot
@@ -2538,7 +2518,7 @@ object BotTeamStore {
                     }
                     val created = RemoteApi.createSession(
                         hub = hub, token = token, device = latestBot.device.ifBlank { "pc" },
-                        agent = engine, model = latestBot.model, cwd = latestBot.cwd, text = "",
+                        agent = engine, model = latestBot.model, cwd = latestBot.cwd, text = initialText,
                         botId = latestBot.id, thinkingEffort = latestBot.thinkingEffort,
                         isolationMode = latestBot.isolationMode,
                     )

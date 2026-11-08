@@ -20,4 +20,14 @@ class BotModelPolicyTest {
             assertThrows(IllegalArgumentException::class.java) { BotModelPolicy.requireEngine(engine) }
         }
     }
+
+    @Test fun newBotUsesTheSelectedRoleDefaultUntilUserChoosesAModel() {
+        assertEquals(BotModelPolicy.DEEPSEEK_MODEL, BotModelPolicy.modelAfterTemplateChange("", false, "tpl_deepseek_sre", beta = false))
+        assertEquals("", BotModelPolicy.modelAfterTemplateChange(BotModelPolicy.DEEPSEEK_MODEL, false, "tpl_grok_cos", beta = false))
+    }
+
+    @Test fun editingRolePreservesUserModelSelectionAndBetaRemainsDeepseek() {
+        assertEquals("", BotModelPolicy.modelAfterTemplateChange("", true, "tpl_deepseek_sre", beta = false))
+        assertEquals(BotModelPolicy.DEEPSEEK_MODEL, BotModelPolicy.modelAfterTemplateChange("", true, "tpl_deepseek_sre", beta = true))
+    }
 }
