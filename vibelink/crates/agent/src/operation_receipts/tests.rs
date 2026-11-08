@@ -44,6 +44,48 @@ fn request() -> Value {
 }
 
 #[test]
+fn failed_action_preserves_sanitized_diagnosis_without_acceptance_or_reexecution() {
+    let data = TempData::new();
+    let payload = request();
+    let error = execute(
+        &data.0,
+        "diagnostic_scope",
+        "codex.create",
+        &payload,
+        || {
+            Err(
+                "group_workspace_changed with short-lived-gateway-secret and semantic user message"
+                    .into(),
+            )
+        },
+    )
+    .unwrap_err();
+    assert!(error.starts_with("operation_uncertain:"));
+    assert!(error.contains("group_workspace_changed"));
+    assert!(error.contains("<redacted>"));
+    assert!(!error.contains("short-lived-gateway-secret"));
+    assert!(!error.contains("semantic user message"));
+    let dir = operation_dir(&data.0, "diagnostic_scope", "gw_work_step_create");
+    assert!(!dir.join("receipt.json").exists());
+    let persisted = fs::read_to_string(dir.join("failure.json")).unwrap();
+    assert!(!persisted.contains("short-lived-gateway-secret"));
+    assert!(!persisted.contains("semantic user message"));
+    let repeated = execute(
+        &data.0,
+        "diagnostic_scope",
+        "codex.create",
+        &payload,
+        || panic!("diagnostic must not permit replay"),
+    )
+    .unwrap_err();
+    assert_eq!(error, repeated);
+    assert_eq!(
+        lookup(&data.0, "diagnostic_scope", &payload).unwrap()["status"],
+        "uncertain"
+    );
+}
+
+#[test]
 fn persists_intent_before_acceptance_and_replays_the_exact_temporary_session_result() {
     let data = TempData::new();
     let payload = request();

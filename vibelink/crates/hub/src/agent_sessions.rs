@@ -16,6 +16,8 @@ pub struct Binding {
     pub bot_id: String,
     pub cwd: String,
     pub title: String,
+    #[serde(default)]
+    pub work_id:String,
 }
 pub struct Sessions {
     file: PathBuf,
@@ -134,6 +136,7 @@ pub fn new_binding(app: &Shared, device: &str, payload: &Value) -> Result<Bindin
     };
     Ok(Binding {
         id: String::new(),
+        work_id:payload["groupWorkId"].as_str().unwrap_or("").into(),
         agent: "codex".into(),
         device,
         scope: scope(&owner, &model),

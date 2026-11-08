@@ -31,7 +31,9 @@ impl Limits {
         Self {
             daily_requests: if beta { 300 } else { 0 },
             daily_tokens: if beta { 1_500_000 } else { 0 },
-            daily_input_bytes: if beta { 1_500_000 } else { 0 },
+            // Serialized CLI context is larger than its token count, and is resent for
+            // tool turns. Keep this transport guard above a normal daily token budget.
+            daily_input_bytes: if beta { 12_000_000 } else { 0 },
             concurrent_requests: if beta { 2 } else { 8 },
             requests_per_minute: if beta { 30 } else { 120 },
         }
@@ -108,7 +110,15 @@ struct Pending {
     protocol: String,
     started_at: u64,
     reserved: u64,
+    #[serde(default)]
+    task: Option<WorkCharge>,
 }
+#[derive(Clone,Debug,Serialize,Deserialize)]
+#[serde(rename_all="camelCase")]
+pub struct WorkCharge {pub work_id:String,pub max_tokens:u64,pub max_requests:u64}
+#[derive(Clone,Default,Serialize,Deserialize)]
+#[serde(rename_all="camelCase")]
+struct TaskTotals {user_id:String,requests:u64,tokens:u64,estimated:u64,reserved:u64,cached:u64,duration_ms:u64,missing:u64}
 #[derive(Default, Serialize, Deserialize)]
 struct Disk {
     daily: BTreeMap<String, Daily>,
@@ -116,6 +126,8 @@ struct Disk {
     limits: BTreeMap<String, Limits>,
     starts: BTreeMap<String, Vec<u64>>,
     recent: Vec<Value>,
+    #[serde(default)]
+    tasks: BTreeMap<String,TaskTotals>,
 }
 pub struct UsageStore {
     file: PathBuf,
@@ -168,6 +180,9 @@ impl UsageStore {
         bytes: u64,
         output_budget: u64,
     ) -> Result<Meter, String> {
+        self.begin_work(identity,protocol,bytes,output_budget,None)
+    }
+    pub fn begin_work(self:&Arc<Self>,identity:Identity,protocol:&str,bytes:u64,output_budget:u64,task:Option<WorkCharge>)->Result<Meter,String> {
         let mut disk = self.inner.lock().unwrap();
         let limits = disk
             .limits
@@ -178,6 +193,14 @@ impl UsageStore {
         let day = day_at(now);
         let k = key(&day, &identity.user_id);
         let reserved = bytes.saturating_add(output_budget); // conservative byte upper bound, NOT reported as actual tokens
+        if let Some(task)=&task {
+            let stats=disk.tasks.get(&task.work_id).cloned().unwrap_or_default();
+            if (!stats.user_id.is_empty()&&stats.user_id!=identity.user_id)
+                ||(task.max_requests>0&&stats.requests>=task.max_requests)
+                ||(task.max_tokens>0&&stats.tokens.saturating_add(stats.estimated).saturating_add(stats.reserved).saturating_add(reserved)>task.max_tokens) {
+                return Err("Work token/request budget exceeded".into());
+            }
+        }
         let stats = disk.daily.get(&k).cloned().unwrap_or_default();
         let active = disk
             .pending
@@ -211,7 +234,11 @@ impl UsageStore {
             protocol: protocol.into(),
             started_at: now,
             reserved,
+            task:task.clone(),
         };
+        if let Some(task)=task {
+            let stats=disk.tasks.entry(task.work_id).or_default();stats.user_id=identity.user_id.clone();stats.requests+=1;stats.reserved=stats.reserved.saturating_add(reserved);
+        }
         disk.starts
             .entry(identity.user_id.clone())
             .or_default()
@@ -264,7 +291,13 @@ impl UsageStore {
             stats.missing_usage += 1;
             stats.estimated_tokens = stats.estimated_tokens.saturating_add(pending.reserved);
         }
-        disk.recent.push(json!({"requestId":id,"userId":pending.identity.user_id,"day":pending.day,"model":crate::model_policy::DEEPSEEK_MODEL,
+        if let Some(task)=&pending.task {
+            let totals=disk.tasks.entry(task.work_id.clone()).or_default();totals.reserved=totals.reserved.saturating_sub(pending.reserved);
+            totals.duration_ms=totals.duration_ms.saturating_add(now_ms().saturating_sub(pending.started_at));
+            if let Some(t)=&tokens {totals.tokens=totals.tokens.saturating_add(t.total);totals.cached=totals.cached.saturating_add(t.cached);}
+            else if uncertain {totals.missing+=1;totals.estimated=totals.estimated.saturating_add(pending.reserved);}
+        }
+        disk.recent.push(json!({"requestId":id,"userId":pending.identity.user_id,"workId":pending.task.as_ref().map(|t|t.work_id.as_str()).unwrap_or(""),"day":pending.day,"model":crate::model_policy::DEEPSEEK_MODEL,
             "protocol":pending.protocol,"startedAt":pending.started_at,"finishedAt":now_ms(),"durationMs":now_ms().saturating_sub(pending.started_at),"outcome":outcome,"httpStatus":status,
             "tokens":tokens,"usageMissing":tokens.is_none() && uncertain,"estimatedTokens":if tokens.is_none() && uncertain {pending.reserved} else {0}}));
         if disk.recent.len() > 1000 {
@@ -308,6 +341,10 @@ impl UsageStore {
             "usedChars":stats.input_bytes,"inputBytes":stats.input_bytes,"dailyLimitRequests":limits.daily_requests,"dailyLimitTokens":limits.daily_tokens,
             "dailyLimitChars":limits.daily_input_bytes,"limits":limits,"warning":if ratio>=1.0 {"exhausted"} else if ratio>=0.8 {"near_limit"} else {""}})
     }
+    pub fn work_summary(&self,work_id:&str)->Value {
+        let disk=self.inner.lock().unwrap();let t=disk.tasks.get(work_id).cloned().unwrap_or_default();
+        json!({"meteredProvider":"deepseek","requests":t.requests,"totalTokens":t.tokens,"cachedTokens":t.cached,"estimatedTokens":t.estimated,"reservedTokens":t.reserved,"usageMissingRequests":t.missing,"modelDurationMs":t.duration_ms,"subscriptionUsage":"not_reported"})
+    }
     pub fn users(&self, day: &str) -> Value {
         let identities: Vec<_> = self
             .inner
@@ -336,7 +373,12 @@ impl UsageStore {
             }
             disk.limits.entry(id.clone()).or_insert(Limits {
                 daily_requests: row["dailyLimitRequests"].as_u64().unwrap_or(300),
-                daily_input_bytes: row["dailyLimitChars"].as_u64().unwrap_or(1_500_000),
+                daily_input_bytes: match row["dailyLimitChars"].as_u64() {
+                    // Normalize only the old built-in seed when first importing limits.
+                    // Existing ledger/admin overrides are preserved by entry.or_insert.
+                    Some(1_500_000) | None => 12_000_000,
+                    Some(value) => value,
+                },
                 ..Limits::for_user(true)
             });
             let requests = row["usedRequests"].as_u64().unwrap_or(0);
@@ -490,6 +532,19 @@ mod tests {
         let p =
             std::env::temp_dir().join(format!("vibelink_usage_{}", crate::auth::random_token()));
         (p.clone(), Arc::new(UsageStore::load(p).unwrap()))
+    }
+    #[test]
+    fn beta_transport_budget_allows_cli_context_and_preserves_admin_limits() {
+        let (p,s)=store();
+        let limits=Limits::for_user(true);
+        assert_eq!(limits.daily_tokens,1_500_000);
+        assert_eq!(limits.daily_input_bytes,12_000_000);
+        s.import_legacy(vec![json!({"tenantId":"seed","dailyLimitChars":1_500_000})]).unwrap();
+        assert_eq!(s.summary(&identity("seed"),&day_at(now_ms()))["limits"]["dailyInputBytes"],12_000_000);
+        s.set_limits("seed",Limits{daily_input_bytes:500_000,..limits}).unwrap();
+        s.import_legacy(vec![json!({"tenantId":"seed","dailyLimitChars":1_500_000})]).unwrap();
+        assert_eq!(s.summary(&identity("seed"),&day_at(now_ms()))["limits"]["dailyInputBytes"],500_000);
+        std::fs::remove_dir_all(p).unwrap();
     }
     #[test]
     fn actual_usage_is_per_user_persistent_and_cached_tokens_are_not_double_counted() {

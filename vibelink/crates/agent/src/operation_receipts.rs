@@ -174,11 +174,78 @@ fn read_existing(dir: &Path, id: &str, kind: &str, expected: &str) -> Result<Val
     let receipt: Receipt = fs::read(dir.join("receipt.json"))
         .ok()
         .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-        .ok_or_else(|| UNCERTAIN.to_string())?;
+        .ok_or_else(|| uncertain_note(dir))?;
     if receipt.version != VERSION || receipt.fingerprint != expected {
         return Err(UNCERTAIN.into());
     }
     Ok(receipt.payload)
+}
+
+pub(crate) fn diagnostic_cause(error: &str, payload: &Value) -> String {
+    fn collect(value: &Value, key: &str, values: &mut Vec<String>) {
+        match value {
+            Value::Object(map) => {
+                for (k, v) in map {
+                    collect(v, k, values)
+                }
+            }
+            Value::Array(items) => {
+                for v in items {
+                    collect(v, key, values)
+                }
+            }
+            Value::String(value)
+                if !value.is_empty()
+                    && (key.to_ascii_lowercase().contains("token")
+                        || matches!(
+                            key.to_ascii_lowercase().as_str(),
+                            "password"
+                                | "authorization"
+                                | "api_key"
+                                | "apikey"
+                                | "secret"
+                                | "text"
+                                | "systemprompt"
+                                | "data"
+                                | "base64"
+                        )) =>
+            {
+                values.push(value.clone())
+            }
+            _ => {}
+        }
+    }
+    let mut secrets = Vec::new();
+    collect(payload, "", &mut secrets);
+    for key in [
+        "VIBELINK_TOKEN",
+        "VIBELINK_MODEL_GATEWAY_TOKEN",
+        "OPENAI_API_KEY",
+        "CODEX_API_KEY",
+    ] {
+        if let Some(value) = std::env::var(key).ok().filter(|s| !s.is_empty()) {
+            secrets.push(value);
+        }
+    }
+    secrets.sort_by_key(|s| std::cmp::Reverse(s.len()));
+    let mut safe = error.to_string();
+    for secret in secrets {
+        safe = safe.replace(&secret, "<redacted>");
+    }
+    safe.chars()
+        .filter(|c| !c.is_control())
+        .take(1024)
+        .collect()
+}
+fn uncertain_note(dir: &Path) -> String {
+    let cause = fs::read(dir.join("failure.json"))
+        .ok()
+        .filter(|b| b.len() <= 8192)
+        .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+        .and_then(|v| v["cause"].as_str().map(str::to_string));
+    cause
+        .map(|s| format!("{UNCERTAIN}; cause: {s}"))
+        .unwrap_or_else(|| UNCERTAIN.into())
 }
 
 pub fn execute(
@@ -229,7 +296,18 @@ pub fn execute(
     }
     drop(file);
 
-    let result = action().map_err(|_| UNCERTAIN)?;
+    let result = match action() {
+        Ok(result) => result,
+        Err(error) => {
+            let cause = diagnostic_cause(&error, payload);
+            // A diagnostic is NOT an acceptance receipt and never permits replay.
+            if let Ok(mut file) = new_private_file(&dir.join("failure.json")) {
+                let _ = write_synced(&mut file, &json!({"cause":cause}));
+                let _ = sync_dir(&dir);
+            }
+            return Err(format!("{UNCERTAIN}; cause: {cause}"));
+        }
+    };
     let receipt = Receipt {
         version: VERSION,
         fingerprint: expected,

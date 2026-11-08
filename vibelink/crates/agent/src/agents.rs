@@ -66,7 +66,9 @@ pub fn prepare_session_request(cwd: &str, text: &str, body: &Value) -> (String, 
         .unwrap_or("shared")
         .trim();
     let base_cwd = resolve_cwd(cwd, None);
-    let final_cwd = crate::pty_and_worktree::resolve_bot_cwd(&base_cwd, bot_id, isolation_mode);
+    // Group work has already probed/leased its exact directory. Never map it a second
+    // time or create a worktree as a side effect of a read-only model step.
+    let final_cwd = if crate::codex_runtime::current().group_work.is_some() {base_cwd} else {crate::pty_and_worktree::resolve_bot_cwd(&base_cwd, bot_id, isolation_mode)};
 
     // 将该 Bot 绑定的专属技能剧本落盘至 `~/.vibelink-cli/dev/codex/skills/<id>/SKILL.md`
     if let Some(skills_arr) = bot_ctx.and_then(|c| c.get("skills")).and_then(Value::as_array) {
@@ -109,6 +111,7 @@ pub fn prepare_session_request(cwd: &str, text: &str, body: &Value) -> (String, 
 /// 工作目录一律夹在白名单根目录里（见 `roots.rs`）；不在根目录里就退回默认目录。
 fn resolve_cwd(cwd: &str, fallback: Option<&str>) -> String {
     let runtime=crate::codex_runtime::current();
+    if let Some(group)=runtime.group_work {return group.workspace;}
     if runtime.beta {
         let root=runtime.workspace();let requested=crate::roots::normalize(Path::new(cwd));
         return if !cwd.is_empty() && crate::roots::within(&requested,&[root.clone()]) {requested.to_string_lossy().into()} else {root.to_string_lossy().into()};
@@ -116,6 +119,53 @@ fn resolve_cwd(cwd: &str, fallback: Option<&str>) -> String {
     let def = default_cwd();
     let fb = fallback.map(str::trim).filter(|s| !s.is_empty()).unwrap_or(def.as_str());
     crate::roots::clamp_cwd(cwd, fb)
+}
+
+/// This RPC only inspects filesystem identities; it never prepares a CLI or creates worktrees.
+pub fn codex_workspace(payload:&Value)->Result<Value,String> {
+    let runtime=crate::codex_runtime::current();
+    if runtime.beta {
+        let cwd=crate::codex_runtime::canonical_workspace(&runtime.workspace(),true)?;
+        return Ok(json!({"cwd":cwd,"baseCwd":cwd,"caseSensitive":false,"needsWorktreeInit":false}));
+    }
+    let raw=payload["cwd"].as_str().unwrap_or("");
+    let base=crate::codex_runtime::canonical_workspace(Path::new(&resolve_cwd(raw,None)),false)?;
+    if !raw.trim().is_empty() {
+        let requested=crate::codex_runtime::canonical_workspace(Path::new(raw),false)?;
+        if requested!=base {return Err("group_workspace_denied: configured workspace is outside the Agent's allowed roots; refusing the default-directory fallback".into());}
+    }
+    let consult=payload["groupWorkConsult"].as_bool().unwrap_or(false) || runtime.read_only;
+    let isolated=payload["isolationMode"].as_str().unwrap_or("shared")=="worktree" && !consult;
+    let bot=payload["botId"].as_str().unwrap_or("");
+    if isolated && bot.is_empty() {return Err("Worktree workspace requires a Bot identity".into());}
+    let repo=Path::new(&base).ancestors().find(|p|p.join(".git").exists()).map(|p|p.to_string_lossy().to_string());
+    let mut cwd=base.clone();let mut needs_init=false;
+    if isolated {
+        let candidate=Path::new(&base).join(".vibelink-worktrees").join(crate::pty_and_worktree::sanitize_slug(bot));
+        let identity=crate::codex_runtime::canonical_workspace(&candidate,true)?;
+        if !crate::roots::within(Path::new(&identity),&[PathBuf::from(&base)]) {return Err("Bot worktree escapes the leased base workspace".into());}
+        if candidate.is_dir() && candidate.join(".git").exists() {cwd=identity;} else {needs_init=true;}
+    }
+    // False is conservative on filesystems where case behavior is unknown.
+    Ok(json!({"cwd":cwd,"baseCwd":base,"repoRoot":repo,"caseSensitive":false,"needsWorktreeInit":needs_init}))
+}
+
+/// Explicit filesystem mutation, guarded by a Hub-held base Write lease and a durable operationId.
+pub fn codex_workspace_prepare(payload:&Value)->Result<Value,String> {
+    let runtime=crate::codex_runtime::current();
+    let group=runtime.group_work.as_ref().ok_or("Group work authority required for worktree preparation")?;
+    if runtime.beta || runtime.read_only || !group.allow_write {return Err("Read-only/public steps cannot initialize a host worktree".into());}
+    if payload["operationId"].as_str().is_none_or(str::is_empty) {return Err("Durable worktree preparation operationId required".into());}
+    let base=payload["cwd"].as_str().unwrap_or("");runtime.validate_group_cwd(base)?;
+    if payload["isolationMode"].as_str()!=Some("worktree") {return Err("Explicit worktree isolation required".into());}
+    let bot=payload["botId"].as_str().filter(|s|!s.is_empty()).ok_or("Bot identity required")?;
+    let candidate=Path::new(base).join(".vibelink-worktrees").join(crate::pty_and_worktree::sanitize_slug(bot));
+    let before=crate::codex_runtime::canonical_workspace(&candidate,true)?;
+    if !crate::roots::within(Path::new(&before),&[PathBuf::from(base)]) {return Err("Bot worktree escapes the leased base workspace".into());}
+    let result=crate::pty_and_worktree::ensure_bot_worktree(Path::new(base),bot)?;
+    let cwd=crate::codex_runtime::canonical_workspace(Path::new(&result.worktree_path),false)?;
+    if !crate::roots::within(Path::new(&cwd),&[PathBuf::from(base)]) {return Err("Created worktree escapes the leased base workspace".into());}
+    Ok(json!({"cwd":cwd,"baseCwd":base,"caseSensitive":false,"needsWorktreeInit":false}))
 }
 
 fn new_uuid_v4() -> String {
@@ -388,7 +438,11 @@ pub fn save_uploaded_files(
         return Vec::new();
     }
     let resolved = resolve_cwd(cwd, None);
-    let target_dir = if into_subdir {
+    let runtime=crate::codex_runtime::current();
+    let target_dir = if let Some(group)=&runtime.group_work {
+        // Input staging belongs to the authenticated runtime, outside the leased source tree.
+        runtime.inputs_root().join(&group.work_id).join(&group.step_id)
+    } else if into_subdir {
         Path::new(&resolved).join(".vibelink-uploads")
     } else {
         PathBuf::from(&resolved)
@@ -617,12 +671,10 @@ fn append_live_turn(id: &str, data: &mut Vec<Value>) {
                 if let Ok(mut map) = live_map().lock() {
                     if let Some(l) = map.get_mut(&real_id) {
                         l.running = false;
-                        l.pid = None;
                     }
                     if real_id != id {
                         if let Some(l) = map.get_mut(id) {
                             l.running = false;
-                            l.pid = None;
                         }
                     }
                 }
@@ -635,12 +687,10 @@ fn append_live_turn(id: &str, data: &mut Vec<Value>) {
             if let Ok(mut map) = live_map().lock() {
                 if let Some(l) = map.get_mut(&real_id) {
                     l.running = false;
-                    l.pid = None;
                 }
                 if real_id != id {
                     if let Some(l) = map.get_mut(id) {
                         l.running = false;
-                        l.pid = None;
                     }
                 }
             }
@@ -703,7 +753,7 @@ fn append_live_turn(id: &str, data: &mut Vec<Value>) {
                 "time": { "created": live.started_ms, "completed": 0 }
             }));
         }
-    } else if let Some(err) = live.error.filter(|e| !e.trim().is_empty()) {
+    } else if let Some(err) = live.error.as_ref().filter(|e| !e.trim().is_empty()) {
         if data.is_empty() {
             if !clean_live_user.is_empty() {
                 data.push(json!({
@@ -717,8 +767,10 @@ fn append_live_turn(id: &str, data: &mut Vec<Value>) {
         data.push(json!({
             "id": format!("{id}-err-assistant-{}", live.started_ms),
             "type": "assistant",
+            "status":"error",
+            "error":typed_turn_error(&real_id,err,&clean_live_user,live.started_ms,live.updated),
             "content": [{ "type": "text", "text": format!("执行出错：{err}") }],
-            "time": { "created": live.started_ms, "completed": now_ms() }
+            "time": { "created": live.started_ms, "completed": 0 }
         }));
     } else if data.is_empty() && !clean_live_user.is_empty() {
         data.push(json!({
@@ -1026,6 +1078,7 @@ fn merge_assistant_turns(raw: Vec<Value>) -> Vec<Value> {
 
         if is_assistant && prev_is_assistant {
             let prev = merged.last_mut().unwrap();
+            if item["error"].is_object() {prev["error"]=item["error"].clone();prev["status"]=json!("error");}
             let prev_created = prev
                 .pointer("/time/created")
                 .and_then(Value::as_u64)
@@ -1074,6 +1127,7 @@ fn merge_assistant_turns(raw: Vec<Value>) -> Vec<Value> {
         if item.get("type").and_then(Value::as_str) != Some("assistant") {
             continue;
         }
+        if item["error"].is_object() {item["time"]["completed"]=json!(0);item["status"]=json!("error");continue;}
         let is_last = i + 1 == merged_len;
         let mut created = item.pointer("/time/created").and_then(Value::as_u64).unwrap_or(0);
         if prev_user_created > 0 && (created == 0 || (created >= prev_user_created && created - prev_user_created <= 600_000)) {
@@ -1274,7 +1328,54 @@ pub fn codex_messages(id: &str, cursor: &str) -> Result<Value, String> {
         return Err(format!("codex session {id} not found"));
     }
     append_live_turn(&real_id, &mut data);
-    Ok(paginate_messages(data, cursor))
+    let live=get_live(&real_id);
+    let turn_error=if let Some(live)=&live {
+        if live.running {None}else{live.error.as_ref().map(|error|typed_turn_error(&real_id,error,&extract_clean_user_prompt(&live.user_text),live.started_ms,live.updated))}
+    } else {
+        find_codex_file(&real_id).and_then(|path|File::open(path).ok()).and_then(|file|codex_turn_error_from_reader(BufReader::new(file),&real_id))
+    };
+    if live.is_none() {if let Some(error)=&turn_error {data.push(json!({"id":format!("{real_id}-disk-error-{}",error["startedAt"]),"type":"assistant","status":"error","error":error,"content":[{"type":"text","text":format!("执行出错：{}",error["message"].as_str().unwrap_or("Codex turn failed"))}],"time":{"created":error["startedAt"],"completed":0}}));}}
+    let mut response=paginate_messages(data,cursor);
+    if let Some(error)=turn_error {response["turnError"]=error;}
+    Ok(response)
+}
+
+fn typed_turn_error(session:&str,message:&str,user_text:&str,started:u64,completed:u64)->Value {
+    json!({"code":"codex_turn_failed","message":message,"sessionId":session,"userText":user_text,"startedAt":started,"completedAt":completed})
+}
+fn codex_terminal_event(live:&mut LiveSession,event:&Value,pid:u32,redaction:&Value)->bool {
+    let kind=event["type"].as_str().unwrap_or("");
+    if !matches!(kind,"turn.completed"|"turn.failed") || live.pid!=Some(pid) {return false;}
+    live.running=false;live.updated=now_ms();
+    live.error=if kind=="turn.failed" {
+        let message=event.pointer("/error/message").and_then(Value::as_str).or_else(||event["error"].as_str()).unwrap_or("Codex model turn failed without a message");
+        Some(crate::operation_receipts::diagnostic_cause(message,redaction))
+    }else{None};
+    // Keep the owning PID until child.wait succeeds; the exit handler must retain this cause.
+    true
+}
+fn codex_turn_error_from_reader(reader:impl BufRead,session:&str)->Option<Value> {
+    let mut user=String::new();let mut started=0;let mut error=None;
+    for line in reader.lines().map_while(Result::ok) {
+        let Ok(v)=serde_json::from_str::<Value>(&line)else{continue};let p=&v["payload"];
+        let timestamp=v["timestamp"].as_str().and_then(parse_iso8601_ms).unwrap_or(0);
+        match p["type"].as_str().unwrap_or("") {
+            "task_started"=>{started=timestamp;error=None;},
+            "user_message"=>{if let Some(text)=p["message"].as_str().or_else(||p["text"].as_str()) {user=extract_clean_user_prompt(text);started=timestamp;error=None;}},
+            "message" if p["role"]=="user"=>{
+                let text=p["content"].as_array().map(|c|c.iter().filter_map(|b|b["text"].as_str()).collect::<Vec<_>>().join("\n")).unwrap_or_default();
+                if !text.is_empty()&&!is_noise(&text) {user=extract_clean_user_prompt(&text);started=timestamp;error=None;}
+            },
+            "task_complete"=>{
+                error=p.pointer("/error/message").and_then(Value::as_str).map(|message| {
+                    let seconds=p["started_at"].as_u64().unwrap_or(0);let begin=if seconds>0&&seconds<100_000_000_000 {seconds.saturating_mul(1000)}else{started};
+                    let redaction=json!({"text":user,"codexRuntime":{"token":crate::codex_runtime::current().token}});
+                    typed_turn_error(session,&crate::operation_receipts::diagnostic_cause(message,&redaction),&user,begin,timestamp)
+                });
+            },_=>{}
+        }
+    }
+    error
 }
 
 fn spawn_codex_runner(
@@ -1311,7 +1412,10 @@ fn spawn_codex_runner(
             if let Some(tx) = id_tx { let _ = tx.send(Err(error)); }
             return;
         }
-        if crate::codex_runtime::current().beta { /* restrictive permission profile from runtime */ } else if crate::codex_runtime::current().read_only {cmd.args(["--sandbox","read-only"]);} else { cmd.arg("--dangerously-bypass-approvals-and-sandbox"); }
+        if let Err(error)=crate::codex_runtime::current().validate_group_cwd(&cwd) {
+            if let Some(tx)=id_tx {let _=tx.send(Err(error));}return;
+        }
+        if crate::codex_runtime::current().beta || crate::codex_runtime::current().group_work.is_some() { /* restrictive permission profile/flags from runtime */ } else if crate::codex_runtime::current().read_only {cmd.args(["--sandbox","read-only"]);} else { cmd.arg("--dangerously-bypass-approvals-and-sandbox"); }
         let resolved_existing = existing_sid.as_ref().map(|s| resolve_session_id(s));
         let has_disk_session = resolved_existing
             .as_ref()
@@ -1394,19 +1498,23 @@ fn spawn_codex_runner(
         });
         if delivered.is_none() {
             kill_pid(pid);
-            let _ = child.wait();
-            cancellation.finished(pid);
+            if child.wait().is_ok() {cancellation.finished(pid);}
             if let Some(tx) = id_tx { let _ = tx.send(Err("codex_cancelled: request was interrupted during launch".into())); }
             return;
         }
 
         // Always drain stderr. CLI startup errors must not fill its pipe or leave
         // a rejected tenant launch waiting forever before thread.started.
-        if let Some(stderr) = child.stderr.take() {
+        let startup_errors=std::sync::Arc::new(Mutex::new(String::new()));
+        let turn_redaction=json!({"codexRuntime":{"token":crate::codex_runtime::current().token},"text":prompt});
+        let stderr_thread=if let Some(stderr) = child.stderr.take() {
             let init = id_tx.clone();
             let beta = crate::codex_runtime::current().beta;
-            thread::spawn(move || {
+            let errors=startup_errors.clone();
+            let redaction=turn_redaction.clone();
+            Some(thread::spawn(move || {
                 for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+                    record_startup_error(&errors,&line,&redaction);
                     if beta && (line.contains("refusing to run unsandboxed")
                         || line.contains("Restricted read-only access requires")
                         || line.contains("requires effective `:root` read access")) {
@@ -1417,8 +1525,8 @@ fn spawn_codex_runner(
                         break;
                     }
                 }
-            });
-        }
+            }))
+        }else{None};
         let mut active_id = resolved_existing.clone().unwrap_or_default();
         let mut tx_opt = id_tx;
         if let Some(stdout) = child.stdout.take() {
@@ -1534,15 +1642,11 @@ fn spawn_codex_runner(
                         if !active_id.is_empty() {
                             if let Ok(mut map) = live_map().lock() {
                                 if let Some(l) = map.get_mut(&active_id).filter(|live| live.pid == Some(pid)) {
-                                    l.running = false;
-                                    l.pid = None;
-                                    l.updated = now_ms();
+                                    codex_terminal_event(l,&v,pid,&turn_redaction);
                                 }
                                 if let Some(ref init_sid) = existing_sid {
                                     if let Some(l) = map.get_mut(init_sid).filter(|live| live.pid == Some(pid)) {
-                                        l.running = false;
-                                        l.pid = None;
-                                        l.updated = now_ms();
+                                        codex_terminal_event(l,&v,pid,&turn_redaction);
                                     }
                                 }
                             }
@@ -1557,9 +1661,14 @@ fn spawn_codex_runner(
         }
 
         let status = child.wait().ok();
-        cancellation.finished(pid);
+        if status.is_some() {cancellation.finished(pid);}
+        // For a pre-thread failure no model/tool turn exists. Join its finite stderr
+        // drain so stdout EOF cannot win the race and discard the actual startup cause.
+        if tx_opt.is_some() {if let Some(handle)=stderr_thread {let _=handle.join();}}
         if let Some(tx) = tx_opt.take() {
-            let _ = tx.send(Err("codex exited before starting thread".into()));
+            let detail=startup_errors.lock().map(|s|s.clone()).unwrap_or_default();
+            let error=if detail.is_empty(){"codex exited before starting thread".into()}else{format!("codex exited before starting thread: {detail}")};
+            let _ = tx.send(Err(error));
         }
         if !active_id.is_empty() {
             if let Ok(mut map) = live_map().lock() {
@@ -1567,7 +1676,7 @@ fn spawn_codex_runner(
                     l.running = false;
                     l.pid = None;
                     l.updated = now_ms();
-                    if status.map(|s| !s.success()).unwrap_or(true) && l.assistant_text.is_empty() {
+                    if status.map(|s| !s.success()).unwrap_or(true) && l.assistant_text.is_empty() && l.error.is_none() {
                         l.error = Some("Codex 进程异常退出".into());
                     }
                 }
@@ -1583,6 +1692,60 @@ fn spawn_codex_runner(
     });
 }
 
+fn record_startup_error(buffer:&std::sync::Arc<Mutex<String>>,line:&str,payload:&Value) {
+    let safe=crate::operation_receipts::diagnostic_cause(line,payload);
+    if let Ok(mut buffer)=buffer.lock() {
+        let available=4096usize.saturating_sub(buffer.chars().count());
+        if available>0 {buffer.extend(safe.chars().take(available.saturating_sub(1)));buffer.push('\n');}
+    }
+}
+
+#[cfg(test)]
+mod startup_diagnostics_tests {
+    use super::*;
+    fn live_turn(scope:&str,id:&str,text:&str)->LiveSession {
+        LiveSession{runtime_scope:scope.into(),agent:"codex".into(),id:id.into(),title:String::new(),cwd:String::new(),updated:1000,started_ms:1000,pid:Some(771),base_msg_count:0,user_text:text.into(),assistant_text:String::new(),reasoning_text:String::new(),running:true,error:None}
+    }
+    #[test]
+    fn real_cli_turn_failed_event_survives_exit_and_is_not_a_completed_assistant() {
+        let id="native-failed-turn-projection";let scope="native_failed_turn_scope";let marker="[VibeLink Work:failure Step:s1]\nInspect evidence";
+        let event:Value=serde_json::from_str(r#"{"type":"turn.failed","error":{"message":"exceeded retry limit, last status: 429 Too Many Requests"}}"#).unwrap();
+        let mut live=live_turn(scope,id,marker);assert!(codex_terminal_event(&mut live,&event,771,&json!({})));
+        assert!(!live.running);assert_eq!(live.pid,Some(771));assert!(live.error.as_deref().unwrap().contains("429"));
+        assert!(!codex_terminal_event(&mut live,&json!({"type":"turn.completed"}),999,&json!({})));assert!(live.error.is_some());
+        live_map().lock().unwrap().insert(id.into(),live);
+        let mut runtime=crate::codex_runtime::Runtime::default();runtime.scope=scope.into();
+        crate::codex_runtime::with(runtime,||{
+            let response=codex_messages(id,"").unwrap();
+            assert_eq!(response["turnError"]["code"],"codex_turn_failed");assert_eq!(response["turnError"]["userText"],marker);assert!(response["turnError"]["message"].as_str().unwrap().contains("429"));
+            assert_eq!(response["data"][0]["status"],"error");assert_eq!(response["data"][0]["time"]["completed"],0);assert_eq!(response["data"][0]["error"]["code"],"codex_turn_failed");
+            {let mut map=live_map().lock().unwrap();let live=map.get_mut(id).unwrap();live.error=None;live.running=true;live.started_ms=2000;live.user_text="[VibeLink Work:failure Step:s2]\nNew input".into();}
+            assert!(codex_messages(id,"").unwrap().get("turnError").is_none());
+        });
+        live_map().lock().unwrap().remove(id);
+    }
+    #[test]
+    fn real_rollout_task_complete_failure_recovers_only_the_latest_turn_after_restart() {
+        let first="[VibeLink Work:failure Step:s1]\nFirst input";let second="[VibeLink Work:failure Step:s2]\nNew input";
+        let mut rows=vec![json!({"timestamp":"2026-11-08T14:56:42Z","type":"event_msg","payload":{"type":"task_started"}}),json!({"timestamp":"2026-11-08T14:56:42Z","type":"event_msg","payload":{"type":"user_message","message":first}}),json!({"timestamp":"2026-11-08T14:58:17.843Z","type":"event_msg","payload":{"type":"task_complete","root_turn_id":"01a1bba9-61ec-7393-b17f-6fc485aae471","turn_id":"01a1bba9-61ec-7393-b17f-6fc485aae471","last_agent_message":null,"error":{"message":"exceeded retry limit, last status: 429 Too Many Requests"},"started_at":1794149802u64,"completed_at":1794149897u64}})];
+        let parse=|rows:&Vec<Value>|{let text=rows.iter().map(Value::to_string).collect::<Vec<_>>().join("\n");codex_turn_error_from_reader(std::io::Cursor::new(text.as_bytes()),"disk-sid")};
+        let error=parse(&rows).unwrap();assert_eq!(error["userText"],first);assert_eq!(error["startedAt"],1794149802000u64);assert!(error["message"].as_str().unwrap().contains("429"));
+        rows.push(json!({"timestamp":"2026-11-08T14:59:00Z","type":"event_msg","payload":{"type":"task_started"}}));assert!(parse(&rows).is_none());
+        rows.push(json!({"timestamp":"2026-11-08T14:59:00Z","type":"event_msg","payload":{"type":"user_message","message":second}}));assert!(parse(&rows).is_none());
+        rows.push(json!({"timestamp":"2026-11-08T14:59:01Z","type":"event_msg","payload":{"type":"task_complete","last_agent_message":"OK","error":null}}));assert!(parse(&rows).is_none());
+    }
+    #[test]
+    fn startup_errors_are_bounded_and_capabilities_are_redacted_before_buffering() {
+        let errors=std::sync::Arc::new(Mutex::new(String::new()));
+        let payload=json!({"codexRuntime":{"token":"gateway-disposable-secret"},"text":"private prompt","files":[{"data":"private-file-data"}]});
+        record_startup_error(&errors,"invalid profile: gateway-disposable-secret private prompt private-file-data",&payload);
+        for _ in 0..20 {record_startup_error(&errors,&"x".repeat(5000),&payload);}
+        let out=errors.lock().unwrap();assert!(out.contains("invalid profile"));assert!(out.contains("<redacted>"));
+        for secret in ["gateway-disposable-secret","private prompt","private-file-data"] {assert!(!out.contains(secret));}
+        assert!(out.chars().count()<=4096);
+    }
+}
+
 pub fn codex_create(cwd: &str, text: &str, files: Option<&Value>) -> Result<Value, String> {
     crate::codex_runtime::current().prepare()?;
     crate::subscription_policy::validate_project(cwd)?;
@@ -1590,6 +1753,7 @@ pub fn codex_create(cwd: &str, text: &str, files: Option<&Value>) -> Result<Valu
         .first()
         .and_then(|s| s.get("cwd").and_then(|x| x.as_str()).map(str::to_string));
     let resolved_cwd = resolve_cwd(cwd, latest_cwd.as_deref());
+    crate::codex_runtime::current().validate_group_cwd(&resolved_cwd)?;
     crate::subscription_policy::validate_project(&resolved_cwd)?;
     let saved = save_uploaded_files(&resolved_cwd, files, true);
     let augmented = augment_prompt_with_files(text, &saved);
@@ -1656,10 +1820,14 @@ pub fn codex_prompt(id: &str, text: &str, cwd: Option<&str>, files: Option<&Valu
         .and_then(|p| codex_meta(&p))
         .and_then(|m| m.get("cwd").and_then(|x| x.as_str()).map(str::to_string));
     let live_cwd = get_live(&real_id).map(|l| l.cwd);
+    if crate::codex_runtime::current().group_work.is_some() {
+        if let Some(previous)=disk_cwd.as_deref().or(live_cwd.as_deref()) {crate::codex_runtime::current().validate_group_cwd(previous)?;}
+    }
     let resolved_cwd = resolve_cwd(
         cwd.unwrap_or(""),
         disk_cwd.as_deref().or(live_cwd.as_deref()),
     );
+    crate::codex_runtime::current().validate_group_cwd(&resolved_cwd)?;
     crate::subscription_policy::validate_project(&resolved_cwd)?;
     let saved = save_uploaded_files(&resolved_cwd, files, true);
     let final_prompt = augment_prompt_with_files(text, &saved);
@@ -1707,7 +1875,7 @@ pub fn codex_prompt(id: &str, text: &str, cwd: Option<&str>, files: Option<&Valu
                     base_count
                 });
                 let Some(base_count) = prepared else { return; };
-                if try_echo_to_interactive_cli(
+                if crate::codex_runtime::current().group_work.is_none() && try_echo_to_interactive_cli(
                     "codex",
                     &queued_real_id,
                     &queued_cwd,
@@ -1749,7 +1917,7 @@ pub fn codex_prompt(id: &str, text: &str, cwd: Option<&str>, files: Option<&Valu
         base_count
     });
     let Some(base_count) = prepared else { return Err("codex_cancelled: prompt was interrupted before launch".into()); };
-    if try_echo_to_interactive_cli(
+    if crate::codex_runtime::current().group_work.is_none() && try_echo_to_interactive_cli(
         "codex",
         &real_id,
         &resolved_cwd,
@@ -1792,6 +1960,11 @@ pub fn codex_interrupt(id: &str) -> Result<Value, String> {
         known
     });
     Ok(json!({ "ok": true, "known": known }))
+}
+pub fn codex_lifecycle(id:&str)->Result<Value,String> {
+    ensure_codex_scope(id)?;let real_id=resolve_session_id(id);
+    let (known,quiescent)=crate::session_cancellation::lifecycle(&crate::codex_runtime::current().scope,&real_id);
+    Ok(json!({"known":known,"quiescent":quiescent}))
 }
 
 // ---------------- Claude Code ----------------

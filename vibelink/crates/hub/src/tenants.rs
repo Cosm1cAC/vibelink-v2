@@ -89,7 +89,7 @@ impl BetaTenantStore {
                     client_token: random_token(),
                     agent_token: random_token(),
                     daily_limit_requests: 300,
-                    daily_limit_chars: 1_500_000,
+                    daily_limit_chars: 12_000_000,
                     used_day: today.clone(),
                     used_requests: 0,
                     used_chars: 0,

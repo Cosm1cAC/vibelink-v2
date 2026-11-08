@@ -25,7 +25,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-const AGENT_VERSION: &str = "0.3.0";
+const AGENT_VERSION: &str = "0.4.0";
 const PUSH: Duration = Duration::from_secs(5);
 const SLOW: Duration = Duration::from_secs(30);
 
@@ -515,7 +515,7 @@ fn handle_session_request(kind: &str, payload: &serde_json::Value, data: &std::p
         return Err("Public worker requires an isolated DeepSeek Codex binding".into());
     }
     codex_runtime::with(runtime, || {
-        if matches!(kind, "codex.create" | "codex.prompt") {
+        if matches!(kind, "codex.create" | "codex.prompt" | "codex.workspace.prepare") {
             operation_receipts::execute(data, &codex_runtime::current().scope, kind, payload, || {
                 handle_scoped_session_request(kind, payload, data)
             })
@@ -554,16 +554,21 @@ fn handle_scoped_session_request(kind: &str, payload: &serde_json::Value, data: 
         }
         "codex.messages" => agents::codex_messages(&sid, cursor),
         "codex.operation" => operation_receipts::lookup(data, &codex_runtime::current().scope, payload),
+        "codex.workspace" => agents::codex_workspace(payload),
+        "codex.workspace.prepare" => agents::codex_workspace_prepare(payload),
         "codex.prompt" => {
             let runtime = codex_runtime::current();
             let isolated_cwd = if runtime.beta { runtime.prepare()?; runtime.workspace().to_string_lossy().to_string() } else { cwd.to_string() };
+            runtime.validate_group_cwd(&isolated_cwd)?;
             let (eff_cwd, eff_text) = if runtime.beta { (isolated_cwd, if text.is_empty(){String::new()}else{format!("{}\n\n{}",payload.pointer("/botContext/systemPrompt").and_then(serde_json::Value::as_str).unwrap_or(""),text)}) } else { agents::prepare_session_request(&isolated_cwd, text, payload) };
             agents::codex_prompt(&sid, &eff_text, if eff_cwd.is_empty() { None } else { Some(eff_cwd.as_str()) }, payload.get("files"))
         }
         "codex.interrupt" => agents::codex_interrupt(&sid),
+        "codex.lifecycle" => agents::codex_lifecycle(&sid),
         "codex.create" => {
             let runtime = codex_runtime::current();
             let isolated_cwd = if runtime.beta { runtime.prepare()?; runtime.workspace().to_string_lossy().to_string() } else { cwd.to_string() };
+            runtime.validate_group_cwd(&isolated_cwd)?;
             let (eff_cwd, eff_text) = if runtime.beta { (isolated_cwd, if text.is_empty(){String::new()}else{format!("{}\n\n{}",payload.pointer("/botContext/systemPrompt").and_then(serde_json::Value::as_str).unwrap_or(""),text)}) } else { agents::prepare_session_request(&isolated_cwd, text, payload) };
             agents::codex_create(&eff_cwd, &eff_text, payload.get("files"))
         }

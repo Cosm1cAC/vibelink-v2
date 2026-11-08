@@ -11,6 +11,7 @@ pub(super) fn fixture() -> (PathBuf, Shared, String) {
         beta_mode: false,
         bots: bots::BotFleetStore::load(dir.clone()),
         work: group_work::WorkStore::load(dir.clone()).unwrap(),
+        leases:Arc::new(work_leases::WorkLeases::load(dir.clone()).unwrap()),
         approvals: approvals::ApprovalGate::load(dir.clone()),
         voice: voice::VoiceService::load(dir.clone()),
         bindings: agent_sessions::Sessions::load(dir.clone()),
@@ -259,7 +260,7 @@ async fn paired_clients_cannot_read_or_interrupt_another_users_agent_session() {
     let owner = model_gateway::identity(&app.auth.verify(&a).unwrap());
     app.bindings.bind("", agent_sessions::Binding {
         id: "private-session".into(), agent: "codex".into(), device: "pc".into(),
-        model: model_policy::DEEPSEEK_MODEL.into(), scope: agent_sessions::scope(&owner, model_policy::DEEPSEEK_MODEL),
+        model: model_policy::DEEPSEEK_MODEL.into(), scope: agent_sessions::scope(&owner, model_policy::DEEPSEEK_MODEL),work_id:String::new(),
         owner, bot_id: String::new(), cwd: String::new(), title: String::new(),
     });
     for (method, path) in [

@@ -2,7 +2,7 @@
 use crate::{
     Shared, auth,
     model_policy::DEEPSEEK_MODEL,
-    model_usage::{Identity, Meter},
+    model_usage::{Identity, Meter,WorkCharge},
 };
 use axum::{
     Json,
@@ -22,22 +22,31 @@ use std::{
 use vibelink_protocol::now_ms;
 
 #[derive(Default)]
-pub struct Grants(Mutex<HashMap<String, (Identity, u64)>>);
+pub struct Grants(Mutex<HashMap<String, (Identity, u64,Option<WorkCharge>)>>);
 impl Grants {
     pub fn issue(&self, identity: Identity) -> String {
+        self.issue_work(identity,None)
+    }
+    pub fn issue_work(&self,identity:Identity,task:Option<WorkCharge>)->String {
         let mut grants = self.0.lock().unwrap();
-        grants.retain(|_, (_, expires)| *expires > now_ms());
+        grants.retain(|_, (_, expires,_)| *expires > now_ms());
         let token = auth::random_token();
-        grants.insert(token.clone(), (identity, now_ms() + 2 * 60 * 60_000));
+        grants.insert(token.clone(), (identity, now_ms() + 2 * 60 * 60_000,task));
         token
     }
     pub fn verify(&self, token: &str) -> Option<Identity> {
+        self.verify_work(token).map(|(identity,_)|identity)
+    }
+    pub fn verify_work(&self,token:&str)->Option<(Identity,Option<WorkCharge>)> {
         self.0
             .lock()
             .unwrap()
             .get(token)
-            .filter(|(_, expires)| *expires > now_ms())
-            .map(|(id, _)| id.clone())
+            .filter(|(_, expires,_)| *expires > now_ms())
+            .map(|(id, _,task)| (id.clone(),task.clone()))
+    }
+    pub fn revoke_work(&self,id:&str) {
+        self.0.lock().unwrap().retain(|_,(_,_,t)|t.as_ref().is_none_or(|t|t.work_id!=id));
     }
 }
 pub fn identity(ctx: &auth::AuthCtx) -> Identity {
@@ -80,6 +89,13 @@ pub async fn proxy(State(app): State<Shared>, Path(rest): Path<String>, req: Req
     let Some(identity) = identity else {
         return StatusCode::UNAUTHORIZED.into_response();
     };
+    let task=req.extensions().get::<WorkCharge>().cloned();
+    if let Some(task)=&task {
+        let work_app=if app.work.charge(&task.work_id,&identity.user_id).is_ok(){Some(app.clone())}else{app.tenant_apps.lock().unwrap().get(&identity.user_id).cloned()};
+        if work_app.is_none_or(|a|a.work.charge(&task.work_id,&identity.user_id).is_err()) {
+            return (StatusCode::FORBIDDEN,Json(json!({"error":"Work authorization revoked or completed"}))).into_response();
+        }
+    }
     if rest == "models" && req.method() == axum::http::Method::GET {
         return Json(json!({"object":"list","data":[{"id":DEEPSEEK_MODEL,"object":"model","owned_by":"magpie","display_name":"DeepSeek V4.1 Flash"}]})).into_response();
     }
@@ -134,7 +150,7 @@ pub async fn proxy(State(app): State<Shared>, Path(rest): Path<String>, req: Req
     } else if streaming {
         body["stream_options"] = json!({"include_usage":true});
     }
-    let mut meter = match app.usage.begin(identity, rest, bytes.len() as u64, output) {
+    let mut meter = match app.usage.begin_work(identity, rest, bytes.len() as u64, output,task) {
         Ok(m) => m,
         Err(e) => return (StatusCode::TOO_MANY_REQUESTS, Json(json!({"error":e}))).into_response(),
     };

@@ -16,6 +16,8 @@ mod approvals;
 mod auth;
 mod bots;
 mod group_work;
+mod work_mandate;
+mod work_leases;
 mod model_gateway;
 mod model_usage;
 mod agent_sessions;
@@ -32,7 +34,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-const VERSION: &str = "0.2.0";
+const VERSION: &str = "0.3.0";
 const OFFLINE_AFTER_MS: u64 = 20_000;
 const EVENT_CAP: usize = 500;
 
@@ -50,6 +52,7 @@ struct App {
     pub(crate) beta_mode: bool,
     pub(crate) bots: bots::BotFleetStore,
     work: group_work::WorkStore,
+    leases: Arc<work_leases::WorkLeases>,
     pub(crate) approvals: approvals::ApprovalGate,
     pub(crate) voice: voice::VoiceService,
     data: PathBuf,
@@ -175,8 +178,9 @@ async fn auth_mw(State(app): State<Shared>, mut req: Request, next: Next) -> Res
     }
     let presented = auth::presented_token(req.headers(), req.uri().query());
     if path.starts_with("/api/llm/") {
-        if let Some(identity) = presented.as_deref().and_then(|t|app.grants.verify(t)) {
+        if let Some((identity,task)) = presented.as_deref().and_then(|t|app.grants.verify_work(t)) {
             req.extensions_mut().insert(identity);
+            if let Some(task)=task {req.extensions_mut().insert(task);}
             return next.run(req).await;
         }
     }
@@ -214,6 +218,7 @@ fn tenant_app(app:&Shared,tid:&str)->Result<Shared,String> {
     let tenant=Arc::new(App {
         auth:app.auth.clone(),tenants:app.tenants.clone(),beta_mode:true,
         work:group_work::WorkStore::load(dir.clone())?,
+        leases:app.leases.clone(),
         bots:bots::BotFleetStore::load_for_edition(dir.clone(),true),
         approvals:approvals::ApprovalGate::load(dir.clone()),voice:voice::VoiceService::load(dir.clone()),
         bindings:agent_sessions::Sessions::load(dir.clone()),usage:app.usage.clone(),grants:app.grants.clone(),magpie:app.magpie.clone(),tenant_id:Some(tid.into()),data:dir.clone(),store:Mutex::new(load(&dir)),
@@ -401,7 +406,7 @@ async fn health(State(app): State<Shared>) -> Json<Value> {
         devices: n,
     });
     v["policyTicks"] = json!(policy::ticks());
-    v["groupWork"] = json!({"version":1,"durable":true,"agentMinVersion":"0.3.0"});
+    v["groupWork"] = json!({"version":2,"durable":true,"agentMinVersion":"0.4.0"});
     Json(v)
 }
 
@@ -667,6 +672,10 @@ async fn call_agent(app: &Shared, device: &str, kind: &str, payload: Value, secs
         let stored = app.bindings.get(&sid);
         if app.beta_mode && !sid.is_empty() && stored.is_none() { return Err("Session is not bound to this tenant's agent".into()); }
         let b = match stored {Some(b)=>b,None=>agent_sessions::new_binding(app,device,&payload)?};
+        if kind=="codex.prompt" {
+            let work_id=if b.work_id.is_empty(){app.work.session_work(&sid)}else{Some(b.work_id.clone())};
+            if work_id.as_deref().is_some_and(|id|payload["groupWorkId"].as_str()!=Some(id)){return Err("这是群任务管理的会话，请回到原任务追问；底层会话仅用于查看执行记录".into());}
+        }
         if !sid.is_empty() && payload["model"].as_str().is_some_and(|m|m!=b.model) {return Err("Session model is bound; create a new session to change it".into());}
         if b.agent != "codex" { return Err("Session agent mismatch".into()); }
         if let Some(bot) = payload["botId"].as_str().and_then(|id|app.bots.get_bot(id)) {
@@ -677,7 +686,16 @@ async fn call_agent(app: &Shared, device: &str, kind: &str, payload: Value, secs
             if !sid.is_empty() && caller.user_id != b.owner.user_id { return Err("Session belongs to another user".into()); }
         }
         actual_device = b.device.clone();
-        payload["codexRuntime"] = agent_sessions::runtime(app,&b,matches!(kind,"codex.create"|"codex.prompt"));
+        if payload.get("operationDevice").is_some()||payload.get("groupWorkId").is_some()||kind=="codex.workspace" {actual_device=group_work::physical_device(&actual_device);}
+        let group_work=payload["groupWorkId"].as_str().map(str::to_string);
+        payload["codexRuntime"] = agent_sessions::runtime(app,&b,group_work.is_none()&&matches!(kind,"codex.create"|"codex.prompt"));
+        if let Some(work_id)=group_work {
+            if let Some(group)=payload.get("groupWork"){payload["codexRuntime"]["groupWork"]=group.clone();}
+            if matches!(kind,"codex.create"|"codex.prompt")&&b.model==model_policy::DEEPSEEK_MODEL {
+                let charge=app.work.charge(&work_id,&b.owner.user_id)?;
+                payload["codexRuntime"]["token"]=json!(app.grants.issue_work(b.owner.clone(),Some(charge)));
+            }
+        }
         // Only internal group orchestration sets this flag; HTTP session handlers never copy it.
         if payload["groupWorkConsult"]==true {payload["codexRuntime"]["readOnly"]=json!(true);}
         if !sid.is_empty() {payload["session"] = json!(b.id);old_session=sid;}
@@ -1270,8 +1288,10 @@ async fn bot_group_messages_get(
     Json(json!({ "messages": messages }))
 }
 
-async fn group_work_list(State(app):State<Shared>,Path(id):Path<String>)->Json<Value> {
-    Json(json!({"work":app.work.list_public(&id)}))
+async fn group_work_list(State(app):State<Shared>,Path(id):Path<String>,Query(q):Query<HashMap<String,String>>)->Json<Value> {
+    let mut rows=app.work.search(&id,q.get("q").map(String::as_str).unwrap_or(""),q.get("archived").is_some_and(|v|v=="true"));
+    for row in &mut rows {row["billing"]=app.usage.work_summary(row["id"].as_str().unwrap_or(""));}
+    Json(json!({"work":rows}))
 }
 async fn group_work_submit(State(app):State<Shared>,Path(id):Path<String>,axum::Extension(ctx):axum::Extension<auth::AuthCtx>,Json(body):Json<Value>)->Response {
     let Some(group)=app.bots.get_group(&id)else{return (StatusCode::NOT_FOUND,Json(json!({"error":"Group not found; sync the group first"}))).into_response();};
@@ -1293,10 +1313,17 @@ async fn group_work_submit(State(app):State<Shared>,Path(id):Path<String>,axum::
     }
 }
 async fn group_work_action(State(app):State<Shared>,Path((gid,wid)):Path<(String,String)>,axum::Extension(ctx):axum::Extension<auth::AuthCtx>,Json(body):Json<Value>)->Response {
+    if body["action"]=="archive" {
+        if app.leases.list().iter().any(|l|l.token.work_id==wid){return (StatusCode::CONFLICT,Json(json!({"error":"任务工作目录仍在占用，不能归档"}))).into_response();}
+        return match app.work.archive(&gid,&wid,&model_gateway::identity(&ctx).user_id){Ok(w)=>Json(json!({"ok":true,"work":group_work::public(&w)})).into_response(),Err(e)=>(StatusCode::BAD_REQUEST,Json(json!({"error":e}))).into_response()};
+    }
     match app.work.action(&gid,&wid,&model_gateway::identity(&ctx).user_id,body["action"].as_str().unwrap_or("")) {
-        Ok(w)=>Json(json!({"ok":true,"work":group_work::public(&w)})).into_response(),
+        Ok(w)=>{if body["action"]=="cancel" {app.grants.revoke_work(&wid);}Json(json!({"ok":true,"work":group_work::public(&w)})).into_response()},
         Err(e)=>(StatusCode::BAD_REQUEST,Json(json!({"error":e}))).into_response(),
     }
+}
+async fn group_work_export(State(app):State<Shared>,Path((gid,wid)):Path<(String,String)>,axum::Extension(ctx):axum::Extension<auth::AuthCtx>)->Response {
+    match app.work.export(&gid,&wid,&model_gateway::identity(&ctx).user_id){Ok(mut v)=>{v["billing"]=app.usage.work_summary(&wid);Json(v).into_response()},Err(e)=>(StatusCode::BAD_REQUEST,Json(json!({"error":e}))).into_response()}
 }
 
 async fn bot_group_messages_post(
@@ -2319,6 +2346,7 @@ async fn main() {
         beta_mode,
         bots: bots_store,
         work: group_work::WorkStore::load(data.clone()).expect("load durable group work ledger"),
+        leases:Arc::new(work_leases::WorkLeases::load(data.clone()).expect("load workspace leases")),
         approvals: approvals_gate,
         voice: voice_svc,
         bindings: agent_sessions::Sessions::load(data.clone()),
@@ -2424,6 +2452,7 @@ fn api_router(app: Shared) -> Router {
         .route("/api/bot-groups/{id}/messages", get(bot_group_messages_get).post(bot_group_messages_post))
         .route("/api/bot-groups/{id}/work",get(group_work_list).post(group_work_submit))
         .route("/api/bot-groups/{id}/work/{wid}/actions",post(group_work_action))
+        .route("/api/bot-groups/{id}/work/{wid}/export",get(group_work_export))
         .route("/api/fleet/action", post(fleet_action_post))
         .route("/api/approvals", get(approvals_list))
         .route("/api/approvals/policy", get(approvals_policy_get).post(approvals_policy_post))

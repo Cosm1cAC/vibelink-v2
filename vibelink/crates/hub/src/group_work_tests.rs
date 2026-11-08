@@ -18,7 +18,7 @@ fn fixture() -> (PathBuf, Shared, Vec<BotRecord>) {
         .lock()
         .unwrap()
         .agent_versions
-        .insert("pc".into(), ("0.3.0".into(), now_ms()));
+        .insert("pc".into(), ("0.4.0".into(), now_ms()));
     (dir, app, members)
 }
 
@@ -158,6 +158,7 @@ struct MockAgent {
     question_bot: Option<String>,
     question_asked: bool,
     split_pages: bool,
+    failure_for_current_turn: Option<bool>,
 }
 impl MockAgent {
     fn new() -> Self {
@@ -174,6 +175,7 @@ impl MockAgent {
             question_bot: None,
             question_asked: false,
             split_pages: false,
+            failure_for_current_turn: None,
         }
     }
     fn respond(&mut self, request: &Value) -> Value {
@@ -222,6 +224,10 @@ impl MockAgent {
             self.replies.insert(op, reply.clone());
             self.calls.push(request.clone());
             reply
+        } else if kind.ends_with("workspace") {
+            json!({"cwd":"D:/workspace","baseCwd":"D:/workspace","repoRoot":"D:/workspace","caseSensitive":false,"needsWorktreeInit":false})
+        } else if kind.ends_with("lifecycle") {
+            json!({"known":true,"quiescent":true})
         } else if kind.ends_with("operation") {
             match self.replies.get(p["operationId"].as_str().unwrap()) {
                 Some(result) => json!({"status":"accepted","result":result}),
@@ -231,6 +237,10 @@ impl MockAgent {
             let sid = p["session"].as_str().unwrap();
             // A resumed turn gets a distinct assistant ID (never return the old answer as new).
             let data = self.turns.get(sid).cloned().unwrap_or_default();
+            if let Some(current)=self.failure_for_current_turn {
+                let user=if current {data.iter().find(|m|m["type"]=="user").and_then(|m|m["text"].as_str()).unwrap_or("")}else{"[VibeLink Work:old Step:old]\nold request"};
+                return json!({"data":data,"turnError":{"message":"429 input byte limit reached","userText":user,"startedAt":now_ms()}});
+            }
             if self.split_pages && data.len() > 1 {
                 if p["cursor"].as_str().unwrap_or("").is_empty() {
                     json!({"data":[data[0]],"cursor":{"next":"1"}})
@@ -344,6 +354,18 @@ async fn restart_between_dispatch_and_reply_reuses_operation_receipt() {
                 .and_then(|q| q.pop())
         };
         if let Some(r) = request {
+            if r["kind"] == "codex.runtime.workspace" {
+                let response = MockAgent::new().respond(&r);
+                let tx = app
+                    .sessions
+                    .lock()
+                    .unwrap()
+                    .waiters
+                    .remove(r["id"].as_str().unwrap())
+                    .unwrap();
+                let _ = tx.send(Ok(response));
+                continue;
+            }
             break r;
         }
         tokio::task::yield_now().await;
@@ -359,7 +381,7 @@ async fn restart_between_dispatch_and_reply_reuses_operation_receipt() {
         .lock()
         .unwrap()
         .agent_versions
-        .insert("pc".into(), ("0.3.0".into(), now_ms()));
+        .insert("pc".into(), ("0.4.0".into(), now_ms()));
     let pump = pump(app.clone(), agent.clone()).await;
     run(app.clone(), &w.id).await.unwrap();
     assert_eq!(app.work.get(&w.id).unwrap().status, "completed");
@@ -415,7 +437,7 @@ fn old_missing_or_stale_agent_cannot_ignore_operation_fences() {
         .lock()
         .unwrap()
         .agent_versions
-        .insert("pc".into(), ("0.3.0".into(), 0));
+        .insert("pc".into(), ("0.4.0".into(), 0));
     assert!(agent_ready(&app, "pc").is_err());
     fs::remove_dir_all(dir).unwrap();
 }
@@ -489,6 +511,18 @@ async fn cancelled_lost_create_looks_up_receipt_without_replaying_execution() {
                 .and_then(|q| q.pop())
         };
         if let Some(r) = request {
+            if r["kind"] == "codex.runtime.workspace" {
+                let response = MockAgent::new().respond(&r);
+                let tx = app
+                    .sessions
+                    .lock()
+                    .unwrap()
+                    .waiters
+                    .remove(r["id"].as_str().unwrap())
+                    .unwrap();
+                let _ = tx.send(Ok(response));
+                continue;
+            }
             break r;
         }
         tokio::task::yield_now().await;
@@ -703,18 +737,298 @@ async fn readonly_plan_cannot_gain_write_permission_through_rework_or_followup()
 
 #[tokio::test]
 async fn cancelling_an_unaccepted_followup_cannot_claim_the_old_session_proves_acceptance() {
-    let(dir,app,members)=fixture();
-    let w=app.work.submit("g",&json!({"requestId":"r1","text":"Do work"}),owner("one"),members).unwrap();
-    app.work.update(&w.id,|w|{
-        add_step(w,"bot_dev","work","Follow up".into(),"old-session".into())?;
-        w.steps[0].status="dispatching".into();Ok(())
+    let (dir, app, members) = fixture();
+    let w = app
+        .work
+        .submit(
+            "g",
+            &json!({"requestId":"r1","text":"Do work"}),
+            owner("one"),
+            members,
+        )
+        .unwrap();
+    app.work
+        .update(&w.id, |w| {
+            add_step(
+                w,
+                "bot_dev",
+                "work",
+                "Follow up".into(),
+                "old-session".into(),
+            )?;
+            w.steps[0].status = "dispatching".into();
+            Ok(())
+        })
+        .unwrap();
+    let bot = app.bots.get_bot("bot_dev").unwrap();
+    app.bindings.bind(
+        "",
+        crate::agent_sessions::Binding {
+            id: "old-session".into(),
+            agent: "codex".into(),
+            device: "pc".into(),
+            model: bot.model.clone(),
+            scope: crate::agent_sessions::scope(&owner("one"), &bot.model),
+            owner: owner("one"),
+            bot_id: bot.id,
+            cwd: bot.cwd,
+            work_id: String::new(),
+            title: "old session".into(),
+        },
+    );
+    app.work.action("g", &w.id, "one", "cancel").unwrap();
+    let agent = Arc::new(Mutex::new(MockAgent::new()));
+    let pump = pump(app.clone(), agent.clone()).await;
+    run(app.clone(), &w.id).await.unwrap();
+    assert_eq!(
+        app.work.get(&w.id).unwrap().steps[0].status,
+        "cancelled_unknown"
+    );
+    assert_eq!(agent.lock().unwrap().creates, 0);
+    assert_eq!(agent.lock().unwrap().prompts, 0);
+    pump.abort();
+    let _ = pump.await;
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn archives_preserve_full_export_dedup_and_messages_while_compacting_attachment_storage() {
+    let (dir, app, members) = fixture();
+    let body = json!({"requestId":"archive-1","text":"Inspect report","files":[{"name":"input.txt","data":"YWJj"}]});
+    let w = app
+        .work
+        .submit("g", &body, owner("one"), members.clone())
+        .unwrap();
+    assert!(app.work.archive("g", &w.id, "one").is_err());
+    app.work
+        .update(&w.id, |w| {
+            w.status = "completed".into();
+            w.result = "Report ready".into();
+            Ok(())
+        })
+        .unwrap();
+    assert!(app.work.export("g", &w.id, "other").is_err());
+    let archived = app.work.archive("g", &w.id, "one").unwrap();
+    assert!(archived.archived);
+    assert!(archived.inputs[0].files.is_empty());
+    assert!(app.work.search("g", "report", false).is_empty());
+    assert_eq!(app.work.search("g", "report", true).len(), 1);
+    assert_eq!(
+        app.work.export("g", &w.id, "one").unwrap()["inputs"][0]["files"][0]["data"],
+        "YWJj"
+    );
+    assert_eq!(app.work.messages("g").len(), 1);
+    assert_eq!(
+        app.work
+            .submit("g", &body, owner("one"), members)
+            .unwrap()
+            .id,
+        w.id
+    );
+    let reloaded = WorkStore::load(dir.clone()).unwrap();
+    assert!(reloaded.get(&w.id).unwrap().archived);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn budgets_are_attributed_and_reserved_per_work_without_losing_user_totals() {
+    use crate::model_usage::{Tokens, UsageStore, WorkCharge};
+    let dir = std::env::temp_dir().join(format!("work_bill_{}", crate::auth::random_token()));
+    let usage = Arc::new(UsageStore::load(dir.clone()).unwrap());
+    let charge = WorkCharge {
+        work_id: "one-work".into(),
+        max_tokens: 100,
+        max_requests: 1,
+    };
+    let mut meter = usage
+        .begin_work(owner("one"), "responses", 10, 10, Some(charge.clone()))
+        .unwrap();
+    assert!(
+        usage
+            .begin_work(owner("one"), "responses", 1, 1, Some(charge.clone()))
+            .is_err()
+    );
+    meter.json(&json!({"usage":{"input_tokens":10,"output_tokens":5,"input_tokens_details":{"cached_tokens":8}}}));
+    meter.finish("completed", false);
+    assert_eq!(usage.work_summary("one-work")["totalTokens"], 15);
+    assert_eq!(usage.work_summary("one-work")["cachedTokens"], 8);
+    assert_eq!(
+        usage.summary(&owner("one"), &crate::model_usage::day_at(now_ms()))["totalTokens"],
+        15
+    );
+    assert!(
+        usage
+            .begin_work(owner("two"), "responses", 1, 1, Some(charge))
+            .is_err()
+    );
+    drop(meter);
+    drop(usage);
+    let usage = Arc::new(UsageStore::load(dir.clone()).unwrap());
+    assert_eq!(usage.work_summary("one-work")["requests"], 1);
+    let budget = WorkCharge {
+        work_id: "tiny".into(),
+        max_tokens: 5,
+        max_requests: 0,
+    };
+    assert!(
+        usage
+            .begin_work(owner("one"), "responses", 4, 4, Some(budget))
+            .is_err()
+    );
+    let _ = std::mem::size_of::<Tokens>();
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn user_cancel_revokes_mandate_and_aliases_cannot_bypass_physical_workspace_identity() {
+    let (dir, app, members) = fixture();
+    let w = app
+        .work
+        .submit(
+            "g",
+            &json!({"requestId":"r","text":"inspect"}),
+            owner("one"),
+            members,
+        )
+        .unwrap();
+    assert!(app.work.charge(&w.id, "one").is_ok());
+    app.work.action("g", &w.id, "one", "cancel").unwrap();
+    assert!(app.work.charge(&w.id, "one").is_err());
+    assert_eq!(physical_device(&crate::host_name()), physical_device("pc"));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn group_owned_sessions_cannot_be_resumed_through_the_unscoped_private_chat_path() {
+    let (dir, app, members) = fixture();
+    let w = app
+        .work
+        .submit(
+            "g",
+            &json!({"requestId":"r","text":"inspect"}),
+            owner("one"),
+            members,
+        )
+        .unwrap();
+    let mut binding=crate::agent_sessions::new_binding(&app,"pc",&json!({"model":crate::model_policy::DEEPSEEK_MODEL,"meterIdentity":owner("one"),"groupWorkId":w.id})).unwrap();
+    binding.id = "managed-session".into();
+    app.bindings.bind("", binding);
+    let error=crate::call_agent(&app,"pc","codex.prompt",json!({"session":"managed-session","text":"bypass work budget","meterIdentity":owner("one")}),1).await.unwrap_err();
+    assert!(error.contains("原任务追问"));
+    assert!(app.sessions.lock().unwrap().queue.is_empty());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn completed_messages_without_quiescent_process_proof_cannot_release_a_workspace() {
+    use crate::work_leases::{Access, Resource};
+    let (dir, app, members) = fixture();
+    let w = app
+        .work
+        .submit(
+            "g",
+            &json!({"requestId":"r","text":"inspect"}),
+            owner("one"),
+            members,
+        )
+        .unwrap();
+    let mut w = app
+        .work
+        .update(&w.id, |w| {
+            add_step(w, "bot_dev", "work", "edit".into(), "sid".into())?;
+            w.steps[0].status = "done".into();
+            Ok(())
+        })
+        .unwrap();
+    let lease = app
+        .leases
+        .acquire(
+            Resource::resolved("dev_shared", "pc", "D:/workspace", false).unwrap(),
+            &w.id,
+            &w.steps[0].id,
+            Access::Write,
+        )
+        .unwrap();
+    app.work
+        .update(&w.id, |w| {
+            w.steps[0].lease = Some(lease.token.clone());
+            Ok(())
+        })
+        .unwrap();
+    workspace::reconcile(&app);
+    assert!(app.leases.get(&lease.token).is_some());
+    w = app
+        .work
+        .update(&w.id, |w| {
+            w.steps[0].quiescent_proof = true;
+            Ok(())
+        })
+        .unwrap();
+    workspace::reconcile(&app);
+    assert!(app.leases.get(&lease.token).is_none());
+    assert!(w.steps[0].quiescent_proof);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn a_plan_without_optional_refinement_keeps_the_user_acceptance() {
+    let (dir, app, members) = fixture();
+    let w = app.work.submit("g", &json!({"requestId":"original", "text":"Create marker.txt containing GROUP_OK and verify the actual file"}), owner("one"), members).unwrap();
+    let plan = json!({"steps":[{"botId":"bot_dev","kind":"work","instruction":"Create and verify marker.txt","acceptance":"GROUP_OK"}]});
+    let w = app.work.update(&w.id, |w| apply_plan(w, &plan.to_string())).unwrap();
+    assert!(w.acceptance.contains(&w.mandate.acceptance));
+    assert!(w.acceptance.contains("actual file"));
+    assert_eq!(w.steps[0].bot_id, "bot_dev");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn legacy_unknown_dispatch_stays_readonly_even_after_its_workspace_barrier_was_restored() {
+    let (dir, app, members) = fixture();
+    let w = app.work.submit("g", &json!({"requestId":"legacy", "text":"inspect"}), owner("one"), members).unwrap();
+    app.work.update(&w.id, |w| {
+        add_step(w, "bot_dev", "work", "inspect".into(), String::new())?;
+        let s = &mut w.steps[0];
+        s.status = "dispatching".into();
+        s.device = "pc".into();
+        s.dispatched_at = now_ms();
+        s.prompt = "legacy operation whose receipt was lost".into();
+        Ok(())
     }).unwrap();
-    let bot=app.bots.get_bot("bot_dev").unwrap();
-    app.bindings.bind("",crate::agent_sessions::Binding{id:"old-session".into(),agent:"codex".into(),device:"pc".into(),model:bot.model.clone(),scope:crate::agent_sessions::scope(&owner("one"),&bot.model),owner:owner("one"),bot_id:bot.id,cwd:bot.cwd,title:"old session".into()});
-    app.work.action("g",&w.id,"one","cancel").unwrap();
-    let agent=Arc::new(Mutex::new(MockAgent::new()));let pump=pump(app.clone(),agent.clone()).await;
-    run(app.clone(),&w.id).await.unwrap();
-    assert_eq!(app.work.get(&w.id).unwrap().steps[0].status,"cancelled_unknown");
-    assert_eq!(agent.lock().unwrap().creates,0);assert_eq!(agent.lock().unwrap().prompts,0);
-    pump.abort();let _=pump.await;fs::remove_dir_all(dir).unwrap();
+    let agent = Arc::new(Mutex::new(MockAgent::new()));
+    let task = pump(app.clone(), agent.clone()).await;
+    workspace::restore_legacy(&app).await.unwrap();
+    let restored = WorkStore::load(dir.clone()).unwrap().get(&w.id).unwrap();
+    assert!(restored.steps[0].reconcile_only);
+    assert!(!restored.steps[0].workspace.is_empty());
+    for _ in 0..2 {
+        assert!(execute(&app, &w.id, 0).await.unwrap_err().contains("未重新派发"));
+    }
+    let step = app.work.get(&w.id).unwrap().steps[0].clone();
+    assert!(step.reconcile_only);
+    assert!(app.leases.get(step.lease.as_ref().unwrap()).is_some());
+    assert_eq!(agent.lock().unwrap().creates, 0);
+    assert_eq!(agent.lock().unwrap().prompts, 0);
+    task.abort();
+    let _ = task.await;
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn failed_executor_turn_is_not_completion_evidence_and_old_turn_errors_are_ignored() {
+    for current in [true,false] {
+        let (dir, app, members) = fixture();
+        let w=app.work.submit("g",&json!({"requestId":"quota","text":"inspect"}),owner("one"),members).unwrap();
+        let mut mock=MockAgent::new();mock.failure_for_current_turn=Some(current);
+        let agent=Arc::new(Mutex::new(mock));let task=pump(app.clone(),agent.clone()).await;
+        let result=run(app.clone(),&w.id).await;
+        if current {
+            assert!(result.unwrap_err().contains("429 input byte limit"));
+            assert_ne!(app.work.get(&w.id).unwrap().steps[0].status,"done");
+            assert_eq!(agent.lock().unwrap().creates,1);
+        } else {
+            result.unwrap();assert_eq!(app.work.get(&w.id).unwrap().status,"completed");
+        }
+        task.abort();let _=task.await;std::fs::remove_dir_all(dir).unwrap();
+    }
 }

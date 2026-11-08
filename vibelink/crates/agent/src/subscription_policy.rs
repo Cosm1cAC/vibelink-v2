@@ -49,8 +49,8 @@ pub fn validate_project(cwd: &str) -> Result<(), String> {
     for dir in std::path::Path::new(cwd).ancestors() {
         if dir == std::path::Path::new(&user_home) {break;}
         if let Ok(config) = fs::read_to_string(dir.join(".codex/config.toml")) {
-            if crate::codex_runtime::current().beta {
-                return Err("Public workspaces cannot override Codex configuration".into());
+            if crate::codex_runtime::current().beta || crate::codex_runtime::current().group_work.is_some() {
+                return Err("Public/group workspaces cannot override Codex configuration".into());
             }
 
             if [

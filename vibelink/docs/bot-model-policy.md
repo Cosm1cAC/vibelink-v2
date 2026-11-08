@@ -44,7 +44,7 @@ Hub 与 Agent 必须一起更新。新的 `codex.runtime.*` 请求会被旧 Agen
 
 上游未返回 usage 时，`totalTokens` 不伪造精确数值，另外记录 `usageMissingRequests` 与保守的 `estimatedTokens`，估算量用于额度控制。请求发送前原子预占输入字节上界与输出预算，完成后按实际 usage 结算；断线或进程重启时仍结算未完成预占，避免绕过限额。统计按北京时间日期归属请求开始的那一天。
 
-默认每个内测账户每日最多 300 次上游请求、1,500,000 实际及估算 token、1,500,000 请求输入字节，最多 2 个并发、每分钟 30 次。管理员可分别调整。开发者账户默认记录用量而不设置每日请求/token 上限，仍受并发与网关总容量限制。达到 80% 返回 `near_limit`，达到额度返回 `exhausted`；超额、超并发或超频率在发给 Magpie 前返回 429。
+默认每个内测账户每日最多 300 次上游请求、1,500,000 实际及估算 token、12,000,000 请求输入字节，最多 2 个并发、每分钟 30 次。输入字节是 CLI 多轮重传上下文的传输保护，不能按一个字节等于一个 token 配置。管理员可分别调整；已有自定义额度不由启动迁移覆盖。开发者账户默认记录用量而不设置每日请求/token 上限，仍受并发与网关总容量限制。达到 80% 返回 `near_limit`，达到额度返回 `exhausted`；超额、超并发或超频率在发给 Magpie 前返回 429。
 
 账本位于 Hub 数据目录的 `model_usage.json`，保存日汇总、限额、未完成预占和最近请求审计。审计不保存提示词、回答、Authorization 或任何 Token。旧版本已消耗的内测请求/输入额度会导入，未记录过的历史 token 明确作为估算处理。
 
@@ -65,7 +65,7 @@ Hub 与 Agent 必须一起更新。新的 `codex.runtime.*` 请求会被旧 Agen
   "limits": {
     "dailyRequests": 300,
     "dailyTokens": 1500000,
-    "dailyInputBytes": 1500000,
+    "dailyInputBytes": 12000000,
     "concurrentRequests": 2,
     "requestsPerMinute": 30
   }

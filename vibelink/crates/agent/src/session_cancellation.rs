@@ -12,6 +12,7 @@ struct State {
     generation: u64,
     children: HashSet<u32>,
     registered: bool,
+    tickets: usize,
 }
 type States = Mutex<HashMap<(String, String), Arc<Mutex<State>>>>;
 static STATES: OnceLock<States> = OnceLock::new();
@@ -21,6 +22,16 @@ pub struct Ticket {
     scope: String,
     state: Arc<Mutex<State>>,
     generation: u64,
+    _activity: Arc<Activity>,
+}
+struct Activity {
+    state: Arc<Mutex<State>>,
+}
+impl Drop for Activity {
+    fn drop(&mut self) {
+        let mut state = self.state.lock().unwrap();
+        state.tickets = state.tickets.saturating_sub(1);
+    }
 }
 
 fn state(scope: &str, session: &str) -> Arc<Mutex<State>> {
@@ -37,7 +48,9 @@ fn stop_with(state: &Mutex<State>, kill: &impl Fn(u32), after: impl FnOnce() -> 
     let mut state = state.lock().unwrap();
     let known = state.registered;
     state.generation = state.generation.wrapping_add(1);
-    for pid in state.children.drain() {
+    // Sending a signal is not evidence of child exit. Only runner.wait followed by
+    // Ticket::finished may remove a child from the lifecycle proof.
+    for pid in state.children.iter().copied() {
         kill(pid);
     }
     // Session visibility is updated before a new generation may be captured.
@@ -62,6 +75,18 @@ pub fn interrupt_with(
 ) -> bool {
     stop_with(&state(scope, session), &kill, after)
 }
+pub fn lifecycle(scope: &str, session: &str) -> (bool, bool) {
+    let states = STATES.get_or_init(Mutex::default).lock().unwrap();
+    let Some(state) = states.get(&(scope.into(), session.into())).cloned() else {
+        return (false, false);
+    };
+    drop(states);
+    let state = state.lock().unwrap();
+    (
+        state.registered,
+        state.registered && state.children.is_empty() && state.tickets == 0,
+    )
+}
 
 impl Ticket {
     pub fn capture(scope: &str, session: Option<&str>) -> Self {
@@ -69,12 +94,17 @@ impl Ticket {
         let generation = {
             let mut state = state.lock().unwrap();
             state.registered = true;
+            state.tickets += 1;
             state.generation
         };
+        let activity = Arc::new(Activity {
+            state: state.clone(),
+        });
         Self {
             scope: scope.into(),
             state,
             generation,
+            _activity: activity,
         }
     }
 
@@ -151,6 +181,58 @@ mod tests {
         thread,
         time::Duration,
     };
+    #[test]
+    fn lifecycle_waits_for_pending_runner_and_all_ticket_clones() {
+        assert_eq!(lifecycle("lifecycle_pending", "sid"), (false, false));
+        let ticket = Ticket::capture("lifecycle_pending", Some("sid"));
+        let clone = ticket.clone();
+        assert_eq!(lifecycle("lifecycle_pending", "sid"), (true, false));
+        interrupt("lifecycle_pending", "sid", |_| panic!("not launched"));
+        drop(ticket);
+        assert_eq!(lifecycle("lifecycle_pending", "sid"), (true, false));
+        drop(clone);
+        assert_eq!(lifecycle("lifecycle_pending", "sid"), (true, true));
+    }
+    #[test]
+    fn cancellation_signal_or_dropped_ticket_cannot_fake_child_reaping() {
+        let ticket = Ticket::capture("lifecycle_child", Some("sid"));
+        ticket.launch(|| Ok(((), 707))).unwrap();
+        interrupt("lifecycle_child", "sid", |_| {}); // A failed/no-op kill must not count as stopped.
+        assert_eq!(lifecycle("lifecycle_child", "sid"), (true, false));
+        ticket.finished(707);
+        assert_eq!(lifecycle("lifecycle_child", "sid"), (true, false));
+        drop(ticket);
+        assert_eq!(lifecycle("lifecycle_child", "sid"), (true, true));
+        let outstanding = Ticket::capture("lifecycle_orphan", Some("sid"));
+        outstanding.launch(|| Ok(((), 808))).unwrap();
+        drop(outstanding);
+        assert_eq!(lifecycle("lifecycle_orphan", "sid"), (true, false));
+        assert_eq!(lifecycle("other_scope", "sid"), (false, false));
+    }
+    #[test]
+    fn production_lifecycle_rpc_is_readonly_and_requires_reaped_activity_for_quiescence() {
+        let p = serde_json::json!({"session":"lifecycle-rpc-session","codexRuntime":{"scope":"lifecycle_rpc_scope"}});
+        let data = std::env::temp_dir().join(format!(
+            "vibelink_lifecycle_no_store_{}",
+            std::process::id()
+        ));
+        assert!(!data.exists());
+        assert_eq!(
+            crate::handle_session_request("codex.runtime.lifecycle", &p, &data).unwrap(),
+            serde_json::json!({"known":false,"quiescent":false})
+        );
+        let ticket = Ticket::capture("lifecycle_rpc_scope", Some("lifecycle-rpc-session"));
+        assert_eq!(
+            crate::handle_session_request("codex.runtime.lifecycle", &p, &data).unwrap()["quiescent"],
+            false
+        );
+        drop(ticket);
+        assert_eq!(
+            crate::handle_session_request("codex.runtime.lifecycle", &p, &data).unwrap()["quiescent"],
+            true
+        );
+        assert!(!data.exists());
+    }
 
     #[test]
     fn cancelled_waiter_does_not_revive_when_interrupt_clears_running() {
