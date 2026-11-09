@@ -35,7 +35,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-const VERSION: &str = "0.4.1";
+const VERSION: &str = "0.4.2";
 const OFFLINE_AFTER_MS: u64 = 20_000;
 const EVENT_CAP: usize = 500;
 
@@ -411,6 +411,7 @@ async fn health(State(app): State<Shared>) -> Json<Value> {
     });
     v["policyTicks"] = json!(policy::ticks());
     v["groupWork"] = json!({"version":2,"durable":true,"agentMinVersion":"0.4.0"});
+    v["betaAdmin"] = json!({"version":1,"limitsRevision":true});
     v["login"] = json!({"version":1,"issuer":app.auth.issuer(),"edition":if app.beta_mode{"beta"}else{"dev"}});
     Json(v)
 }
