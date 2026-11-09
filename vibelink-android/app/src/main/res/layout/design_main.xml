@@ -29,6 +29,7 @@
 
         <variable name="tailscaleAuthAvailable" type="boolean" />
         <variable name="tailscaleCanProbe" type="boolean" />
+        <variable name="tailscaleStatus" type="String" />
 
         <import type="android.view.View" />
         <import type="com.github.kr328.clash.design.MainDesign.Request" />
@@ -127,14 +128,20 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:padding="8dp"
-                        android:text="首次连接日本出口需授权 Tailscale。VPN 已启动不代表外网已连通。"
+                        android:text="@{tailscaleStatus}"
                         android:textSize="13sp" />
                     <Button
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="检测日本出口 / 获取授权"
+                        android:text="检测日本出口"
                         android:visibility="@{tailscaleCanProbe ? View.VISIBLE : View.GONE}"
                         android:onClick="@{() -> self.request(Request.ProbeTailscale)}" />
+                    <Button
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="重新连接出口 / 重新获取授权链接"
+                        android:visibility="@{tailscaleCanProbe ? View.VISIBLE : View.GONE}"
+                        android:onClick="@{() -> self.request(Request.ReconnectExit)}" />
                     <Button
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"

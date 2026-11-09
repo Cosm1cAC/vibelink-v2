@@ -21,6 +21,10 @@ class TailscaleAuthCache(private val now: () -> Long, private val ttlMillis: Lon
         if (!running || profile == null || owner != profile || now() >= expires) { clear(); return null }
         return url
     }
+    /** A completed load of the same profile must not discard its once-only URL. */
+    @Synchronized fun profileLoaded(profile: String?) {
+        if (profile == null || owner != profile) clear()
+    }
     @Synchronized fun clear() { url = null; owner = null; expires = 0 }
     companion object {
         fun redact(message: String): String = Regex("https://login\\.tailscale\\.com/a/[^\\s<>\"]+", RegexOption.IGNORE_CASE)

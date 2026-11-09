@@ -78,6 +78,8 @@ class ClashService : BaseService() {
         StaticNotificationModule.createNotificationChannel(this)
         StaticNotificationModule.notifyLoadingNotification(this)
 
+        ClashManager.ensureCapture(this)
+
         runtime.launch()
     }
 

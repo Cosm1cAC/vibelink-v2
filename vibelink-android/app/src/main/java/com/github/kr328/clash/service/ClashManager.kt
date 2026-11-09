@@ -16,36 +16,44 @@ class ClashManager(private val context: Context) : IClashManager,
     CoroutineScope by CoroutineScope(Dispatchers.IO) {
     private val store = ServiceStore(context)
     companion object {
-        // The bound UI service can disappear while the browser is foreground.
-        // Keep the short-lived capability in core-process memory across rebinding.
+        // tsnet logs each authorization URL only once. Capturing must outlive
+        // the bound UI service, including the browser authorization round trip.
+        private val captureScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         private val tailscaleAuth = com.wangzan101.vibelink.clash.TailscaleAuthCache(android.os.SystemClock::elapsedRealtime)
-    }
-    private val logRelay = com.wangzan101.vibelink.clash.TailscaleLogRelay<LogMessage>(tailscaleAuth)
-
-    init {
-        launch {
-            val receiver = Clash.subscribeLogcat()
-            try {
-                for (item in receiver) {
-                    logRelay.accept(
-                        item.copy(message = com.wangzan101.vibelink.clash.TailscaleAuthCache.redact(item.message)),
-                        item.message, store.activeProfile?.toString(), StatusProvider.serviceRunning
-                    )
-                }
-            } finally { receiver.cancel() }
-        }
-        launch {
+        private val logRelay = com.wangzan101.vibelink.clash.TailscaleLogRelay<LogMessage>(tailscaleAuth)
+        private var captureJob: Job? = null
+        private var receiverRegistered = false
+        @Synchronized fun ensureCapture(context: Context) {
+            if (captureJob?.isActive == true) return
+            val application = context.applicationContext
+            val store = ServiceStore(application)
+            captureJob = captureScope.launch(start = CoroutineStart.UNDISPATCHED) {
+                val receiver = Clash.subscribeLogcat()
+                try {
+                    for (item in receiver) {
+                        logRelay.accept(
+                            item.copy(message = com.wangzan101.vibelink.clash.TailscaleAuthCache.redact(item.message)),
+                            item.message, store.activeProfile?.toString(), StatusProvider.serviceRunning
+                        )
+                    }
+                } finally { receiver.cancel() }
+            }
+            if (receiverRegistered) return
+            receiverRegistered = true
             val receiver = object : android.content.BroadcastReceiver() {
-                override fun onReceive(context: Context?, intent: android.content.Intent?) { tailscaleAuth.clear() }
+                override fun onReceive(context: Context?, intent: android.content.Intent?) {
+                    if (intent?.action == com.github.kr328.clash.common.constants.Intents.ACTION_CLASH_STOPPED) tailscaleAuth.clear()
+                    else tailscaleAuth.profileLoaded(store.activeProfile?.toString())
+                }
             }
             val filter = android.content.IntentFilter().apply {
                 addAction(com.github.kr328.clash.common.constants.Intents.ACTION_CLASH_STOPPED)
                 addAction(com.github.kr328.clash.common.constants.Intents.ACTION_PROFILE_LOADED)
             }
-            androidx.core.content.ContextCompat.registerReceiver(context, receiver, filter, androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
-            try { awaitCancellation() } finally { context.unregisterReceiver(receiver) }
+            androidx.core.content.ContextCompat.registerReceiver(application, receiver, filter, androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
         }
     }
+    init { ensureCapture(context) }
 
     override fun queryTailscaleAuthUrl(): String? = tailscaleAuth.current(store.activeProfile?.toString(), StatusProvider.serviceRunning)
 

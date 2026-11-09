@@ -61,4 +61,13 @@ class TailscaleAuthCacheTest {
         after.accept("other", "normal log", "one", true)
         assertEquals(good, cache.current("one", true))
     }
+
+    @Test fun sameProfileLoadedAfterStartupKeepsItsOnceOnlyAuthorizationLink() {
+        val cache = TailscaleAuthCache({ 0 })
+        cache.accept("[Tailscale](Tailscale) To start this tsnet server, go to: $good", "managed", true)
+        cache.profileLoaded("managed")
+        assertEquals(good, cache.current("managed", true))
+        cache.profileLoaded("other")
+        assertNull(cache.current("other", true))
+    }
 }

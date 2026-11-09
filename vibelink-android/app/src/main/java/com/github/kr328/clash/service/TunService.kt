@@ -93,6 +93,8 @@ class TunService : VpnService(), CoroutineScope by CoroutineScope(Dispatchers.De
         StaticNotificationModule.createNotificationChannel(this)
         StaticNotificationModule.notifyLoadingNotification(this)
 
+        ClashManager.ensureCapture(this)
+
         runtime.launch()
     }
 

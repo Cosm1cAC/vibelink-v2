@@ -39,6 +39,13 @@ class MainActivity : BaseActivity<MainDesign>() {
     private var pendingTargetState: Pair<Boolean, Long>? = null
     private val authRefreshLock = kotlinx.coroutines.sync.Mutex()
     private val probeLock = kotlinx.coroutines.sync.Mutex()
+    private val reconnectLock = kotlinx.coroutines.sync.Mutex()
+    private var lastExitProbeAt = 0L
+    private var exitReachable: Boolean? = null
+    private var exitProbeProfile: String? = null
+    private val exitProbeClient = okhttp3.OkHttpClient.Builder().proxy(java.net.Proxy.NO_PROXY)
+        .connectTimeout(6, TimeUnit.SECONDS).readTimeout(8, TimeUnit.SECONDS)
+        .callTimeout(12, TimeUnit.SECONDS).build()
 
     override suspend fun main() {
         val design = MainDesign(this)
@@ -101,22 +108,22 @@ class MainActivity : BaseActivity<MainDesign>() {
                             }
                             design.refreshTailscale()
                         }
-                        MainDesign.Request.ProbeTailscale -> launch {
-                            if (!probeLock.tryLock()) return@launch
+                        MainDesign.Request.ReconnectExit -> launch {
+                            if (!reconnectLock.tryLock()) return@launch
                             try {
-                                if (managedProfileSelected() && Remote.broadcasts.refreshStatus()) {
-                                    runCatching {
-                                        kotlinx.coroutines.withTimeout(15_000) {
-                                            withClash {
-                                                if (queryProxyGroupNames(false).contains("PROXY")) healthCheck("PROXY")
-                                            }
-                                        }
-                                    }
-                                    design.refreshTailscale()
-                                    design.showToast("检测已结束；如需登录，请点授权 Tailscale。可在代理组查看实际延迟。", ToastDuration.Long)
-                                } else design.showToast("请先选用开发版内置配置并启动 VPN", ToastDuration.Long)
-                            } finally { probeLock.unlock() }
+                            if (!managedProfileSelected()) return@launch
+                            runCatching {
+                                stopClashService()
+                                kotlinx.coroutines.withTimeout(20_000) {
+                                    while (Remote.broadcasts.refreshStatus()) delay(200)
+                                }
+                                exitReachable = null
+                                lastExitProbeAt = 0L
+                                design.startClash()
+                            }.onFailure { design.showToast("重新连接失败，请稍后重试", ToastDuration.Long) }
+                            } finally { reconnectLock.unlock() }
                         }
+                        MainDesign.Request.ProbeTailscale -> launch { design.probeManagedExit() }
                         MainDesign.Request.CopyTailscaleAuth -> launch {
                             val url = runCatching { if (managedProfileSelected()) withClash { queryTailscaleAuthUrl() } else null }.getOrNull()
                                 ?.let { com.wangzan101.vibelink.clash.TailscaleAuthCache.allowedUrl(it) }
@@ -204,8 +211,37 @@ class MainActivity : BaseActivity<MainDesign>() {
             val running = Remote.broadcasts.refreshStatus()
             val url = withClash { queryTailscaleAuthUrl() }
             val managed = managedProfileSelected()
-            setTailscaleState(url != null && managed, running && managed)
+            val selected = withProfile { queryActive()?.uuid?.toString() }
+            if (!running || !managed || selected != exitProbeProfile) {
+                lastExitProbeAt = 0L; exitReachable = null; exitProbeProfile = selected
+            }
+            setTailscaleState(url != null && managed, running && managed,
+                com.wangzan101.vibelink.clash.ExitProbeStatus.text(probeLock.isLocked, url != null, exitReachable))
+            if (running && managed && (lastExitProbeAt == 0L || android.os.SystemClock.elapsedRealtime() - lastExitProbeAt >= 30_000)) {
+                launch { runCatching { probeManagedExit() } }
+            }
         } finally { authRefreshLock.unlock() }
+    }
+
+    private suspend fun MainDesign.probeManagedExit() {
+        if (!probeLock.tryLock()) return
+        try {
+            val profile = withProfile { queryActive()?.uuid }
+            if (!managedProfileSelected() || !Remote.broadcasts.refreshStatus()) return
+            lastExitProbeAt = android.os.SystemClock.elapsedRealtime()
+            setTailscaleState(withClash { queryTailscaleAuthUrl() } != null, true, "正在检测 YouTube 连接…")
+            // An explicit NO_PROXY request is captured by Android VPN, never by
+            // the app's optional Hub/PC HTTP proxy. HTTPS verifies the real exit.
+            val reachable = withContext(Dispatchers.IO) {
+                try {
+                    exitProbeClient.newCall(okhttp3.Request.Builder().url("https://www.youtube.com/").head().build()).execute().use { it.isSuccessful }
+                } catch (_: java.io.IOException) { false }
+            }
+            if (withProfile { queryActive()?.uuid } == profile && Remote.broadcasts.refreshStatus()) exitReachable = reachable
+        } finally {
+            probeLock.unlock()
+            runCatching { refreshTailscale() }
+        }
     }
 
     private suspend fun MainDesign.fetchTraffic() {
