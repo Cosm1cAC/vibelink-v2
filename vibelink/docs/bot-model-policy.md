@@ -28,7 +28,7 @@ flowchart LR
 
 GPT 官方目录为 `~/.vibelink-cli/dev/codex`。Claude 官方订阅目录为 `~/.vibelink-cli/dev/claude`，桌面登录、状态检查、会话与 Agent 共用此目录；不读取或复制个人 `~/.claude/settings.json` 的代理凭据。其他原生 CLI 的会话/缓存目录按实际运行器、身份和模型分开。
 
-Hub 与 Agent 必须同时更新。新 `cli.runtime.*` RPC 由新 Agent 识别；旧 Agent 不得忽略模型或运行器后回退 GPT。旧版 Agent 定时任务仍暂停，新的 Hub 授权调度每次携带绑定信息和短期模型凭据，不得脱离计量直接执行。
+Hub 与 Agent 必须同时更新。新 `cli.runtime.*` RPC 由新 Agent 识别；旧 Agent 不得忽略模型或运行器后回退 GPT。模型绑定的旧例行任务仍明确暂停，不会丢失模型后回退 GPT；恢复调度前必须由 Hub 每次携带绑定信息和短期模型凭据。用户显式发起的群 Work 已验证实际执行、交付及重启续聊。
 
 ## 内测执行隔离
 

@@ -960,7 +960,7 @@ async fn cancel_pending(app: &Shared, id: &str) -> Result<(), String> {
         }
         if step.status == "queued" {
             if step.workspace_state == "preparing" {
-                let receipt=crate::call_agent(app,&step.device,"codex.operation",json!({"model":step.bot.model,"meterIdentity":w.owner,"operationId":format!("{}_{}_prepare",id,step.id),"operationDevice":step.device}),15).await?;
+                let receipt=crate::call_agent(app,&step.device,"cli.operation",json!({"model":step.bot.model,"meterIdentity":w.owner,"operationId":format!("{}_{}_prepare",id,step.id),"operationDevice":step.device}),15).await?;
                 if receipt["status"] != "accepted" {
                     workspace::uncertain(app, step, "Cancelled worktree preparation unconfirmed");
                     app.work.update(id, |w| {
@@ -982,7 +982,7 @@ async fn cancel_pending(app: &Shared, id: &str) -> Result<(), String> {
         if !step.accepted || sid.is_empty() {
             let request = json!({"model":step.bot.model,"cwd":step.bot.cwd,"meterIdentity":w.owner,"operationId":format!("{}_{}",id,step.id),"operationDevice":step.device});
             let response =
-                crate::call_agent(app, &step.device, "codex.operation", request.clone(), 15)
+                crate::call_agent(app, &step.device, "cli.operation", request.clone(), 15)
                     .await?;
             let accepted = response["status"] == "accepted";
             if accepted {
@@ -995,7 +995,7 @@ async fn cancel_pending(app: &Shared, id: &str) -> Result<(), String> {
                     let _ = crate::call_agent(
                         app,
                         &step.device,
-                        "codex.interrupt",
+                        "cli.interrupt",
                         json!({"session":sid,"meterIdentity":w.owner}),
                         10,
                     )
@@ -1027,7 +1027,7 @@ async fn cancel_pending(app: &Shared, id: &str) -> Result<(), String> {
             crate::call_agent(
                 app,
                 &step.device,
-                "codex.interrupt",
+                "cli.interrupt",
                 json!({"session":sid,"meterIdentity":w.owner}),
                 10,
             )
@@ -1039,7 +1039,7 @@ async fn cancel_pending(app: &Shared, id: &str) -> Result<(), String> {
                     crate::call_agent(
                         app,
                         &step.device,
-                        "codex.lifecycle",
+                        "cli.lifecycle",
                         json!({"session":sid,"meterIdentity":w.owner}),
                         10,
                     )
@@ -1142,7 +1142,7 @@ async fn read_step_turn(app: &Shared, w: &Work, step: &Step) -> Result<Value, St
         let page = crate::call_agent(
             app,
             &step.device,
-            "codex.messages",
+            "cli.messages",
             json!({"session":step.session_id,"cursor":cursor,"meterIdentity":w.owner}),
             15,
         )
@@ -1217,7 +1217,7 @@ async fn execute(app: &Shared, id: &str, index: usize) -> Result<String, String>
             let _ = crate::call_agent(
                 app,
                 &step.device,
-                "codex.interrupt",
+                "cli.interrupt",
                 json!({"session":step.session_id,"meterIdentity":w.owner}),
                 10,
             )
@@ -1235,7 +1235,7 @@ async fn execute(app: &Shared, id: &str, index: usize) -> Result<String, String>
     step = workspace::bind(app, id, index, &device).await?;
     w = app.work.get(id)?;
     if step.reconcile_only && step.status == "dispatching" {
-        let receipt=crate::call_agent(app,&step.device,"codex.operation",json!({"model":step.bot.model,"meterIdentity":w.owner,"operationId":format!("{}_{}",w.id,step.id),"operationDevice":step.device}),15).await?;
+        let receipt=crate::call_agent(app,&step.device,"cli.operation",json!({"model":step.bot.model,"meterIdentity":w.owner,"operationId":format!("{}_{}",w.id,step.id),"operationDevice":step.device}),15).await?;
         if receipt["status"] != "accepted" {
             workspace::uncertain(app, &step, "Legacy dispatch unconfirmed");
             return Err("旧版任务执行状态不明，未重新派发；工作目录仍受保护".into());
@@ -1269,7 +1269,7 @@ async fn execute(app: &Shared, id: &str, index: usize) -> Result<String, String>
             let messages = crate::call_agent(
                 app,
                 &step.bot.device,
-                "codex.messages",
+                "cli.messages",
                 json!({"session":step.session_id,"meterIdentity":w.owner}),
                 15,
             )
@@ -1360,9 +1360,9 @@ async fn execute(app: &Shared, id: &str, index: usize) -> Result<String, String>
             app,
             &step.device,
             if create {
-                "codex.create"
+                "cli.create"
             } else {
-                "codex.prompt"
+                "cli.prompt"
             },
             payload,
             25,
@@ -1406,7 +1406,7 @@ async fn execute(app: &Shared, id: &str, index: usize) -> Result<String, String>
             let _ = crate::call_agent(
                 app,
                 &step.device,
-                "codex.interrupt",
+                "cli.interrupt",
                 json!({"session":step.session_id,"meterIdentity":w.owner}),
                 10,
             )
@@ -1426,7 +1426,7 @@ async fn execute(app: &Shared, id: &str, index: usize) -> Result<String, String>
                     let lifecycle = crate::call_agent(
                         app,
                         &step.device,
-                        "codex.lifecycle",
+                        "cli.lifecycle",
                         json!({"session":step.session_id,"meterIdentity":w.owner}),
                         10,
                     )
@@ -1472,7 +1472,7 @@ fn version_supports_work(version: &str) -> bool {
         .take(3)
         .map(|p| p.parse::<u32>().unwrap_or(0))
         .collect();
-    numbers.as_slice() >= [0, 4, 0].as_slice()
+    numbers.as_slice() >= [0, 5, 0].as_slice()
 }
 pub(crate) fn physical_device(device: &str) -> String {
     if device.eq_ignore_ascii_case("pc") || device.eq_ignore_ascii_case(&crate::host_name()) {
@@ -1489,7 +1489,7 @@ pub fn agent_ready(app: &Shared, device: &str) -> Result<(), String> {
         {
             Ok(())
         }
-        _ => Err("群任务需要在线的 Agent 0.4.0 或更高版本；未派发给离线或旧 Agent".into()),
+        _ => Err("群任务需要在线的 Agent 0.5.0 或更高版本；未派发给离线或旧 Agent".into()),
     }
 }
 

@@ -14,7 +14,7 @@ pub(super) async fn bind(
     let mut w = app.work.get(id)?;
     let mut s = w.steps[index].clone();
     if s.lease.is_none() {
-        let probe=crate::call_agent(app,device,"codex.workspace",json!({"cwd":s.bot.cwd,"botId":s.bot_id,"model":s.bot.model,"meterIdentity":w.owner,
+        let probe=crate::call_agent(app,device,"cli.workspace",json!({"cwd":s.bot.cwd,"botId":s.bot_id,"model":s.bot.model,"meterIdentity":w.owner,
             "isolationMode":s.bot.isolation_mode,"groupWorkConsult":s.kind!="work"||w.mandate.read_only(&s.bot_id)}),15).await?;
         let cwd = probe["cwd"]
             .as_str()
@@ -63,7 +63,7 @@ pub(super) async fn bind(
         return Err("Stale workspace fencing token; result cannot be accepted".into());
     }
     if s.workspace_state == "preparing" {
-        let result=crate::call_agent(app,device,"codex.workspace.prepare",json!({"cwd":s.base_workspace,"botId":s.bot_id,"model":s.bot.model,"meterIdentity":w.owner,
+        let result=crate::call_agent(app,device,"cli.workspace.prepare",json!({"cwd":s.base_workspace,"botId":s.bot_id,"model":s.bot.model,"meterIdentity":w.owner,
             "isolationMode":"worktree","operationId":format!("{}_{}_prepare",w.id,s.id),"operationDevice":s.device,"groupWorkId":w.id,"groupWork":runtime(&w,&s,true)}),30).await;
         let result = match result {
             Ok(v) => v,

@@ -145,7 +145,7 @@ async fn tenants_cannot_share_bots_sessions_or_access_development_resources() {
             .as_array()
             .unwrap()
             .iter()
-            .all(|bot| bot["engine"] == "codex" && bot["model"] == model_policy::DEEPSEEK_MODEL)
+            .all(|bot| bot["engine"] == "opencode2" && bot["model"] == model_policy::DEEPSEEK_MODEL)
     );
     assert!(
         data["templates"]
@@ -197,20 +197,20 @@ async fn tenants_cannot_share_bots_sessions_or_access_development_resources() {
         loop {
             let request={plane.lock().unwrap().queue.get_mut("pc").and_then(|q|q.pop())};
             if let Some(req)=request {
-                assert_eq!(req["kind"],"codex.runtime.create");
+                assert_eq!(req["kind"],"cli.runtime.create");
                 assert_eq!(req["payload"]["codexRuntime"]["model"],model_policy::DEEPSEEK_MODEL);
                 assert!(req["payload"]["codexRuntime"]["beta"].as_bool().unwrap());
                 let tx=plane.lock().unwrap().waiters.remove(req["id"].as_str().unwrap()).unwrap();
-                tx.send(Ok(json!({"id":"agent-owned-session","agent":"codex"}))).unwrap();break;
+                tx.send(Ok(json!({"id":"agent-owned-session","agent":"opencode2"}))).unwrap();break;
             }
             tokio::task::yield_now().await;
         }
     });
-    let (status,session)=request(app.clone(),&a,Method::POST,"/api/sessions/pc/create",json!({"agent":"codex","botId":"bot_cto","text":""})).await;
+    let (status,session)=request(app.clone(),&a,Method::POST,"/api/sessions/pc/create",json!({"agent":"opencode2","botId":"bot_cto","text":""})).await;
     assert_eq!(status,StatusCode::OK,"{session}");worker.await.unwrap();
     let tenant_app=app.tenant_apps.lock().unwrap().get("beta_01").unwrap().clone();
-    assert_eq!(tenant_app.bindings.get("agent-owned-session").unwrap().agent,"codex");
-    let path="/api/sessions/pc/codex/agent-owned-session/messages";
+    assert_eq!(tenant_app.bindings.get("agent-owned-session").unwrap().agent,"opencode2");
+    let path="/api/sessions/pc/opencode2/agent-owned-session/messages";
     let(status,_)=request(app.clone(),&b,Method::GET,path,Value::Null).await;assert_eq!(status,StatusCode::BAD_GATEWAY);
     fs::remove_dir_all(dir).unwrap();
 }
@@ -280,13 +280,13 @@ async fn paired_clients_cannot_read_or_interrupt_another_users_agent_session() {
 #[test]
 fn resetting_roles_keeps_the_selected_model_device_and_agent_session() {
     let (dir, app, _) = fixture();
-    app.bots.upsert_bot(&json!({"id":"bot_cto","name":"Dispatcher","engine":"codex",
+    app.bots.upsert_bot(&json!({"id":"bot_cto","name":"Dispatcher","engine":"opencode2",
         "model":model_policy::DEEPSEEK_MODEL,"device":"test-device","cwd":"test-project",
         "activeSessionId":"bound-codex-session"})).unwrap();
     app.bots.apply_preset_fleet("grok_420").unwrap();
     let after = app.bots.get_bot("bot_cto").unwrap();
     assert_eq!(after.model, model_policy::DEEPSEEK_MODEL);
-    assert_eq!(after.engine, "codex");
+    assert_eq!(after.engine, "opencode2");
     assert_eq!(after.device, "test-device");
     assert_eq!(after.cwd, "test-project");
     assert_eq!(after.active_session_id, "bound-codex-session");
@@ -327,4 +327,44 @@ async fn legacy_app_update_channel_and_explicit_channel_select_matching_apks() {
         assert!(url.ends_with(&format!("?edition={expected}")));
     }
     fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn legacy_deepseek_codex_history_is_readable_but_never_resumed_with_another_cli(){
+    let(dir,app,admin)=fixture();
+    let old=agent_sessions::Binding{id:"legacy-codex-ds".into(),agent:"codex".into(),device:"pc".into(),model:model_policy::DEEPSEEK_MODEL.into(),scope:"dev_legacy_deepseek".into(),owner:model_usage::Identity{user_id:"owner".into(),label:"owner".into(),beta:false},bot_id:String::new(),cwd:String::new(),title:"old history".into(),work_id:String::new()};app.bindings.bind("",old.clone());
+    let plane=app.sessions.clone();let worker=tokio::spawn(async move{loop{
+        let queued=plane.lock().unwrap().queue.get_mut("pc").and_then(|q|q.pop());
+        if let Some(req)=queued {assert_eq!(req["kind"],"cli.runtime.messages");assert_eq!(req["payload"]["codexRuntime"]["scope"],"dev_legacy_deepseek");assert_eq!(req["payload"]["codexRuntime"]["engine"],"codex");let tx=plane.lock().unwrap().waiters.remove(req["id"].as_str().unwrap()).unwrap();tx.send(Ok(json!({"data":[{"type":"assistant","content":[{"type":"text","text":"old reply"}]}]}))).unwrap();break;}tokio::task::yield_now().await;
+    }});
+    let(status,history)=request(app.clone(),&admin,Method::GET,"/api/sessions/pc/codex/legacy-codex-ds/messages",Value::Null).await;assert_eq!(status,StatusCode::OK);assert_eq!(history["data"][0]["content"][0]["text"],"old reply");worker.await.unwrap();
+    let(status,_)=request(app.clone(),&admin,Method::POST,"/api/sessions/pc/legacy-codex-ds/prompt",json!({"agent":"codex","model":model_policy::DEEPSEEK_MODEL,"text":"Do not dispatch"})).await;assert_eq!(status,StatusCode::BAD_GATEWAY);assert!(app.sessions.lock().unwrap().queue.values().all(|q|q.is_empty()));assert_eq!(app.bindings.get(&old.id).unwrap().scope,old.scope);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn development_terminal_grant_is_identity_scoped_llm_only_and_not_self_renewable(){
+ let(dir,mut app,admin)=fixture();
+ let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();let address=listener.local_addr().unwrap();
+ Arc::get_mut(&mut app).unwrap().magpie=format!("http://{address}/v1");
+ let upstream=tokio::spawn(async move{let router=Router::new().route("/v1/chat/completions",post(|Json(body):Json<Value>|async move{assert_eq!(body["model"],model_policy::DEEPSEEK_MODEL);assert_ne!(body["user"],"owner");Json(json!({"choices":[{"message":{"role":"assistant","content":"OK"},"finish_reason":"stop"}],"usage":{"prompt_tokens":7,"completion_tokens":2,"total_tokens":9}}))}));axum::serve(listener,router).await.unwrap()});let(_,client)=app.auth.issue("terminal-user",auth::Scope::Client);let(_,agent)=app.auth.issue("worker",auth::Scope::Agent);
+ for token in ["",agent.as_str()]{assert_ne!(request(app.clone(),token,Method::POST,"/api/cli/launch-grant",json!({})).await.0,StatusCode::OK);}
+ let(status,grant)=request(app.clone(),&client,Method::POST,"/api/cli/launch-grant",json!({"owner":"owner","scope":"dev_gpt"})).await;assert_eq!(status,StatusCode::OK);assert_eq!(grant["agent"],"opencode2");assert_eq!(grant["model"],model_policy::DEEPSEEK_MODEL);assert_eq!(grant["expiresIn"],7200);assert!(grant["scope"].as_str().unwrap().starts_with("dev_terminal_"));
+ let token=grant["token"].as_str().unwrap();
+ let(status,_)=request(app.clone(),token,Method::POST,"/api/llm/v1/chat/completions",json!({"model":model_policy::DEEPSEEK_MODEL,"messages":[{"role":"user","content":"OK"}],"max_tokens":8,"user":"owner"})).await;assert_eq!(status,StatusCode::OK);
+ let usage=request(app.clone(),&client,Method::GET,"/api/usage",Value::Null).await.1;assert_eq!(usage["usedRequests"],1);assert_eq!(usage["totalTokens"],9);
+let ctx=app.auth.verify(&client).unwrap();let expected=model_gateway::identity(&ctx);assert_eq!(app.grants.verify(token).unwrap().user_id,expected.user_id);assert_ne!(expected.user_id,"owner");
+ for path in ["/api/cli/launch-grant","/api/tokens","/api/sessions/pc/create"] {assert_eq!(request(app.clone(),token,Method::POST,path,json!({})).await.0,StatusCode::UNAUTHORIZED);}
+ let(_,beta)=app.auth.issue("tenant:beta_01:client",auth::Scope::Client);assert_eq!(request(app.clone(),&beta,Method::POST,"/api/cli/launch-grant",json!({})).await.0,StatusCode::FORBIDDEN);
+ let(status,owner)=request(app.clone(),&admin,Method::POST,"/api/cli/launch-grant",json!({})).await;assert_eq!(status,StatusCode::OK);assert_ne!(owner["scope"],grant["scope"]);upstream.abort();fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn shared_gpt_scope_listing_keeps_each_sessions_actual_model(){
+ let(dir,app,admin)=fixture();
+ for (id,model) in [("default-gpt",""),("explicit-gpt","gpt-6.1-sol")] {app.bindings.bind("",agent_sessions::Binding{id:id.into(),agent:"codex".into(),device:"pc".into(),model:model.into(),scope:"dev_gpt".into(),owner:model_usage::Identity{user_id:"owner".into(),label:"owner".into(),beta:false},bot_id:String::new(),cwd:String::new(),title:String::new(),work_id:String::new()});}
+ let plane=app.sessions.clone();let worker=tokio::spawn(async move{loop{let queued=plane.lock().unwrap().queue.get_mut("pc").and_then(|q|q.pop());if let Some(req)=queued{assert_eq!(req["kind"],"cli.runtime.list");let tx=plane.lock().unwrap().waiters.remove(req["id"].as_str().unwrap()).unwrap();tx.send(Ok(json!({"agents":[{"id":"codex","sessions":[{"id":"default-gpt"},{"id":"explicit-gpt"},{"id":"unbound-native","model":"gpt-5.2"}]}]}))).unwrap();break;}tokio::task::yield_now().await;}});
+ let(status,response)=request(app.clone(),&admin,Method::GET,"/api/sessions/all?device=pc",Value::Null).await;assert_eq!(status,StatusCode::OK);worker.await.unwrap();let sessions=response["agents"].as_array().unwrap().iter().find(|a|a["id"]=="codex").unwrap()["sessions"].as_array().unwrap();
+ for (id,model) in [("default-gpt",""),("explicit-gpt","gpt-6.1-sol"),("unbound-native","gpt-5.2")] {assert_eq!(sessions.iter().find(|s|s["id"]==id).unwrap()["model"],model);}
+ fs::remove_dir_all(dir).unwrap();
 }

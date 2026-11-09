@@ -36,7 +36,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-const VERSION: &str = "0.5.0";
+const VERSION: &str = "0.6.0";
 const OFFLINE_AFTER_MS: u64 = 20_000;
 const EVENT_CAP: usize = 500;
 
@@ -404,6 +404,12 @@ async fn pair_redeem(State(app): State<Shared>, Json(body): Json<Value>) -> Resp
 }
 
 // ---------- handlers ----------
+async fn cli_launch_grant(State(app):State<Shared>,axum::Extension(ctx):axum::Extension<auth::AuthCtx>)->Response {
+    let owner=model_gateway::identity(&ctx);
+    if app.beta_mode || app.tenant_id.is_some() || owner.beta {return (StatusCode::FORBIDDEN,Json(json!({"error":"Native CLI terminals are available only in the private development edition"}))).into_response();}
+    let scope=format!("dev_terminal_{}",&auth::hash_token(&owner.user_id)[..24]);
+    Json(json!({"ok":true,"agent":"opencode2","model":model_policy::DEEPSEEK_MODEL,"scope":scope,"token":app.grants.issue(owner),"expiresIn":7200})).into_response()
+}
 async fn health(State(app): State<Shared>) -> Json<Value> {
     let n = app.store.lock().unwrap().devices.len();
     let mut v = json!(Health {
@@ -413,8 +419,9 @@ async fn health(State(app): State<Shared>) -> Json<Value> {
         devices: n,
     });
     v["policyTicks"] = json!(policy::ticks());
-    v["groupWork"] = json!({"version":2,"durable":true,"agentMinVersion":"0.4.0"});
+    v["groupWork"] = json!({"version":2,"durable":true,"agentMinVersion":"0.5.0"});
     v["automation"] = json!({"version":1,"modes":["off","observe"],"dispatch":false});
+    v["cliRunners"] = json!({"version":1,"rpc":"cli.runtime","launchGrant":true,"engines":["codex","opencode2","claude","gemini"],"agentMinVersion":"0.5.0"});
     v["betaAdmin"] = json!({"version":1,"limitsRevision":true});
     v["login"] = json!({"version":1,"issuer":app.auth.issuer(),"edition":if app.beta_mode{"beta"}else{"dev"}});
     Json(v)
@@ -669,25 +676,31 @@ async fn call_agent(app: &Shared, device: &str, kind: &str, payload: Value, secs
         return Err("Public Bot schedules require metered Hub execution and are currently paused".into());
     }
     if kind == "scheduler.action" && payload["action"] == "create"
-        && payload["botId"].as_str().is_some_and(|id| !id.is_empty()) {
+        && (payload["botId"].as_str().is_some_and(|id| !id.is_empty()) || payload.get("model").is_some() || payload["agent"].as_str().is_some_and(|a|a!="codex")) {
         return Err("Bot schedules paused until renewable per-user model grants are supported".into());
     }
 
+    let mut kind=kind.to_string();
     let mut payload = payload;
     let mut binding = None;
     let mut old_session = String::new();
     let mut actual_device = device.to_string();
-    if kind.starts_with("codex.") || kind == "sessions.list" {
+    if ["codex.","opencode2.","claude.","gemini.","cli."].iter().any(|p|kind.starts_with(p)) || kind == "sessions.list" || kind=="session.status" {
         let sid = payload["session"].as_str().unwrap_or("").to_string();
         let stored = app.bindings.get(&sid);
         if app.beta_mode && !sid.is_empty() && stored.is_none() { return Err("Session is not bound to this tenant's agent".into()); }
         let b = match stored {Some(b)=>b,None=>agent_sessions::new_binding(app,device,&payload)?};
-        if kind=="codex.prompt" {
+        let op=if kind=="session.status"{"lifecycle".into()}else{kind.split_once('.').map(|p|p.1).unwrap_or("list").to_string()};
+        let requested=if kind=="session.status"{"cli"}else{kind.split_once('.').map(|p|p.0).unwrap_or("sessions")};
+        if !matches!(requested,"cli"|"sessions") && requested!=b.agent {return Err("Session runner mismatch".into());}
+        kind=format!("{}.{}",b.agent,op);
+        if op=="prompt" {
             let work_id=if b.work_id.is_empty(){app.work.session_work(&sid)}else{Some(b.work_id.clone())};
             if work_id.as_deref().is_some_and(|id|payload["groupWorkId"].as_str()!=Some(id)){return Err("这是群任务管理的会话，请回到原任务追问；底层会话仅用于查看执行记录".into());}
         }
+        if matches!(op.as_str(),"create"|"prompt"){model_policy::validate_binding(&b.agent,&b.model,b.owner.beta)?;}
         if !sid.is_empty() && payload["model"].as_str().is_some_and(|m|m!=b.model) {return Err("Session model is bound; create a new session to change it".into());}
-        if b.agent != "codex" { return Err("Session agent mismatch".into()); }
+
         if let Some(bot) = payload["botId"].as_str().and_then(|id|app.bots.get_bot(id)) {
             if !sid.is_empty() && (bot.id != b.bot_id || bot.model != b.model) { return Err("Session model/Bot binding mismatch; create a new session".into()); }
         }
@@ -696,12 +709,12 @@ async fn call_agent(app: &Shared, device: &str, kind: &str, payload: Value, secs
             if !sid.is_empty() && caller.user_id != b.owner.user_id { return Err("Session belongs to another user".into()); }
         }
         actual_device = b.device.clone();
-        if payload.get("operationDevice").is_some()||payload.get("groupWorkId").is_some()||kind=="codex.workspace" {actual_device=group_work::physical_device(&actual_device);}
+        if payload.get("operationDevice").is_some()||payload.get("groupWorkId").is_some()||op=="workspace" {actual_device=group_work::physical_device(&actual_device);}
         let group_work=payload["groupWorkId"].as_str().map(str::to_string);
-        payload["codexRuntime"] = agent_sessions::runtime(app,&b,group_work.is_none()&&matches!(kind,"codex.create"|"codex.prompt"));
+        payload["codexRuntime"] = agent_sessions::runtime(app,&b,group_work.is_none()&&matches!(op.as_str(),"create"|"prompt"));
         if let Some(work_id)=group_work {
             if let Some(group)=payload.get("groupWork"){payload["codexRuntime"]["groupWork"]=group.clone();}
-            if matches!(kind,"codex.create"|"codex.prompt")&&b.model==model_policy::DEEPSEEK_MODEL {
+            if matches!(op.as_str(),"create"|"prompt")&&b.model==model_policy::DEEPSEEK_MODEL {
                 let charge=app.work.charge(&work_id,&b.owner.user_id)?;
                 payload["codexRuntime"]["token"]=json!(app.grants.issue_work(b.owner.clone(),Some(charge)));
             }
@@ -709,8 +722,8 @@ async fn call_agent(app: &Shared, device: &str, kind: &str, payload: Value, secs
         // Only internal group orchestration sets this flag; HTTP session handlers never copy it.
         if payload["groupWorkConsult"]==true {payload["codexRuntime"]["readOnly"]=json!(true);}
         if !sid.is_empty() {payload["session"] = json!(b.id);old_session=sid;}
-        if kind=="codex.create" || kind=="codex.prompt" {binding=Some(b);}
-    } else if app.beta_mode || kind.starts_with("antigravity.") || kind.starts_with("claude.") || kind.starts_with("opencode.") {
+        if matches!(op.as_str(),"create"|"prompt") {binding=Some(b);}
+    } else if app.beta_mode || kind.starts_with("antigravity.") || kind.starts_with("opencode.") {
         return Err("This runtime or development resource is unavailable".into());
     }
     if payload["operationId"].as_str().is_some(){
@@ -726,7 +739,7 @@ async fn call_agent(app: &Shared, device: &str, kind: &str, payload: Value, secs
         s.queue
             .entry(actual_device.to_string())
             .or_default()
-            .push(json!({ "id": id, "kind": if kind.starts_with("codex.") {format!("codex.runtime.{}",kind.trim_start_matches("codex."))} else {kind.into()}, "payload": payload }));
+            .push(json!({ "id": id, "kind": if ["codex.","opencode2.","claude.","gemini."].iter().any(|p|kind.starts_with(p)) {format!("cli.runtime.{}",kind.split_once('.').unwrap().1)} else {kind.clone()}, "payload": payload }));
         (id, rx)
     };
     match tokio::time::timeout(std::time::Duration::from_secs(secs), rx).await {
@@ -734,7 +747,7 @@ async fn call_agent(app: &Shared, device: &str, kind: &str, payload: Value, secs
             if let Some(mut b) = binding {
                 b.id = v["id"].as_str().unwrap_or(&old_session).to_string();
                 if !b.id.is_empty() {
-                    v["agent"]=json!("codex");v["model"]=json!(b.model);v["device"]=json!(b.device);
+                    v["agent"]=json!(b.agent);v["model"]=json!(b.model);v["device"]=json!(b.device);
                     app.bindings.bind(&old_session,b);
                 }
             }
@@ -782,23 +795,14 @@ fn session_error(e: String) -> Response {
     (StatusCode::BAD_GATEWAY, Json(json!({ "error": e }))).into_response()
 }
 
-async fn sessions_list(State(app): State<Shared>, Query(q): Query<HashMap<String, String>>) -> Response {
-    let device = q.get("device").cloned().unwrap_or_default();
-    if device.is_empty() {
-        return session_error("device required".into());
-    }
-    {
-        let s = app.store.lock().unwrap();
-        if let Some(d) = s.devices.get(&device) {
-            if d.report.agent_version.as_str() < "0.2.5" && d.report.opencode.is_none() {
-                return Json(json!({ "data": [] })).into_response();
-            }
-        }
-    }
-    match call_agent(&app, &device, "opencode.list", json!({}), 6).await {
-        Ok(v) => Json(v).into_response(),
-        Err(e) => session_error(e),
-    }
+async fn sessions_list(State(app):State<Shared>,Query(q):Query<HashMap<String,String>>,ctx:Option<axum::Extension<auth::AuthCtx>>)->Response {
+    let selected=q.get("agent").cloned();
+    let response=sessions_all(State(app),Query(q),ctx).await;
+    if !response.status().is_success(){return response;}
+    let bytes=match axum::body::to_bytes(response.into_body(),4*1024*1024).await{Ok(bytes)=>bytes,Err(_)=>return session_error("Session list exceeds supported response size".into())};
+    let value:Value=match serde_json::from_slice(&bytes){Ok(value)=>value,Err(_)=>return session_error("Invalid session list".into())};
+    let rows=value["agents"].as_array().into_iter().flatten().filter(|a|selected.as_deref().is_none_or(|s|a["id"].as_str()==Some(s))).flat_map(|a|a["sessions"].as_array().into_iter().flatten().cloned()).collect::<Vec<_>>();
+    Json(json!({"data":rows})).into_response()
 }
 
 /// 所有 agent 的会话（opencode / Codex / Claude / Antigravity），手机端先选 agent 再进会话。
@@ -818,8 +822,13 @@ async fn sessions_all(State(app): State<Shared>, Query(q): Query<HashMap<String,
         let payload=json!({"model":binding.model,"meterIdentity":binding.owner,"codexRuntime":agent_sessions::runtime(&app,&binding,false)});
         // List against the binding's profile, including GPT and DeepSeek Codex homes.
         let mut payload=payload;payload["session"]=json!(binding.id);
-        if let Ok(v)=call_agent(&app,&binding.device,"codex.list",payload,8).await {
-            if let Some(list)=v.pointer("/agents/0/sessions").and_then(Value::as_array){sessions.extend(list.iter().cloned().map(|mut session|{session["model"]=json!(binding.model);session["device"]=json!(binding.device);session}));}
+        if let Ok(v)=call_agent(&app,&binding.device,"cli.list",payload,8).await {
+            if let Some(list)=v.pointer("/agents/0/sessions").and_then(Value::as_array){sessions.extend(list.iter().cloned().filter_map(|mut session|{
+                let exact=session["id"].as_str().and_then(|id|app.bindings.get(id));
+                if let Some(exact)=exact {if exact.owner.user_id!=binding.owner.user_id||exact.scope!=binding.scope{return None;}session["agent"]=json!(exact.agent);session["model"]=json!(exact.model);session["device"]=json!(exact.device);}
+                else {session["agent"]=json!(binding.agent);if session.get("model").is_none(){session["model"]=json!(if binding.agent=="codex"{""}else{&binding.model});}session["device"]=json!(binding.device);}
+                Some(session)
+            }));}
         }
     }
     if scopes.is_empty() && !app.beta_mode {
@@ -827,7 +836,7 @@ async fn sessions_all(State(app): State<Shared>, Query(q): Query<HashMap<String,
             if let Some(list)=v.pointer("/agents/0/sessions").and_then(Value::as_array){sessions.extend(list.iter().cloned());}
         }
     }
-    Json(json!({"agents":[{"id":"codex","name":"Codex","sessions":sessions}]})).into_response()
+    Json(json!({"agents": (["codex","opencode2","claude","gemini"].iter().map(|engine|json!({"id":engine,"name":engine,"sessions":sessions.iter().filter(|s|s["agent"].as_str().unwrap_or("codex")==*engine).cloned().collect::<Vec<_>>()})).collect::<Vec<_>>())})).into_response()
 }
 
 /// 按 agent 取消息：opencode 走本地服务，Codex/Claude 读各自的 jsonl。
@@ -838,7 +847,7 @@ async fn session_messages_by_agent(
     ctx: Option<axum::Extension<auth::AuthCtx>>,
 ) -> Response {
     let kind = match agent.as_str() {
-        "codex" => format!("{agent}.messages"),
+        "codex"|"opencode2"|"claude"|"gemini" => format!("{agent}.messages"),
         other => return session_error(format!("unknown agent {other}")),
     };
     // 只把 cursor 传下去；opencode 的 cursor 不能和 order 同时出现，order 由 agent 决定
@@ -848,8 +857,8 @@ async fn session_messages_by_agent(
         Err(e) => session_error(e),
     }
 }
-async fn session_messages(State(app): State<Shared>, Path((dev, sid)): Path<(String, String)>) -> Response {
-    match call_agent(&app, &dev, "opencode.messages", json!({ "session": sid }), 8).await {
+async fn session_messages(State(app): State<Shared>, Path((dev, sid)): Path<(String, String)>,ctx: axum::Extension<auth::AuthCtx>) -> Response {
+    match call_agent(&app, &dev, "cli.messages", json!({ "session": sid, "meterIdentity":agent_sessions::caller(Some(&ctx.0)) }), 8).await {
         Ok(v) => Json(v).into_response(),
         Err(e) => session_error(e),
     }
@@ -858,13 +867,9 @@ async fn session_messages(State(app): State<Shared>, Path((dev, sid)): Path<(Str
 fn normalize_agent_kind(agent: Option<&str>, sid: &str) -> Result<String, String> {
     let a = agent.unwrap_or("").trim();
     match a {
-        "codex" => Ok(a.to_string()),
+        "codex"|"opencode2"|"claude"|"gemini" => Ok(a.to_string()),
         "" => {
-            if sid.starts_with("ses_") {
-                Ok("codex".to_string())
-            } else {
-                Ok("codex".to_string())
-            }
+            Ok(if sid.starts_with("opencode2_"){"opencode2"}else if sid.starts_with("claude_"){"claude"}else if sid.starts_with("gemini_"){"gemini"}else{"codex"}.into())
         }
         other => Err(format!("unknown agent {other}")),
     }
@@ -876,9 +881,10 @@ async fn session_create(
     ctx: Option<axum::Extension<auth::AuthCtx>>,
     Json(body): Json<Value>,
 ) -> Response {
-    let agent = body.get("agent").and_then(|v| v.as_str()).unwrap_or("codex").trim().to_string();
+    let inferred=body["botId"].as_str().and_then(|id|app.bots.get_bot(id)).map(|b|b.engine).unwrap_or_else(||model_policy::engine_for_model(body["model"].as_str().unwrap_or("")).unwrap_or("codex").into());
+    let agent = body.get("agent").and_then(|v| v.as_str()).unwrap_or(&inferred).trim().to_string();
     let kind = match agent.as_str() {
-        "codex" => format!("{agent}.create"),
+        "codex"|"opencode2"|"claude"|"gemini" => format!("{agent}.create"),
         other => return session_error(format!("unknown agent {other}")),
     };
     let cwd = body.get("cwd").and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -2471,6 +2477,7 @@ fn api_router(app: Shared) -> Router {
         .route("/api/config/{name}", get(get_config).post(put_config))
         .route("/phone/{name}", get(phone))
         .route("/api/apk/latest", get(apk_latest))
+        .route("/api/cli/launch-grant",post(cli_launch_grant))
         .route("/api/llm/{*rest}", any(model_gateway::proxy))
         .route("/api/device-link/{*rest}", any(cindy_device_link_proxy))
         .route("/api/cindy/join-link", get(cindy_join_link_get).post(cindy_join_link_post))

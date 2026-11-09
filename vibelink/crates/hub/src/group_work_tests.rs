@@ -18,7 +18,7 @@ fn fixture() -> (PathBuf, Shared, Vec<BotRecord>) {
         .lock()
         .unwrap()
         .agent_versions
-        .insert("pc".into(), ("0.4.0".into(), now_ms()));
+        .insert("pc".into(), ("0.5.0".into(), now_ms()));
     (dir, app, members)
 }
 
@@ -186,7 +186,7 @@ impl MockAgent {
             if let Some(reply) = self.replies.get(&op) {
                 return reply.clone();
             }
-            assert_eq!(kind.starts_with("codex.runtime."), true);
+            assert_eq!(kind.starts_with("cli.runtime."), true);
             let prompt = p["text"].as_str().unwrap();
             let stage = if prompt.contains("stepInstruction=为用户明确请求选择") {
                 "route"
@@ -354,7 +354,7 @@ async fn restart_between_dispatch_and_reply_reuses_operation_receipt() {
                 .and_then(|q| q.pop())
         };
         if let Some(r) = request {
-            if r["kind"] == "codex.runtime.workspace" {
+            if r["kind"] == "cli.runtime.workspace" {
                 let response = MockAgent::new().respond(&r);
                 let tx = app
                     .sessions
@@ -381,7 +381,7 @@ async fn restart_between_dispatch_and_reply_reuses_operation_receipt() {
         .lock()
         .unwrap()
         .agent_versions
-        .insert("pc".into(), ("0.4.0".into(), now_ms()));
+        .insert("pc".into(), ("0.5.0".into(), now_ms()));
     let pump = pump(app.clone(), agent.clone()).await;
     run(app.clone(), &w.id).await.unwrap();
     assert_eq!(app.work.get(&w.id).unwrap().status, "completed");
@@ -423,7 +423,7 @@ async fn reviewer_gap_returns_to_owner_once_and_is_reviewed_again() {
 fn old_missing_or_stale_agent_cannot_ignore_operation_fences() {
     let (dir, app, _) = fixture();
     assert!(agent_ready(&app, "pc").is_ok());
-    for version in ["0.2.9", "0.2.99", "junk"] {
+    for version in ["0.2.9", "0.2.99", "0.4.0", "junk"] {
         app.sessions
             .lock()
             .unwrap()
@@ -437,7 +437,7 @@ fn old_missing_or_stale_agent_cannot_ignore_operation_fences() {
         .lock()
         .unwrap()
         .agent_versions
-        .insert("pc".into(), ("0.4.0".into(), 0));
+        .insert("pc".into(), ("0.5.0".into(), 0));
     assert!(agent_ready(&app, "pc").is_err());
     fs::remove_dir_all(dir).unwrap();
 }
@@ -511,7 +511,7 @@ async fn cancelled_lost_create_looks_up_receipt_without_replaying_execution() {
                 .and_then(|q| q.pop())
         };
         if let Some(r) = request {
-            if r["kind"] == "codex.runtime.workspace" {
+            if r["kind"] == "cli.runtime.workspace" {
                 let response = MockAgent::new().respond(&r);
                 let tx = app
                     .sessions
@@ -629,11 +629,11 @@ async fn permission_changes_during_a_running_turn_request_interrupt_before_pausi
                 })
         };
         if let Some(r) = request {
-            let result = if r["kind"] == "codex.runtime.messages" {
+            let result = if r["kind"] == "cli.runtime.messages" {
                 app.bots.upsert_bot(&json!({"id":"bot_cto","name":"Chief","approvalMode":"plan","isolationMode":"worktree"})).unwrap();
                 json!({"data":[]})
             } else {
-                if r["kind"] == "codex.runtime.interrupt" {
+                if r["kind"] == "cli.runtime.interrupt" {
                     interrupted = true;
                 }
                 mock.respond(&r)
@@ -913,7 +913,7 @@ async fn group_owned_sessions_cannot_be_resumed_through_the_unscoped_private_cha
     let mut binding=crate::agent_sessions::new_binding(&app,"pc",&json!({"model":crate::model_policy::DEEPSEEK_MODEL,"meterIdentity":owner("one"),"groupWorkId":w.id})).unwrap();
     binding.id = "managed-session".into();
     app.bindings.bind("", binding);
-    let error=crate::call_agent(&app,"pc","codex.prompt",json!({"session":"managed-session","text":"bypass work budget","meterIdentity":owner("one")}),1).await.unwrap_err();
+    let error=crate::call_agent(&app,"pc","cli.prompt",json!({"session":"managed-session","text":"bypass work budget","meterIdentity":owner("one")}),1).await.unwrap_err();
     assert!(error.contains("原任务追问"));
     assert!(app.sessions.lock().unwrap().queue.is_empty());
     std::fs::remove_dir_all(dir).unwrap();

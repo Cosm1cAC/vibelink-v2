@@ -275,7 +275,8 @@ fn home() -> PathBuf {
 
 /// Persisted Bot schedules have no renewable per-user gateway grant. Fail closed.
 pub fn requires_model_binding(task: &Value) -> bool {
-    task.get("botId").and_then(Value::as_str).is_some_and(|id| !id.is_empty())
+    task.get("agent").and_then(Value::as_str).is_some_and(|a|a!="codex")
+        || task.get("botId").and_then(Value::as_str).is_some_and(|id| !id.is_empty())
         || task.get("model").and_then(Value::as_str).is_some_and(|m| !m.is_empty())
         || task.get("codexRuntime").is_some()
 }
@@ -439,7 +440,7 @@ mod tests {
         let d = tmpdir("mig");
         let file = d.join("s.json");
         let marker = d.join("marker");
-        fs::write(&file, r#"[{"id":"a","agent":"claude","cwd":"","prompt":"p","cron":"每 6 小时","enabled":true,"lastRunAt":0}]"#).unwrap();
+        fs::write(&file, r#"[{"id":"a","agent":"codex","cwd":"","prompt":"p","cron":"每 6 小时","enabled":true,"lastRunAt":0}]"#).unwrap();
         let calls = RefCell::new(0);
         let run = |_: &str, _: &str, _: &str| -> Result<Value, String> {
             *calls.borrow_mut() += 1;
@@ -490,7 +491,7 @@ mod tests {
         let file = d.join("s.json");
         let marker = d.join("marker");
         fs::write(&marker, "x").unwrap();
-        fs::write(&file, r#"[{"id":"c","agent":"claude","prompt":"p","cron":"每 30 分钟","enabled":true,"enabledAt":0,"lastRunAt":1}]"#).unwrap();
+        fs::write(&file, r#"[{"id":"c","agent":"codex","prompt":"p","cron":"每 30 分钟","enabled":true,"enabledAt":0,"lastRunAt":1}]"#).unwrap();
         let run = |_: &str, _: &str, _: &str| -> Result<Value, String> { Err("claude not installed".into()) };
         assert_eq!(tick_with(&file, &marker, 31 * 60_000, &run), 0);
         let v: Value = serde_json::from_str(&fs::read_to_string(&file).unwrap()).unwrap();

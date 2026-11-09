@@ -1421,12 +1421,12 @@ fn migrate_model_policy(state: &mut BotsDiskState, beta: bool) {
                 }
             }
         }
-        if upgrade || crate::model_policy::validate_engine(&bot.engine, beta).is_err() {
-            let engine = crate::model_policy::default_engine(&bot.template_id, beta);
-            if bot.engine != engine { bot.active_session_id.clear(); bot.session_ids.clear(); }
-            bot.engine = engine.into();
-            bot.model = crate::model_policy::default_model(&bot.template_id,beta).into();
+        if upgrade || crate::model_policy::validate_model(&bot.model,beta).is_err() {
+            bot.model=crate::model_policy::default_model(&bot.template_id,beta).into();
         }
+        let engine=crate::model_policy::engine_for_model(&bot.model).unwrap_or("opencode2");
+        if bot.engine!=engine {bot.active_session_id.clear();bot.session_ids.clear();bot.engine=engine.into();}
+
     }
     for group in &mut state.groups {
         if group.id == "grp_all_hands" || group.name.contains("Gemini") {
@@ -1434,7 +1434,7 @@ fn migrate_model_policy(state: &mut BotsDiskState, beta: bool) {
             group.description = "幕僚长统筹、情报官查证、代码主程实现、审校官验收".into();
         }
     }
-    state.recipe_schema_version = 10;
+    state.recipe_schema_version = 11;
 }
 
 impl BotFleetStore {
@@ -2316,6 +2316,12 @@ impl BotFleetStore {
     }
 
     pub fn upsert_bot(&self, body: &Value) -> Result<BotRecord, String> {
+        let previous=body["id"].as_str().and_then(|id|self.get_bot(id));
+        let requested=body["model"].as_str().map(str::to_string).or_else(||previous.as_ref().map(|b|b.model.clone())).unwrap_or_else(||crate::model_policy::default_model(body["templateId"].as_str().unwrap_or(""),self.beta_mode).into());
+        let engine=crate::model_policy::engine_for_model(&requested)?;
+        crate::model_policy::validate_binding(engine,&requested,self.beta_mode)?;
+        if body["engine"].as_str().is_some_and(|e|e!=engine){return Err("Model must use its corresponding CLI runner".into());}
+        let mut normalized=body.clone();normalized["engine"]=json!(engine);normalized["model"]=json!(requested);let body=&normalized;
         if let Some(engine) = body.get("engine").and_then(Value::as_str) { crate::model_policy::validate_engine(engine, self.beta_mode)?; }
         let raw_name = body.get("name").and_then(Value::as_str).unwrap_or("").trim();
         let req_engine = body
@@ -3601,6 +3607,11 @@ impl BotFleetStore {
                     .iter_mut()
                     .find(|b| b.id == target_id && !b.archived)
                     .ok_or_else(|| format!("active bot '{target_id}' not found"))?;
+                let desired_model=body["model"].as_str().unwrap_or(&b.model);
+                let desired_engine=crate::model_policy::engine_for_model(desired_model)?;
+                crate::model_policy::validate_binding(desired_engine,desired_model,self.beta_mode)?;
+                if body["engine"].as_str().is_some_and(|e|e!=desired_engine){return Err("Model/CLI runner mismatch".into());}
+                if b.engine!=desired_engine {b.active_session_id.clear();b.session_ids.clear();b.engine=desired_engine.into();}
                 let from_model = b.model.clone();
                 let from_thinking = b.thinking_effort.clone();
                 if let Some(m) = body.get("model").and_then(Value::as_str) {

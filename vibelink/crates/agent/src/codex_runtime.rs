@@ -80,6 +80,7 @@ pub struct GroupWork {
 }
 #[derive(Clone, Debug)]
 pub struct Runtime {
+    pub engine: String,
     pub scope: String,
     pub model: String,
     pub beta: bool,
@@ -91,6 +92,7 @@ pub struct Runtime {
 impl Default for Runtime {
     fn default() -> Self {
         Self {
+            engine: "codex".into(),
             scope: "dev_gpt".into(),
             model: String::new(),
             beta: false,
@@ -126,6 +128,7 @@ impl Runtime {
             return Ok(Self::default());
         };
         let mut r = Self {
+            engine: value["engine"].as_str().unwrap_or("codex").into(),
             scope: value["scope"].as_str().unwrap_or("").into(),
             model: value["model"].as_str().unwrap_or("").into(),
             beta: value["beta"].as_bool().unwrap_or(false),
@@ -141,6 +144,7 @@ impl Runtime {
                 })
                 .transpose()?,
         };
+        if !matches!(r.engine.as_str(),"codex"|"opencode2"|"claude"|"gemini"){return Err("Invalid CLI runner".into());}
         if r.scope.is_empty()
             || !r
                 .scope
@@ -152,7 +156,7 @@ impl Runtime {
         if r.beta && r.model != DEEPSEEK {
             return Err("Public workers may only use DeepSeek".into());
         }
-        if !r.model.is_empty() && r.model != DEEPSEEK && !r.model.starts_with("gpt-") {
+        if !r.model.is_empty() && r.model != DEEPSEEK && !r.model.starts_with("gpt-") && r.model!="claude" && !r.model.starts_with("claude-") && r.model!="gemini" && !r.model.starts_with("gemini-") {
             return Err("Unsupported model".into());
         }
         if r.model == DEEPSEEK

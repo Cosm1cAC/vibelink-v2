@@ -168,7 +168,7 @@ pub fn codex_workspace_prepare(payload:&Value)->Result<Value,String> {
     Ok(json!({"cwd":cwd,"baseCwd":base,"caseSensitive":false,"needsWorktreeInit":false}))
 }
 
-fn new_uuid_v4() -> String {
+pub(crate) fn new_uuid_v4() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(1);
     let nanos = SystemTime::now()

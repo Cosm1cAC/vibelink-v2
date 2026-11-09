@@ -56,21 +56,12 @@ impl Sessions {
         }
     }
 }
-pub fn scope(owner: &Identity, model: &str) -> String {
-    if !owner.beta && owner.user_id == "owner" && model != model_policy::DEEPSEEK_MODEL {
-        return "dev_gpt".into();
-    }
-    format!(
-        "{}_{}_{}",
-        if owner.beta { "beta" } else { "dev" },
-        &crate::auth::hash_token(&owner.user_id)[..24],
-        if model == model_policy::DEEPSEEK_MODEL {
-            "deepseek"
-        } else {
-            "gpt"
-        }
-    )
+pub fn scope(owner:&Identity,model:&str)->String {
+    let engine=model_policy::engine_for_model(model).unwrap_or("legacy");
+    if !owner.beta && owner.user_id=="owner" && engine=="codex" {return "dev_gpt".into();}
+    format!("{}_{}_{}_{}",if owner.beta{"beta"}else{"dev"},&crate::auth::hash_token(&owner.user_id)[..24],engine,&crate::auth::hash_token(model)[..16])
 }
+
 pub fn owner(app: &Shared, payload: &Value) -> Identity {
     if let Some(tid) = &app.tenant_id {
         return Identity {
@@ -104,7 +95,7 @@ pub fn runtime(app: &Shared, b: &Binding, grant: bool) -> Value {
                 .iter()
                 .any(|t| matches!(t.as_str(), "write_file" | "shell" | "computer.command"))
     });
-    json!({"readOnly":read_only,"scope":b.scope,"model":b.model,"beta":b.owner.beta,"gateway":gateway,
+    json!({"engine":b.agent,"readOnly":read_only,"scope":b.scope,"model":b.model,"beta":b.owner.beta,"gateway":gateway,
         "token":if grant&&b.model==model_policy::DEEPSEEK_MODEL {app.grants.issue(b.owner.clone())}else{String::new()}})
 }
 pub fn new_binding(app: &Shared, device: &str, payload: &Value) -> Result<Binding, String> {
@@ -137,7 +128,7 @@ pub fn new_binding(app: &Shared, device: &str, payload: &Value) -> Result<Bindin
     Ok(Binding {
         id: String::new(),
         work_id:payload["groupWorkId"].as_str().unwrap_or("").into(),
-        agent: "codex".into(),
+        agent: model_policy::engine_for_model(&model)?.into(),
         device,
         scope: scope(&owner, &model),
         model,

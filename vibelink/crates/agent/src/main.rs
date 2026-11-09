@@ -6,6 +6,9 @@
 //!   VIBELINK_DEVICE=laptop
 mod agents;
 mod codex_runtime;
+mod cli_runners;
+mod cli_process;
+mod gemini_policy;
 mod operation_receipts;
 mod session_cancellation;
 mod subscription_policy;
@@ -25,7 +28,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-const AGENT_VERSION: &str = "0.4.0";
+const AGENT_VERSION: &str = "0.5.0";
 const PUSH: Duration = Duration::from_secs(5);
 const SLOW: Duration = Duration::from_secs(30);
 
@@ -69,38 +72,24 @@ fn http_call(ep: &Endpoint, method: &str, path: &str, token: &str, body: Option<
 
     let mut raw = Vec::new();
     stream.read_to_end(&mut raw).map_err(|e| e.to_string())?;
-    let text = String::from_utf8_lossy(&raw).to_string();
-    let (head, body) = text.split_once("\r\n\r\n").ok_or("malformed response")?;
-    let mut lines = head.lines();
-    let status: u16 = lines
-        .next()
-        .and_then(|l| l.split_whitespace().nth(1))
-        .and_then(|s| s.parse().ok())
-        .ok_or("bad status line")?;
-    let chunked = head.to_ascii_lowercase().contains("transfer-encoding: chunked");
-    let body = if chunked { dechunk(body) } else { body.to_string() };
-    Ok((status, body))
+    let split=raw.windows(4).position(|w|w==b"\r\n\r\n").ok_or("malformed response")?;
+    let head=std::str::from_utf8(&raw[..split]).map_err(|_|"Invalid HTTP headers")?;
+    let status=head.lines().next().and_then(|l|l.split_whitespace().nth(1)).and_then(|s|s.parse::<u16>().ok()).ok_or("bad status line")?;
+    let body=&raw[split+4..];
+    let bytes=if head.to_ascii_lowercase().contains("transfer-encoding: chunked"){dechunk(body)?}else{body.to_vec()};
+    Ok((status,String::from_utf8(bytes).map_err(|_|"Invalid UTF-8 response body")?))
 }
-
-fn dechunk(s: &str) -> String {
-    let mut out = String::new();
-    let bytes = s.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        let line_end = match s[i..].find("\r\n") {
-            Some(p) => i + p,
-            None => break,
-        };
-        let size = usize::from_str_radix(s[i..line_end].trim(), 16).unwrap_or(0);
-        if size == 0 {
-            break;
-        }
-        let start = line_end + 2;
-        let end = (start + size).min(bytes.len());
-        out.push_str(&s[start..end]);
-        i = end + 2;
+fn dechunk(bytes:&[u8])->Result<Vec<u8>,String>{
+    let mut out=Vec::new();let mut at=0;
+    loop {
+        let end=bytes[at..].windows(2).position(|w|w==b"\r\n").map(|i|at+i).ok_or("Incomplete HTTP chunk header")?;
+        let header=std::str::from_utf8(&bytes[at..end]).map_err(|_|"Invalid HTTP chunk header")?;
+        let size=usize::from_str_radix(header.split(';').next().unwrap_or("").trim(),16).map_err(|_|"Invalid HTTP chunk length")?;
+        if size==0{return Ok(out);}
+        let start=end+2;let finish=start.checked_add(size).ok_or("HTTP chunk overflow")?;
+        if finish.checked_add(2).is_none_or(|v|v>bytes.len())||&bytes[finish..finish+2]!=b"\r\n"{return Err("Incomplete HTTP chunk".into());}
+        out.extend_from_slice(&bytes[start..finish]);at=finish+2;
     }
-    out
 }
 
 // ---------------- collectors ----------------
@@ -507,21 +496,29 @@ fn is_beta_worker() -> bool {
 }
 
 fn handle_session_request(kind: &str, payload: &serde_json::Value, data: &std::path::Path) -> Result<serde_json::Value, String> {
-    if kind.starts_with("codex.runtime.") && payload.get("codexRuntime").is_none() {return Err("Runtime binding required".into());}
-    let normalized=kind.strip_prefix("codex.runtime.").map(|name|format!("codex.{name}"));
+    if (kind.starts_with("cli.runtime.") || kind.starts_with("codex.runtime.")) && payload.get("codexRuntime").is_none(){return Err("Runtime binding required".into());}
+    let runtime=codex_runtime::Runtime::parse(payload)?;
+    let normalized=kind.strip_prefix("cli.runtime.").map(|op|format!("{}.{op}",runtime.engine)).or_else(||kind.strip_prefix("codex.runtime.").map(|op|format!("codex.{op}")));
     let kind=normalized.as_deref().unwrap_or(kind);
-    let runtime = codex_runtime::Runtime::parse(payload)?;
-    if is_beta_worker() && (!kind.starts_with("codex.") || !runtime.beta || runtime.model != codex_runtime::DEEPSEEK) {
-        return Err("Public worker requires an isolated DeepSeek Codex binding".into());
+    if is_beta_worker() && (!runtime.beta || runtime.engine!="opencode2" || runtime.model!=codex_runtime::DEEPSEEK){return Err("Public worker requires an isolated OpenCode2 DeepSeek binding".into());}
+    if kind.ends_with(".create")||kind.ends_with(".prompt") {
+        let expected=if runtime.model==codex_runtime::DEEPSEEK{"opencode2"}else if runtime.model=="claude"||runtime.model.starts_with("claude-"){"claude"}else if runtime.model=="gemini"||runtime.model.starts_with("gemini-"){"gemini"}else{"codex"};
+        if runtime.engine!=expected {return Err("Model/CLI runner mismatch; historical bindings are read-only".into());}
     }
-    codex_runtime::with(runtime, || {
-        if matches!(kind, "codex.create" | "codex.prompt" | "codex.workspace.prepare") {
-            operation_receipts::execute(data, &codex_runtime::current().scope, kind, payload, || {
-                handle_scoped_session_request(kind, payload, data)
-            })
-        } else {
-            handle_scoped_session_request(kind, payload, data)
-        }
+    if matches!(kind,"codex.create"|"codex.prompt") && runtime.model==codex_runtime::DEEPSEEK {return Err("DeepSeek inference must use OpenCode2; legacy Codex sessions are read-only".into());}
+    codex_runtime::with(runtime,||{
+        let invoke=||{
+            let runtime=codex_runtime::current();
+            if runtime.engine!="codex" && kind.starts_with(&format!("{}.",runtime.engine)) {
+                let op=kind.split_once('.').unwrap().1;
+                if op=="operation" {return operation_receipts::lookup(data,&runtime.scope,payload);}
+                return cli_runners::handle(&runtime.engine,op,payload);
+            }
+            handle_scoped_session_request(kind,payload,data)
+        };
+        if kind.ends_with(".create")||kind.ends_with(".prompt")||kind.ends_with(".workspace.prepare") {
+            operation_receipts::execute(data,&codex_runtime::current().scope,kind,payload,invoke)
+        }else{invoke()}
     })
 }
 
@@ -1119,3 +1116,10 @@ mod gateway_smoke;
 
 #[cfg(test)]
 mod group_work_smoke;
+
+#[cfg(test)]mod http_codec_tests {
+ #[test]fn chunked_unicode_is_reassembled_before_utf8_decoding(){
+  let text="任务✓";let bytes=text.as_bytes();let mut framed=Vec::new();for part in bytes.chunks(2){framed.extend_from_slice(format!("{:x};extension=yes\r\n",part.len()).as_bytes());framed.extend_from_slice(part);framed.extend_from_slice(b"\r\n");}framed.extend_from_slice(b"0\r\n\r\n");assert_eq!(String::from_utf8(super::dechunk(&framed).unwrap()).unwrap(),text);
+ }
+ #[test]fn malformed_chunk_is_an_error_without_partial_or_lossy_text(){assert!(super::dechunk(b"5\r\na\r\n").is_err());}
+}
