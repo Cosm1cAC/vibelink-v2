@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { VibeLinkAccountInfo } from './AccountInfo';
 import { HubWorkPanel } from './HubWorkPanel';
 import { useHubAuth } from './useHubAuth';
+import {HubAdminEntry} from './HubAdminEntry';
 import { NotificationPanel } from './NotificationPanel';
 
 /** All work is mirrored from the authenticated Hub. Native history remains a dev capability. */
@@ -29,6 +30,7 @@ export function HubWorkspace() {
               {t('vibelinkWork.localHistory')}
             </Button>
           )}
+          <HubAdminEntry session={session} bridge={window.electronAPI?.vibelink} onOpen={()=>navigate('/hub-admin')}/>
           <WindowControls />
         </div>
       </header>

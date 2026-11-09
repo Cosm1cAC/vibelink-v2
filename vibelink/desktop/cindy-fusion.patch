@@ -170,10 +170,11 @@ index 8ed676ef..b3b92610 100644
    mode: Extract<AppSessionMode, 'signed-out' | 'local'>,
    reason: string,
 diff --git a/apps/desktop/src/main/bootstrap-electron.ts b/apps/desktop/src/main/bootstrap-electron.ts
-index b842bf8d..b2e1afa5 100644
+index b842bf8d..e0083e73 100644
 --- a/apps/desktop/src/main/bootstrap-electron.ts
 +++ b/apps/desktop/src/main/bootstrap-electron.ts
-@@ -1,4 +1,10 @@
+@@ -1,4 +1,11 @@
++import { invokeHubAdmin } from './vibelink/adminRuntime.js';
  import { deliverRoutineResult, listRoutineDeliveryTargets } from './routines/delivery.js';
 +import { currentHubCredential, currentHubControlSettings, initializeHubAppAuth, invokeHubAuth, isVibeLinkMode } from './vibelink/authRuntime.js';
 +import { invokeHubWork } from './vibelink/workRuntime.js';
@@ -184,7 +185,7 @@ index b842bf8d..b2e1afa5 100644
  import { flushPluginUsageLifecycle } from './plugin-usage/current.js';
  import { registerAccessibilitySupportIpc } from './accessibility-support-ipc.js';
  import { mcpAppSchemePrivilege, registerMcpAppProtocol } from './mcp-apps/sandboxProtocol.js';
-@@ -97,6 +103,7 @@ import {
+@@ -97,6 +104,7 @@ import {
    WINDOW_BACKDROP_MATERIAL_CHANGED_CHANNEL,
  } from '../shared/windowBackdrop.js';
  import { isAllowedBillingMailtoRequest } from '../shared/billing.js';
@@ -192,7 +193,7 @@ index b842bf8d..b2e1afa5 100644
  import path from 'node:path';
  import fs from 'node:fs';
  import { textFilePreviewResult, TEXT_PREVIEW_LIMIT_MB } from './text-file-preview';
-@@ -631,6 +638,7 @@ import {
+@@ -631,6 +639,7 @@ import {
    handleDeviceLinkSystemResume,
    getControllerName,
    revokeController,
@@ -200,7 +201,7 @@ index b842bf8d..b2e1afa5 100644
  } from './device-link';
  import { closeSharedTasksBeforeLogout } from './device-link/sharedTaskRuntime.js';
  import { closeSharedTasksBeforeAccountHandover } from './device-link/sharedTaskAccountBoundary.js';
-@@ -3467,11 +3475,12 @@ function destroyWindowsTray(): void {
+@@ -3467,11 +3476,12 @@ function destroyWindowsTray(): void {
  }
  
  const linuxTrayLog = createLogger('linux-tray');
@@ -216,7 +217,7 @@ index b842bf8d..b2e1afa5 100644
      const icon = nativeImage.createFromPath(iconPath);
      if (icon.isEmpty()) throw new Error(`tray icon is empty: ${iconPath}`);
      // Keep the source resolution: Linux panels choose their own icon size/scale.
-@@ -3491,9 +3500,7 @@ function ensureWindowsTray(): boolean {
+@@ -3491,9 +3501,7 @@ function ensureWindowsTray(): boolean {
  
    let tray: Tray | null = null;
    try {
@@ -227,7 +228,7 @@ index b842bf8d..b2e1afa5 100644
      const icon = nativeImage.createFromPath(iconPath);
      if (icon.isEmpty()) throw new Error(`tray icon is empty: ${iconPath}`);
      tray = new Tray(icon.resize({ width: 16, height: 16 }));
-@@ -4091,9 +4098,7 @@ const createWindow = () => {
+@@ -4091,9 +4099,7 @@ const createWindow = () => {
      minWidth: 800,
      minHeight: 600,
      title: BRAND_NAME,
@@ -238,7 +239,7 @@ index b842bf8d..b2e1afa5 100644
      autoHideMenuBar: true,
      show: false,
      backgroundColor: bgColor,
-@@ -4128,6 +4133,9 @@ const createWindow = () => {
+@@ -4128,6 +4134,9 @@ const createWindow = () => {
      },
    });
    markAppContentWindow(mainWindow);
@@ -248,13 +249,17 @@ index b842bf8d..b2e1afa5 100644
    installSelectionContextMenu(mainWindow);
    installWindowResponsivenessDiagnostics(mainWindow, { label: 'main' });
    mainWindowRef = mainWindow;
-@@ -4564,7 +4572,41 @@ function parseOptionalDeviceLinkDeviceId(value: unknown): string | null | undefi
+@@ -4564,7 +4573,45 @@ function parseOptionalDeviceLinkDeviceId(value: unknown): string | null | undefi
    return trimmed;
  }
  
 +const vibelinkEmbeddedSecret = vibelinkRandomUUID();
  const registerIpcHandlers = () => {
 +  startHubNotifications();
++  ipcMain.handle('vibelink:admin', async (event, input: unknown) => {
++    assertTrustedAppRendererEvent(event);
++    return invokeHubAdmin(input);
++  });
 +  ipcMain.handle('vibelink:notifications', async (event, input: unknown) => {
 +    assertTrustedAppRendererEvent(event);
 +    return invokeHubNotifications(input);
@@ -290,7 +295,7 @@ index b842bf8d..b2e1afa5 100644
    ipcMain.handle('database-size-warning:get-settings', (event) => {
      assertTrustedAppRendererEvent(event);
      const state = readDatabaseSizeWarningSettingsState();
-@@ -4868,7 +4910,7 @@ const registerIpcHandlers = () => {
+@@ -4868,7 +4915,7 @@ const registerIpcHandlers = () => {
    });
  
    ipcMain.on('get-app-display-version-info', (event) => {
@@ -299,7 +304,7 @@ index b842bf8d..b2e1afa5 100644
    });
  
    // 开屏卡住诊断:renderer 的 r: 日志不进上传,这条快照由 main 校验后写进 renderer-guard。
-@@ -6186,7 +6228,14 @@ const registerIpcHandlers = () => {
+@@ -6186,7 +6233,14 @@ const registerIpcHandlers = () => {
  
    // ── Auth IPC handlers (delegated to authManager) ──
  
@@ -315,7 +320,7 @@ index b842bf8d..b2e1afa5 100644
      try {
        let pendingCompletion: Promise<authManager.AuthState> | null = null;
        const state = await authManager
-@@ -6236,10 +6285,14 @@ const registerIpcHandlers = () => {
+@@ -6236,10 +6290,14 @@ const registerIpcHandlers = () => {
      }
    });
  
@@ -331,7 +336,7 @@ index b842bf8d..b2e1afa5 100644
      // Login can be the first real credential operation to observe an unavailable
      // backend. Reuse the bounded, idle-only recovery after the action settles.
      return authManager.dispatchLoginAction(action).finally(() => authCredentialRecovery.request());
-@@ -6252,17 +6305,21 @@ const registerIpcHandlers = () => {
+@@ -6252,17 +6310,21 @@ const registerIpcHandlers = () => {
      return authManager.getLoginCaptchaChallengeUrl();
    });
  
@@ -354,7 +359,7 @@ index b842bf8d..b2e1afa5 100644
      try {
        return await authManager.syncSavedAccounts();
      } catch (error) {
-@@ -6272,6 +6329,7 @@ const registerIpcHandlers = () => {
+@@ -6272,6 +6334,7 @@ const registerIpcHandlers = () => {
  
    ipcMain.handle('auth:accounts:switch', async (event, accountKey: unknown) => {
      assertTrustedAppRendererEvent(event);
@@ -362,7 +367,7 @@ index b842bf8d..b2e1afa5 100644
      try {
        await authManager.switchSavedAccount(accountKey);
      } catch (error) {
-@@ -6281,6 +6339,7 @@ const registerIpcHandlers = () => {
+@@ -6281,6 +6344,7 @@ const registerIpcHandlers = () => {
  
    ipcMain.handle('auth:accounts:begin-add', async (event) => {
      assertTrustedAppRendererEvent(event);
@@ -370,7 +375,7 @@ index b842bf8d..b2e1afa5 100644
      try {
        return await authManager.beginAddAccountLogin();
      } catch (error) {
-@@ -6293,7 +6352,9 @@ const registerIpcHandlers = () => {
+@@ -6293,7 +6357,9 @@ const registerIpcHandlers = () => {
      authManager.cancelAddAccountLogin();
    });
  
@@ -381,7 +386,7 @@ index b842bf8d..b2e1afa5 100644
      if (getActiveAppSession().mode === 'local') {
        return authManager.getAuthState();
      }
-@@ -6301,7 +6362,9 @@ const registerIpcHandlers = () => {
+@@ -6301,7 +6367,9 @@ const registerIpcHandlers = () => {
      return authManager.enterLocalMode();
    });
  
@@ -392,7 +397,7 @@ index b842bf8d..b2e1afa5 100644
      if (getActiveAppSession().mode !== 'local') {
        throwIpcError('PRECONDITION_FAILED', 'Local mode is not active.');
      }
-@@ -6309,6 +6372,7 @@ const registerIpcHandlers = () => {
+@@ -6309,6 +6377,7 @@ const registerIpcHandlers = () => {
    });
  
    ipcMain.handle('auth:refresh', async () => {
@@ -400,7 +405,7 @@ index b842bf8d..b2e1afa5 100644
      return authManager.refresh();
    });
  
-@@ -9389,7 +9453,7 @@ app.on('ready', async () => {
+@@ -9389,7 +9458,7 @@ app.on('ready', async () => {
    // setIcon 会原样显示资源，不会替应用图标自动加圆角。
    if (!app.isPackaged && process.platform === 'darwin') {
      try {
@@ -409,7 +414,7 @@ index b842bf8d..b2e1afa5 100644
      } catch (err) {
        // 仅影响 dev Dock 观感,失败不挡启动
        createLogger('dock-icon').warn('setIcon failed', { error: String(err) });
-@@ -9449,9 +9513,12 @@ app.on('ready', async () => {
+@@ -9449,9 +9518,12 @@ app.on('ready', async () => {
    //
    // 必须在创建任何 Notification 之前调用。macOS / Linux 不需要。
    if (process.platform === 'win32') {
@@ -425,7 +430,7 @@ index b842bf8d..b2e1afa5 100644
    }
  
    registerImageProtocolHandler();
-@@ -9463,6 +9530,27 @@ app.on('ready', async () => {
+@@ -9463,6 +9535,27 @@ app.on('ready', async () => {
    registerCindyMediaProtocolHandler();
    registerMcpAppProtocol();
  
@@ -453,7 +458,7 @@ index b842bf8d..b2e1afa5 100644
    // Inject a Content-Security-Policy response header onto the app's own
    // top-level document (defaultSession mainFrame) before any window loads.
    // Blocks an XSS from escalating to preload privileges via inline / eval
-@@ -10148,6 +10236,9 @@ app.on('ready', async () => {
+@@ -10148,6 +10241,9 @@ app.on('ready', async () => {
    registerProviderShareIpc();
    // 自建中转服务(docs/self-hosted-relay-plan.md):本机中转与加入别的中转。
    registerSelfHostedRelayIpc();
@@ -686,7 +691,7 @@ index 41f002f0..5ca13c3e 100644
  
    it('accumulates output_text deltas, parses JSON, and reports usage', async () => {
 diff --git a/apps/desktop/src/preload/preload.ts b/apps/desktop/src/preload/preload.ts
-index 3e3b5507..ef514f0d 100644
+index 3e3b5507..42896167 100644
 --- a/apps/desktop/src/preload/preload.ts
 +++ b/apps/desktop/src/preload/preload.ts
 @@ -1093,6 +1093,7 @@ interface ComputerDriverUpdateCheck {
@@ -697,13 +702,14 @@ index 3e3b5507..ef514f0d 100644
  };
  
  // 运行期端点清单(main 在 createWindow 前解析完成;首帧同步可用)。
-@@ -1114,6 +1115,24 @@ const readMicrophonePermissionSnapshot = createMicrophonePermissionSnapshot();
+@@ -1114,6 +1115,25 @@ const readMicrophonePermissionSnapshot = createMicrophonePermissionSnapshot();
  const voiceInputDataSnapshot = createVoiceInputDataSnapshot();
  
  contextBridge.exposeInMainWorld('electronAPI', {
 +  vibelink: {
 +    enabled: appDisplayVersionInfo.vibelinkEnabled === true,
 +    auth: (input: import('../shared/vibelinkAuth').HubAuthInput) => ipcRenderer.invoke('vibelink:auth', input),
++    admin: (input: import('../shared/vibelinkAdmin').AdminInput) => ipcRenderer.invoke('vibelink:admin', input),
 +    work: (input: import('../shared/vibelinkWork').HubWorkInput) => ipcRenderer.invoke('vibelink:work', input),
 +    notifications: (input: import('../shared/vibelinkNotifications').NotificationInput) => ipcRenderer.invoke('vibelink:notifications', input),
 +    onNotificationOpen: (listener: (target: import('../shared/vibelinkNotifications').NotificationTarget) => void) => {
@@ -722,7 +728,7 @@ index 3e3b5507..ef514f0d 100644
    localAgent: {
      onConfirmation: (listener: (request: import('../shared/localAgent').LocalAgentConfirmation) => void): (() => void) => {
        const receive = (_event: Electron.IpcRendererEvent, request: import('../shared/localAgent').LocalAgentConfirmation) => listener(request);
-@@ -2326,7 +2345,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
+@@ -2326,7 +2346,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
      ipcRenderer.sendSync('auth:has-persisted-session-hint-sync') === true,
    authInitialize: (): Promise<{
      user: unknown;
@@ -1135,10 +1141,10 @@ index 8f777768..c3e32412 100644
        try {
          await exitLocalMode();
 diff --git a/apps/desktop/src/renderer/i18n/locales/de/common.json b/apps/desktop/src/renderer/i18n/locales/de/common.json
-index c258b6d1..ca3e2139 100644
+index c258b6d1..0254b3b2 100644
 --- a/apps/desktop/src/renderer/i18n/locales/de/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/de/common.json
-@@ -18951,5 +18951,129 @@
+@@ -18951,5 +18951,191 @@
      "rendered": "Dokument anzeigen",
      "wrap": "Zeilenumbruch",
      "lineNumbers": "Zeilennummern"
@@ -1266,13 +1272,75 @@ index c258b6d1..ca3e2139 100644
 +    "unavailable": "Einstellungen nicht verfügbar.",
 +    "genericBody": "Aufgabenstatus aktualisiert. Öffnen Sie den Hub-Arbeitsbereich.",
 +    "capabilityUnavailable": "Systemerinnerungen sind auf diesem Computer nicht verfügbar oder noch nicht registriert."
++  },
++  "vibelinkAdmin": {
++    "title": "Beta management",
++    "description": "Manage existing seats and measured model usage. Copying an invite does not send it to anyone.",
++    "denied": "Available only to a verified local development owner.",
++    "loading": "Loading…",
++    "unavailable": "Unable to load or save. Refresh and check your connection.",
++    "unknown": "Save outcome is unconfirmed. Refresh to verify before editing again.",
++    "conflict": "Limits changed elsewhere. Refresh and reopen the form before saving.",
++    "invalidLimits": "Use whole non-negative numbers; concurrency must be 1–16 and requests per minute at least 1.",
++    "day": "Usage date · UTC+8",
++    "refresh": "Refresh",
++    "seats": "Prepared seats",
++    "user": "User / seat",
++    "activation": "Activated · UTC+8",
++    "lastDevice": "Last device",
++    "invite": "Invite code",
++    "limits": "Limits",
++    "inactive": "Not activated",
++    "show": "Reveal code",
++    "hide": "Hide code",
++    "copy": "Copy code",
++    "copied": "Copied",
++    "copyFailed": "Copy failed. Try again.",
++    "unlimited": "Unlimited",
++    "usage": "Per-user measured usage",
++    "cacheNote": "Cached tokens are included in input. Actual total = input + output; estimated and reserved tokens are listed separately.",
++    "requests": "Requests / daily limit",
++    "input": "Actual input",
++    "output": "Actual output",
++    "cached": "Cached input",
++    "total": "Actual total",
++    "estimated": "Estimated tokens",
++    "reserved": "Reserved tokens",
++    "missing": "Usage missing (requests)",
++    "status": "Status",
++    "normal": "Within limits",
++    "near_limit": "Near limit",
++    "exhausted": "Limit reached",
++    "emptyUsage": "No usage rows for this day.",
++    "requestLegend": "Request detail: successful / failed / interrupted. These counters do not imply a message was delivered.",
++    "recent": "Recent request audit",
++    "recentNote": "Selected UTC+8 date within the latest 200 requests; this is not a complete historical archive. No prompts or replies are shown.",
++    "time": "Time · UTC+8",
++    "model": "Model",
++    "duration": "Duration",
++    "yes": "Yes",
++    "no": "No",
++    "emptyRequests": "No matching rows in the recent request window.",
++    "edit": "Edit limits",
++    "limitNote": "0 means unlimited for the three daily caps only. Concurrency: 1–16; requests per minute: at least 1. Changes affect future requests.",
++    "dailyRequests": "Daily requests",
++    "dailyTokens": "Daily charged tokens",
++    "dailyInputBytes": "Daily input bytes",
++    "concurrentRequests": "Concurrent requests",
++    "requestsPerMinute": "Requests per minute",
++    "save": "Save limits",
++    "cancel": "Cancel",
++    "saved": "Limits saved.",
++    "back": "Back to Hub workspace",
++    "charged": "Charged tokens",
++    "inputBytes": "Input bytes"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/en/common.json b/apps/desktop/src/renderer/i18n/locales/en/common.json
-index bc45dcdd..297201f6 100644
+index bc45dcdd..e42d06b8 100644
 --- a/apps/desktop/src/renderer/i18n/locales/en/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/en/common.json
-@@ -18951,5 +18951,129 @@
+@@ -18951,5 +18951,191 @@
      "rendered": "View document",
      "wrap": "Wrap lines",
      "lineNumbers": "Line numbers"
@@ -1400,13 +1468,75 @@ index bc45dcdd..297201f6 100644
 +    "unavailable": "Unable to read reminder settings.",
 +    "genericBody": "Task status updated. Open the Hub workspace to view it.",
 +    "capabilityUnavailable": "System reminders are not available or registration is incomplete on this computer."
++  },
++  "vibelinkAdmin": {
++    "title": "Beta management",
++    "description": "Manage existing seats and measured model usage. Copying an invite does not send it to anyone.",
++    "denied": "Available only to a verified local development owner.",
++    "loading": "Loading…",
++    "unavailable": "Unable to load or save. Refresh and check your connection.",
++    "unknown": "Save outcome is unconfirmed. Refresh to verify before editing again.",
++    "conflict": "Limits changed elsewhere. Refresh and reopen the form before saving.",
++    "invalidLimits": "Use whole non-negative numbers; concurrency must be 1–16 and requests per minute at least 1.",
++    "day": "Usage date · UTC+8",
++    "refresh": "Refresh",
++    "seats": "Prepared seats",
++    "user": "User / seat",
++    "activation": "Activated · UTC+8",
++    "lastDevice": "Last device",
++    "invite": "Invite code",
++    "limits": "Limits",
++    "inactive": "Not activated",
++    "show": "Reveal code",
++    "hide": "Hide code",
++    "copy": "Copy code",
++    "copied": "Copied",
++    "copyFailed": "Copy failed. Try again.",
++    "unlimited": "Unlimited",
++    "usage": "Per-user measured usage",
++    "cacheNote": "Cached tokens are included in input. Actual total = input + output; estimated and reserved tokens are listed separately.",
++    "requests": "Requests / daily limit",
++    "input": "Actual input",
++    "output": "Actual output",
++    "cached": "Cached input",
++    "total": "Actual total",
++    "estimated": "Estimated tokens",
++    "reserved": "Reserved tokens",
++    "missing": "Usage missing (requests)",
++    "status": "Status",
++    "normal": "Within limits",
++    "near_limit": "Near limit",
++    "exhausted": "Limit reached",
++    "emptyUsage": "No usage rows for this day.",
++    "requestLegend": "Request detail: successful / failed / interrupted. These counters do not imply a message was delivered.",
++    "recent": "Recent request audit",
++    "recentNote": "Selected UTC+8 date within the latest 200 requests; this is not a complete historical archive. No prompts or replies are shown.",
++    "time": "Time · UTC+8",
++    "model": "Model",
++    "duration": "Duration",
++    "yes": "Yes",
++    "no": "No",
++    "emptyRequests": "No matching rows in the recent request window.",
++    "edit": "Edit limits",
++    "limitNote": "0 means unlimited for the three daily caps only. Concurrency: 1–16; requests per minute: at least 1. Changes affect future requests.",
++    "dailyRequests": "Daily requests",
++    "dailyTokens": "Daily charged tokens",
++    "dailyInputBytes": "Daily input bytes",
++    "concurrentRequests": "Concurrent requests",
++    "requestsPerMinute": "Requests per minute",
++    "save": "Save limits",
++    "cancel": "Cancel",
++    "saved": "Limits saved.",
++    "back": "Back to Hub workspace",
++    "charged": "Charged tokens",
++    "inputBytes": "Input bytes"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/es/common.json b/apps/desktop/src/renderer/i18n/locales/es/common.json
-index d4d5c25a..3e0471e2 100644
+index d4d5c25a..790631a4 100644
 --- a/apps/desktop/src/renderer/i18n/locales/es/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/es/common.json
-@@ -19122,5 +19122,129 @@
+@@ -19122,5 +19122,191 @@
      "rendered": "Ver documento",
      "wrap": "Ajustar líneas",
      "lineNumbers": "Números de línea"
@@ -1534,13 +1664,75 @@ index d4d5c25a..3e0471e2 100644
 +    "unavailable": "No se pueden leer los ajustes.",
 +    "genericBody": "El estado de la tarea cambió. Abra el espacio Hub para verlo.",
 +    "capabilityUnavailable": "Los avisos del sistema no están disponibles o el registro está incompleto."
++  },
++  "vibelinkAdmin": {
++    "title": "Beta management",
++    "description": "Manage existing seats and measured model usage. Copying an invite does not send it to anyone.",
++    "denied": "Available only to a verified local development owner.",
++    "loading": "Loading…",
++    "unavailable": "Unable to load or save. Refresh and check your connection.",
++    "unknown": "Save outcome is unconfirmed. Refresh to verify before editing again.",
++    "conflict": "Limits changed elsewhere. Refresh and reopen the form before saving.",
++    "invalidLimits": "Use whole non-negative numbers; concurrency must be 1–16 and requests per minute at least 1.",
++    "day": "Usage date · UTC+8",
++    "refresh": "Refresh",
++    "seats": "Prepared seats",
++    "user": "User / seat",
++    "activation": "Activated · UTC+8",
++    "lastDevice": "Last device",
++    "invite": "Invite code",
++    "limits": "Limits",
++    "inactive": "Not activated",
++    "show": "Reveal code",
++    "hide": "Hide code",
++    "copy": "Copy code",
++    "copied": "Copied",
++    "copyFailed": "Copy failed. Try again.",
++    "unlimited": "Unlimited",
++    "usage": "Per-user measured usage",
++    "cacheNote": "Cached tokens are included in input. Actual total = input + output; estimated and reserved tokens are listed separately.",
++    "requests": "Requests / daily limit",
++    "input": "Actual input",
++    "output": "Actual output",
++    "cached": "Cached input",
++    "total": "Actual total",
++    "estimated": "Estimated tokens",
++    "reserved": "Reserved tokens",
++    "missing": "Usage missing (requests)",
++    "status": "Status",
++    "normal": "Within limits",
++    "near_limit": "Near limit",
++    "exhausted": "Limit reached",
++    "emptyUsage": "No usage rows for this day.",
++    "requestLegend": "Request detail: successful / failed / interrupted. These counters do not imply a message was delivered.",
++    "recent": "Recent request audit",
++    "recentNote": "Selected UTC+8 date within the latest 200 requests; this is not a complete historical archive. No prompts or replies are shown.",
++    "time": "Time · UTC+8",
++    "model": "Model",
++    "duration": "Duration",
++    "yes": "Yes",
++    "no": "No",
++    "emptyRequests": "No matching rows in the recent request window.",
++    "edit": "Edit limits",
++    "limitNote": "0 means unlimited for the three daily caps only. Concurrency: 1–16; requests per minute: at least 1. Changes affect future requests.",
++    "dailyRequests": "Daily requests",
++    "dailyTokens": "Daily charged tokens",
++    "dailyInputBytes": "Daily input bytes",
++    "concurrentRequests": "Concurrent requests",
++    "requestsPerMinute": "Requests per minute",
++    "save": "Save limits",
++    "cancel": "Cancel",
++    "saved": "Limits saved.",
++    "back": "Back to Hub workspace",
++    "charged": "Charged tokens",
++    "inputBytes": "Input bytes"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/fr/common.json b/apps/desktop/src/renderer/i18n/locales/fr/common.json
-index 67f0538c..f0735887 100644
+index 67f0538c..3f248b8d 100644
 --- a/apps/desktop/src/renderer/i18n/locales/fr/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/fr/common.json
-@@ -19122,5 +19122,129 @@
+@@ -19122,5 +19122,191 @@
      "rendered": "Afficher le document",
      "wrap": "Retour à la ligne",
      "lineNumbers": "Numéros de ligne"
@@ -1668,13 +1860,75 @@ index 67f0538c..f0735887 100644
 +    "unavailable": "Paramètres indisponibles.",
 +    "genericBody": "État de la tâche mis à jour. Ouvrez l’espace Hub pour le consulter.",
 +    "capabilityUnavailable": "Les rappels système sont indisponibles ou leur enregistrement est incomplet."
++  },
++  "vibelinkAdmin": {
++    "title": "Beta management",
++    "description": "Manage existing seats and measured model usage. Copying an invite does not send it to anyone.",
++    "denied": "Available only to a verified local development owner.",
++    "loading": "Loading…",
++    "unavailable": "Unable to load or save. Refresh and check your connection.",
++    "unknown": "Save outcome is unconfirmed. Refresh to verify before editing again.",
++    "conflict": "Limits changed elsewhere. Refresh and reopen the form before saving.",
++    "invalidLimits": "Use whole non-negative numbers; concurrency must be 1–16 and requests per minute at least 1.",
++    "day": "Usage date · UTC+8",
++    "refresh": "Refresh",
++    "seats": "Prepared seats",
++    "user": "User / seat",
++    "activation": "Activated · UTC+8",
++    "lastDevice": "Last device",
++    "invite": "Invite code",
++    "limits": "Limits",
++    "inactive": "Not activated",
++    "show": "Reveal code",
++    "hide": "Hide code",
++    "copy": "Copy code",
++    "copied": "Copied",
++    "copyFailed": "Copy failed. Try again.",
++    "unlimited": "Unlimited",
++    "usage": "Per-user measured usage",
++    "cacheNote": "Cached tokens are included in input. Actual total = input + output; estimated and reserved tokens are listed separately.",
++    "requests": "Requests / daily limit",
++    "input": "Actual input",
++    "output": "Actual output",
++    "cached": "Cached input",
++    "total": "Actual total",
++    "estimated": "Estimated tokens",
++    "reserved": "Reserved tokens",
++    "missing": "Usage missing (requests)",
++    "status": "Status",
++    "normal": "Within limits",
++    "near_limit": "Near limit",
++    "exhausted": "Limit reached",
++    "emptyUsage": "No usage rows for this day.",
++    "requestLegend": "Request detail: successful / failed / interrupted. These counters do not imply a message was delivered.",
++    "recent": "Recent request audit",
++    "recentNote": "Selected UTC+8 date within the latest 200 requests; this is not a complete historical archive. No prompts or replies are shown.",
++    "time": "Time · UTC+8",
++    "model": "Model",
++    "duration": "Duration",
++    "yes": "Yes",
++    "no": "No",
++    "emptyRequests": "No matching rows in the recent request window.",
++    "edit": "Edit limits",
++    "limitNote": "0 means unlimited for the three daily caps only. Concurrency: 1–16; requests per minute: at least 1. Changes affect future requests.",
++    "dailyRequests": "Daily requests",
++    "dailyTokens": "Daily charged tokens",
++    "dailyInputBytes": "Daily input bytes",
++    "concurrentRequests": "Concurrent requests",
++    "requestsPerMinute": "Requests per minute",
++    "save": "Save limits",
++    "cancel": "Cancel",
++    "saved": "Limits saved.",
++    "back": "Back to Hub workspace",
++    "charged": "Charged tokens",
++    "inputBytes": "Input bytes"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/ja/common.json b/apps/desktop/src/renderer/i18n/locales/ja/common.json
-index e3383953..db6090e1 100644
+index e3383953..1d3d5813 100644
 --- a/apps/desktop/src/renderer/i18n/locales/ja/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/ja/common.json
-@@ -18879,5 +18879,129 @@
+@@ -18879,5 +18879,191 @@
      "rendered": "文書を表示",
      "wrap": "行の折り返し",
      "lineNumbers": "行番号"
@@ -1802,13 +2056,75 @@ index e3383953..db6090e1 100644
 +    "unavailable": "通知設定を取得できません。",
 +    "genericBody": "タスクの状態が更新されました。Hub ワークスペースでご確認ください。",
 +    "capabilityUnavailable": "このコンピューターではシステム通知が利用できないか、登録が未完了です。"
++  },
++  "vibelinkAdmin": {
++    "title": "Beta management",
++    "description": "Manage existing seats and measured model usage. Copying an invite does not send it to anyone.",
++    "denied": "Available only to a verified local development owner.",
++    "loading": "Loading…",
++    "unavailable": "Unable to load or save. Refresh and check your connection.",
++    "unknown": "Save outcome is unconfirmed. Refresh to verify before editing again.",
++    "conflict": "Limits changed elsewhere. Refresh and reopen the form before saving.",
++    "invalidLimits": "Use whole non-negative numbers; concurrency must be 1–16 and requests per minute at least 1.",
++    "day": "Usage date · UTC+8",
++    "refresh": "Refresh",
++    "seats": "Prepared seats",
++    "user": "User / seat",
++    "activation": "Activated · UTC+8",
++    "lastDevice": "Last device",
++    "invite": "Invite code",
++    "limits": "Limits",
++    "inactive": "Not activated",
++    "show": "Reveal code",
++    "hide": "Hide code",
++    "copy": "Copy code",
++    "copied": "Copied",
++    "copyFailed": "Copy failed. Try again.",
++    "unlimited": "Unlimited",
++    "usage": "Per-user measured usage",
++    "cacheNote": "Cached tokens are included in input. Actual total = input + output; estimated and reserved tokens are listed separately.",
++    "requests": "Requests / daily limit",
++    "input": "Actual input",
++    "output": "Actual output",
++    "cached": "Cached input",
++    "total": "Actual total",
++    "estimated": "Estimated tokens",
++    "reserved": "Reserved tokens",
++    "missing": "Usage missing (requests)",
++    "status": "Status",
++    "normal": "Within limits",
++    "near_limit": "Near limit",
++    "exhausted": "Limit reached",
++    "emptyUsage": "No usage rows for this day.",
++    "requestLegend": "Request detail: successful / failed / interrupted. These counters do not imply a message was delivered.",
++    "recent": "Recent request audit",
++    "recentNote": "Selected UTC+8 date within the latest 200 requests; this is not a complete historical archive. No prompts or replies are shown.",
++    "time": "Time · UTC+8",
++    "model": "Model",
++    "duration": "Duration",
++    "yes": "Yes",
++    "no": "No",
++    "emptyRequests": "No matching rows in the recent request window.",
++    "edit": "Edit limits",
++    "limitNote": "0 means unlimited for the three daily caps only. Concurrency: 1–16; requests per minute: at least 1. Changes affect future requests.",
++    "dailyRequests": "Daily requests",
++    "dailyTokens": "Daily charged tokens",
++    "dailyInputBytes": "Daily input bytes",
++    "concurrentRequests": "Concurrent requests",
++    "requestsPerMinute": "Requests per minute",
++    "save": "Save limits",
++    "cancel": "Cancel",
++    "saved": "Limits saved.",
++    "back": "Back to Hub workspace",
++    "charged": "Charged tokens",
++    "inputBytes": "Input bytes"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/ko/common.json b/apps/desktop/src/renderer/i18n/locales/ko/common.json
-index 30577f6d..42f205c2 100644
+index 30577f6d..adb77ed7 100644
 --- a/apps/desktop/src/renderer/i18n/locales/ko/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/ko/common.json
-@@ -18879,5 +18879,129 @@
+@@ -18879,5 +18879,191 @@
      "rendered": "문서 보기",
      "wrap": "자동 줄 바꿈",
      "lineNumbers": "줄 번호"
@@ -1936,13 +2252,75 @@ index 30577f6d..42f205c2 100644
 +    "unavailable": "알림 설정을 읽을 수 없습니다.",
 +    "genericBody": "작업 상태가 업데이트되었습니다. Hub 작업 공간에서 확인하세요.",
 +    "capabilityUnavailable": "이 컴퓨터에서 시스템 알림을 사용할 수 없거나 등록이 완료되지 않았습니다."
++  },
++  "vibelinkAdmin": {
++    "title": "Beta management",
++    "description": "Manage existing seats and measured model usage. Copying an invite does not send it to anyone.",
++    "denied": "Available only to a verified local development owner.",
++    "loading": "Loading…",
++    "unavailable": "Unable to load or save. Refresh and check your connection.",
++    "unknown": "Save outcome is unconfirmed. Refresh to verify before editing again.",
++    "conflict": "Limits changed elsewhere. Refresh and reopen the form before saving.",
++    "invalidLimits": "Use whole non-negative numbers; concurrency must be 1–16 and requests per minute at least 1.",
++    "day": "Usage date · UTC+8",
++    "refresh": "Refresh",
++    "seats": "Prepared seats",
++    "user": "User / seat",
++    "activation": "Activated · UTC+8",
++    "lastDevice": "Last device",
++    "invite": "Invite code",
++    "limits": "Limits",
++    "inactive": "Not activated",
++    "show": "Reveal code",
++    "hide": "Hide code",
++    "copy": "Copy code",
++    "copied": "Copied",
++    "copyFailed": "Copy failed. Try again.",
++    "unlimited": "Unlimited",
++    "usage": "Per-user measured usage",
++    "cacheNote": "Cached tokens are included in input. Actual total = input + output; estimated and reserved tokens are listed separately.",
++    "requests": "Requests / daily limit",
++    "input": "Actual input",
++    "output": "Actual output",
++    "cached": "Cached input",
++    "total": "Actual total",
++    "estimated": "Estimated tokens",
++    "reserved": "Reserved tokens",
++    "missing": "Usage missing (requests)",
++    "status": "Status",
++    "normal": "Within limits",
++    "near_limit": "Near limit",
++    "exhausted": "Limit reached",
++    "emptyUsage": "No usage rows for this day.",
++    "requestLegend": "Request detail: successful / failed / interrupted. These counters do not imply a message was delivered.",
++    "recent": "Recent request audit",
++    "recentNote": "Selected UTC+8 date within the latest 200 requests; this is not a complete historical archive. No prompts or replies are shown.",
++    "time": "Time · UTC+8",
++    "model": "Model",
++    "duration": "Duration",
++    "yes": "Yes",
++    "no": "No",
++    "emptyRequests": "No matching rows in the recent request window.",
++    "edit": "Edit limits",
++    "limitNote": "0 means unlimited for the three daily caps only. Concurrency: 1–16; requests per minute: at least 1. Changes affect future requests.",
++    "dailyRequests": "Daily requests",
++    "dailyTokens": "Daily charged tokens",
++    "dailyInputBytes": "Daily input bytes",
++    "concurrentRequests": "Concurrent requests",
++    "requestsPerMinute": "Requests per minute",
++    "save": "Save limits",
++    "cancel": "Cancel",
++    "saved": "Limits saved.",
++    "back": "Back to Hub workspace",
++    "charged": "Charged tokens",
++    "inputBytes": "Input bytes"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/pt-BR/common.json b/apps/desktop/src/renderer/i18n/locales/pt-BR/common.json
-index 7b546ee2..1984d821 100644
+index 7b546ee2..d2057875 100644
 --- a/apps/desktop/src/renderer/i18n/locales/pt-BR/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/pt-BR/common.json
-@@ -19122,5 +19122,129 @@
+@@ -19122,5 +19122,191 @@
      "rendered": "Ver documento",
      "wrap": "Quebra de linha",
      "lineNumbers": "Números de linha"
@@ -2070,13 +2448,75 @@ index 7b546ee2..1984d821 100644
 +    "unavailable": "Não foi possível ler as configurações.",
 +    "genericBody": "O status da tarefa mudou. Abra o espaço Hub para conferir.",
 +    "capabilityUnavailable": "Os lembretes do sistema estão indisponíveis ou o registro está incompleto."
++  },
++  "vibelinkAdmin": {
++    "title": "Beta management",
++    "description": "Manage existing seats and measured model usage. Copying an invite does not send it to anyone.",
++    "denied": "Available only to a verified local development owner.",
++    "loading": "Loading…",
++    "unavailable": "Unable to load or save. Refresh and check your connection.",
++    "unknown": "Save outcome is unconfirmed. Refresh to verify before editing again.",
++    "conflict": "Limits changed elsewhere. Refresh and reopen the form before saving.",
++    "invalidLimits": "Use whole non-negative numbers; concurrency must be 1–16 and requests per minute at least 1.",
++    "day": "Usage date · UTC+8",
++    "refresh": "Refresh",
++    "seats": "Prepared seats",
++    "user": "User / seat",
++    "activation": "Activated · UTC+8",
++    "lastDevice": "Last device",
++    "invite": "Invite code",
++    "limits": "Limits",
++    "inactive": "Not activated",
++    "show": "Reveal code",
++    "hide": "Hide code",
++    "copy": "Copy code",
++    "copied": "Copied",
++    "copyFailed": "Copy failed. Try again.",
++    "unlimited": "Unlimited",
++    "usage": "Per-user measured usage",
++    "cacheNote": "Cached tokens are included in input. Actual total = input + output; estimated and reserved tokens are listed separately.",
++    "requests": "Requests / daily limit",
++    "input": "Actual input",
++    "output": "Actual output",
++    "cached": "Cached input",
++    "total": "Actual total",
++    "estimated": "Estimated tokens",
++    "reserved": "Reserved tokens",
++    "missing": "Usage missing (requests)",
++    "status": "Status",
++    "normal": "Within limits",
++    "near_limit": "Near limit",
++    "exhausted": "Limit reached",
++    "emptyUsage": "No usage rows for this day.",
++    "requestLegend": "Request detail: successful / failed / interrupted. These counters do not imply a message was delivered.",
++    "recent": "Recent request audit",
++    "recentNote": "Selected UTC+8 date within the latest 200 requests; this is not a complete historical archive. No prompts or replies are shown.",
++    "time": "Time · UTC+8",
++    "model": "Model",
++    "duration": "Duration",
++    "yes": "Yes",
++    "no": "No",
++    "emptyRequests": "No matching rows in the recent request window.",
++    "edit": "Edit limits",
++    "limitNote": "0 means unlimited for the three daily caps only. Concurrency: 1–16; requests per minute: at least 1. Changes affect future requests.",
++    "dailyRequests": "Daily requests",
++    "dailyTokens": "Daily charged tokens",
++    "dailyInputBytes": "Daily input bytes",
++    "concurrentRequests": "Concurrent requests",
++    "requestsPerMinute": "Requests per minute",
++    "save": "Save limits",
++    "cancel": "Cancel",
++    "saved": "Limits saved.",
++    "back": "Back to Hub workspace",
++    "charged": "Charged tokens",
++    "inputBytes": "Input bytes"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/pt-PT/common.json b/apps/desktop/src/renderer/i18n/locales/pt-PT/common.json
-index bae75933..a5685fda 100644
+index bae75933..32d2566d 100644
 --- a/apps/desktop/src/renderer/i18n/locales/pt-PT/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/pt-PT/common.json
-@@ -19122,5 +19122,129 @@
+@@ -19122,5 +19122,191 @@
      "rendered": "Ver documento",
      "wrap": "Moldar linhas",
      "lineNumbers": "Números de linha"
@@ -2204,13 +2644,75 @@ index bae75933..a5685fda 100644
 +    "unavailable": "Não foi possível ler as definições.",
 +    "genericBody": "O estado da tarefa mudou. Abra o espaço Hub para consultar.",
 +    "capabilityUnavailable": "Os lembretes do sistema estão indisponíveis ou o registo está incompleto."
++  },
++  "vibelinkAdmin": {
++    "title": "Beta management",
++    "description": "Manage existing seats and measured model usage. Copying an invite does not send it to anyone.",
++    "denied": "Available only to a verified local development owner.",
++    "loading": "Loading…",
++    "unavailable": "Unable to load or save. Refresh and check your connection.",
++    "unknown": "Save outcome is unconfirmed. Refresh to verify before editing again.",
++    "conflict": "Limits changed elsewhere. Refresh and reopen the form before saving.",
++    "invalidLimits": "Use whole non-negative numbers; concurrency must be 1–16 and requests per minute at least 1.",
++    "day": "Usage date · UTC+8",
++    "refresh": "Refresh",
++    "seats": "Prepared seats",
++    "user": "User / seat",
++    "activation": "Activated · UTC+8",
++    "lastDevice": "Last device",
++    "invite": "Invite code",
++    "limits": "Limits",
++    "inactive": "Not activated",
++    "show": "Reveal code",
++    "hide": "Hide code",
++    "copy": "Copy code",
++    "copied": "Copied",
++    "copyFailed": "Copy failed. Try again.",
++    "unlimited": "Unlimited",
++    "usage": "Per-user measured usage",
++    "cacheNote": "Cached tokens are included in input. Actual total = input + output; estimated and reserved tokens are listed separately.",
++    "requests": "Requests / daily limit",
++    "input": "Actual input",
++    "output": "Actual output",
++    "cached": "Cached input",
++    "total": "Actual total",
++    "estimated": "Estimated tokens",
++    "reserved": "Reserved tokens",
++    "missing": "Usage missing (requests)",
++    "status": "Status",
++    "normal": "Within limits",
++    "near_limit": "Near limit",
++    "exhausted": "Limit reached",
++    "emptyUsage": "No usage rows for this day.",
++    "requestLegend": "Request detail: successful / failed / interrupted. These counters do not imply a message was delivered.",
++    "recent": "Recent request audit",
++    "recentNote": "Selected UTC+8 date within the latest 200 requests; this is not a complete historical archive. No prompts or replies are shown.",
++    "time": "Time · UTC+8",
++    "model": "Model",
++    "duration": "Duration",
++    "yes": "Yes",
++    "no": "No",
++    "emptyRequests": "No matching rows in the recent request window.",
++    "edit": "Edit limits",
++    "limitNote": "0 means unlimited for the three daily caps only. Concurrency: 1–16; requests per minute: at least 1. Changes affect future requests.",
++    "dailyRequests": "Daily requests",
++    "dailyTokens": "Daily charged tokens",
++    "dailyInputBytes": "Daily input bytes",
++    "concurrentRequests": "Concurrent requests",
++    "requestsPerMinute": "Requests per minute",
++    "save": "Save limits",
++    "cancel": "Cancel",
++    "saved": "Limits saved.",
++    "back": "Back to Hub workspace",
++    "charged": "Charged tokens",
++    "inputBytes": "Input bytes"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/zh-CN/common.json b/apps/desktop/src/renderer/i18n/locales/zh-CN/common.json
-index dcd22815..19996e51 100644
+index dcd22815..7d5f6ec1 100644
 --- a/apps/desktop/src/renderer/i18n/locales/zh-CN/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/zh-CN/common.json
-@@ -18879,5 +18879,129 @@
+@@ -18879,5 +18879,191 @@
      "rendered": "查看文稿",
      "wrap": "自动换行",
      "lineNumbers": "行号"
@@ -2338,13 +2840,75 @@ index dcd22815..19996e51 100644
 +    "unavailable": "无法读取提醒设置。",
 +    "genericBody": "任务状态已更新，请打开 Hub 工作区查看。",
 +    "capabilityUnavailable": "这台电脑的系统提醒不可用或尚未完成注册。"
++  },
++  "vibelinkAdmin": {
++    "title": "内测管理",
++    "description": "管理现有席位与实测模型用量；复制邀请码不会向任何人发送消息。",
++    "denied": "仅限已验证的本机开发版 owner 使用。",
++    "loading": "读取中…",
++    "unavailable": "暂时无法读取或保存，请检查连接后刷新。",
++    "unknown": "保存结果未确认，请先刷新核对，再重新编辑。",
++    "conflict": "额度已被其他操作修改，请刷新并重新打开表单后保存。",
++    "invalidLimits": "请填写非负整数；并发数为 1–16，每分钟请求数至少为 1。",
++    "day": "用量日期 · UTC+8",
++    "refresh": "刷新",
++    "seats": "预生成席位",
++    "user": "用户 / 席位",
++    "activation": "激活时间 · UTC+8",
++    "lastDevice": "最近设备",
++    "invite": "邀请码",
++    "limits": "额度",
++    "inactive": "未激活",
++    "show": "显示邀请码",
++    "hide": "隐藏邀请码",
++    "copy": "复制邀请码",
++    "copied": "已复制",
++    "copyFailed": "复制失败，请重试。",
++    "unlimited": "不限",
++    "usage": "每用户实测用量",
++    "cacheNote": "缓存 Token 已包含在输入中。实测总量 = 输入 + 输出；估算与预留单独列出，不重复累计缓存。",
++    "requests": "请求数 / 每日上限",
++    "input": "实测输入",
++    "output": "实测输出",
++    "cached": "其中缓存输入",
++    "total": "实测总量",
++    "estimated": "估算 Token",
++    "reserved": "预留 Token",
++    "missing": "缺失用量（请求）",
++    "status": "状态",
++    "normal": "额度正常",
++    "near_limit": "接近上限",
++    "exhausted": "已达上限",
++    "emptyUsage": "所选日期没有用量记录。",
++    "requestLegend": "请求明细依次为：成功 / 失败 / 中断；这些计数不表示消息已送达用户。",
++    "recent": "最近请求审计",
++    "recentNote": "仅查询最近 200 条请求中属于所选 UTC+8 日期的记录，不代表完整历史；不展示提示词或回复正文。",
++    "time": "时间 · UTC+8",
++    "model": "模型",
++    "duration": "耗时",
++    "yes": "是",
++    "no": "否",
++    "emptyRequests": "最近请求窗口中没有匹配记录。",
++    "edit": "编辑额度",
++    "limitNote": "三个每日额度填 0 表示不限；并发数为 1–16，每分钟请求数至少为 1。修改影响后续请求。",
++    "dailyRequests": "每日请求数",
++    "dailyTokens": "每日计费 Token",
++    "dailyInputBytes": "每日输入字节数",
++    "concurrentRequests": "并发请求数",
++    "requestsPerMinute": "每分钟请求数",
++    "save": "保存额度",
++    "cancel": "取消",
++    "saved": "额度已保存。",
++    "back": "返回 Hub 工作区",
++    "charged": "计费 Token",
++    "inputBytes": "输入字节"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/zh-Hans-x-lzh/common.json b/apps/desktop/src/renderer/i18n/locales/zh-Hans-x-lzh/common.json
-index 56395a07..4109a2bb 100644
+index 56395a07..06c506a1 100644
 --- a/apps/desktop/src/renderer/i18n/locales/zh-Hans-x-lzh/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/zh-Hans-x-lzh/common.json
-@@ -18879,5 +18879,129 @@
+@@ -18879,5 +18879,191 @@
      "rendered": "观文",
      "wrap": "折行",
      "lineNumbers": "行数"
@@ -2472,13 +3036,75 @@ index 56395a07..4109a2bb 100644
 +    "unavailable": "无法读取提醒设置。",
 +    "genericBody": "任务状态已更新，请打开 Hub 工作区查看。",
 +    "capabilityUnavailable": "这台电脑的系统提醒不可用或尚未完成注册。"
++  },
++  "vibelinkAdmin": {
++    "title": "内测管理",
++    "description": "管理现有席位与实测模型用量；复制邀请码不会向任何人发送消息。",
++    "denied": "仅限已验证的本机开发版 owner 使用。",
++    "loading": "读取中…",
++    "unavailable": "暂时无法读取或保存，请检查连接后刷新。",
++    "unknown": "保存结果未确认，请先刷新核对，再重新编辑。",
++    "conflict": "额度已被其他操作修改，请刷新并重新打开表单后保存。",
++    "invalidLimits": "请填写非负整数；并发数为 1–16，每分钟请求数至少为 1。",
++    "day": "用量日期 · UTC+8",
++    "refresh": "刷新",
++    "seats": "预生成席位",
++    "user": "用户 / 席位",
++    "activation": "激活时间 · UTC+8",
++    "lastDevice": "最近设备",
++    "invite": "邀请码",
++    "limits": "额度",
++    "inactive": "未激活",
++    "show": "显示邀请码",
++    "hide": "隐藏邀请码",
++    "copy": "复制邀请码",
++    "copied": "已复制",
++    "copyFailed": "复制失败，请重试。",
++    "unlimited": "不限",
++    "usage": "每用户实测用量",
++    "cacheNote": "缓存 Token 已包含在输入中。实测总量 = 输入 + 输出；估算与预留单独列出，不重复累计缓存。",
++    "requests": "请求数 / 每日上限",
++    "input": "实测输入",
++    "output": "实测输出",
++    "cached": "其中缓存输入",
++    "total": "实测总量",
++    "estimated": "估算 Token",
++    "reserved": "预留 Token",
++    "missing": "缺失用量（请求）",
++    "status": "状态",
++    "normal": "额度正常",
++    "near_limit": "接近上限",
++    "exhausted": "已达上限",
++    "emptyUsage": "所选日期没有用量记录。",
++    "requestLegend": "请求明细依次为：成功 / 失败 / 中断；这些计数不表示消息已送达用户。",
++    "recent": "最近请求审计",
++    "recentNote": "仅查询最近 200 条请求中属于所选 UTC+8 日期的记录，不代表完整历史；不展示提示词或回复正文。",
++    "time": "时间 · UTC+8",
++    "model": "模型",
++    "duration": "耗时",
++    "yes": "是",
++    "no": "否",
++    "emptyRequests": "最近请求窗口中没有匹配记录。",
++    "edit": "编辑额度",
++    "limitNote": "三个每日额度填 0 表示不限；并发数为 1–16，每分钟请求数至少为 1。修改影响后续请求。",
++    "dailyRequests": "每日请求数",
++    "dailyTokens": "每日计费 Token",
++    "dailyInputBytes": "每日输入字节数",
++    "concurrentRequests": "并发请求数",
++    "requestsPerMinute": "每分钟请求数",
++    "save": "保存额度",
++    "cancel": "取消",
++    "saved": "额度已保存。",
++    "back": "返回 Hub 工作区",
++    "charged": "计费 Token",
++    "inputBytes": "输入字节"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/zh-Hant-x-lzh/common.json b/apps/desktop/src/renderer/i18n/locales/zh-Hant-x-lzh/common.json
-index f35e1826..74681c09 100644
+index f35e1826..6efd9c89 100644
 --- a/apps/desktop/src/renderer/i18n/locales/zh-Hant-x-lzh/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/zh-Hant-x-lzh/common.json
-@@ -18879,5 +18879,129 @@
+@@ -18879,5 +18879,191 @@
      "rendered": "觀文",
      "wrap": "折行",
      "lineNumbers": "行數"
@@ -2606,13 +3232,75 @@ index f35e1826..74681c09 100644
 +    "unavailable": "無法讀取提醒設定。",
 +    "genericBody": "任務狀態已更新，請開啟 Hub 工作區查看。",
 +    "capabilityUnavailable": "這台電腦的系統提醒無法使用或尚未完成註冊。"
++  },
++  "vibelinkAdmin": {
++    "title": "内测管理",
++    "description": "管理现有席位与实测模型用量；复制邀请码不会向任何人发送消息。",
++    "denied": "仅限已验证的本机开发版 owner 使用。",
++    "loading": "读取中…",
++    "unavailable": "暂时无法读取或保存，请检查连接后刷新。",
++    "unknown": "保存结果未确认，请先刷新核对，再重新编辑。",
++    "conflict": "额度已被其他操作修改，请刷新并重新打开表单后保存。",
++    "invalidLimits": "请填写非负整数；并发数为 1–16，每分钟请求数至少为 1。",
++    "day": "用量日期 · UTC+8",
++    "refresh": "刷新",
++    "seats": "预生成席位",
++    "user": "用户 / 席位",
++    "activation": "激活时间 · UTC+8",
++    "lastDevice": "最近设备",
++    "invite": "邀请码",
++    "limits": "额度",
++    "inactive": "未激活",
++    "show": "显示邀请码",
++    "hide": "隐藏邀请码",
++    "copy": "复制邀请码",
++    "copied": "已复制",
++    "copyFailed": "复制失败，请重试。",
++    "unlimited": "不限",
++    "usage": "每用户实测用量",
++    "cacheNote": "缓存 Token 已包含在输入中。实测总量 = 输入 + 输出；估算与预留单独列出，不重复累计缓存。",
++    "requests": "请求数 / 每日上限",
++    "input": "实测输入",
++    "output": "实测输出",
++    "cached": "其中缓存输入",
++    "total": "实测总量",
++    "estimated": "估算 Token",
++    "reserved": "预留 Token",
++    "missing": "缺失用量（请求）",
++    "status": "状态",
++    "normal": "额度正常",
++    "near_limit": "接近上限",
++    "exhausted": "已达上限",
++    "emptyUsage": "所选日期没有用量记录。",
++    "requestLegend": "请求明细依次为：成功 / 失败 / 中断；这些计数不表示消息已送达用户。",
++    "recent": "最近请求审计",
++    "recentNote": "仅查询最近 200 条请求中属于所选 UTC+8 日期的记录，不代表完整历史；不展示提示词或回复正文。",
++    "time": "时间 · UTC+8",
++    "model": "模型",
++    "duration": "耗时",
++    "yes": "是",
++    "no": "否",
++    "emptyRequests": "最近请求窗口中没有匹配记录。",
++    "edit": "编辑额度",
++    "limitNote": "三个每日额度填 0 表示不限；并发数为 1–16，每分钟请求数至少为 1。修改影响后续请求。",
++    "dailyRequests": "每日请求数",
++    "dailyTokens": "每日计费 Token",
++    "dailyInputBytes": "每日输入字节数",
++    "concurrentRequests": "并发请求数",
++    "requestsPerMinute": "每分钟请求数",
++    "save": "保存额度",
++    "cancel": "取消",
++    "saved": "额度已保存。",
++    "back": "返回 Hub 工作区",
++    "charged": "计费 Token",
++    "inputBytes": "输入字节"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/zh-TW/common.json b/apps/desktop/src/renderer/i18n/locales/zh-TW/common.json
-index 7075672e..dc914eac 100644
+index 7075672e..08e24c9d 100644
 --- a/apps/desktop/src/renderer/i18n/locales/zh-TW/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/zh-TW/common.json
-@@ -18879,5 +18879,129 @@
+@@ -18879,5 +18879,191 @@
      "rendered": "查看文件",
      "wrap": "自動換行",
      "lineNumbers": "行號"
@@ -2740,6 +3428,68 @@ index 7075672e..dc914eac 100644
 +    "unavailable": "無法讀取提醒設定。",
 +    "genericBody": "任務狀態已更新，請開啟 Hub 工作區查看。",
 +    "capabilityUnavailable": "這台電腦的系統提醒無法使用或尚未完成註冊。"
++  },
++  "vibelinkAdmin": {
++    "title": "内测管理",
++    "description": "管理现有席位与实测模型用量；复制邀请码不会向任何人发送消息。",
++    "denied": "仅限已验证的本机开发版 owner 使用。",
++    "loading": "读取中…",
++    "unavailable": "暂时无法读取或保存，请检查连接后刷新。",
++    "unknown": "保存结果未确认，请先刷新核对，再重新编辑。",
++    "conflict": "额度已被其他操作修改，请刷新并重新打开表单后保存。",
++    "invalidLimits": "请填写非负整数；并发数为 1–16，每分钟请求数至少为 1。",
++    "day": "用量日期 · UTC+8",
++    "refresh": "刷新",
++    "seats": "预生成席位",
++    "user": "用户 / 席位",
++    "activation": "激活时间 · UTC+8",
++    "lastDevice": "最近设备",
++    "invite": "邀请码",
++    "limits": "额度",
++    "inactive": "未激活",
++    "show": "显示邀请码",
++    "hide": "隐藏邀请码",
++    "copy": "复制邀请码",
++    "copied": "已复制",
++    "copyFailed": "复制失败，请重试。",
++    "unlimited": "不限",
++    "usage": "每用户实测用量",
++    "cacheNote": "缓存 Token 已包含在输入中。实测总量 = 输入 + 输出；估算与预留单独列出，不重复累计缓存。",
++    "requests": "请求数 / 每日上限",
++    "input": "实测输入",
++    "output": "实测输出",
++    "cached": "其中缓存输入",
++    "total": "实测总量",
++    "estimated": "估算 Token",
++    "reserved": "预留 Token",
++    "missing": "缺失用量（请求）",
++    "status": "状态",
++    "normal": "额度正常",
++    "near_limit": "接近上限",
++    "exhausted": "已达上限",
++    "emptyUsage": "所选日期没有用量记录。",
++    "requestLegend": "请求明细依次为：成功 / 失败 / 中断；这些计数不表示消息已送达用户。",
++    "recent": "最近请求审计",
++    "recentNote": "仅查询最近 200 条请求中属于所选 UTC+8 日期的记录，不代表完整历史；不展示提示词或回复正文。",
++    "time": "时间 · UTC+8",
++    "model": "模型",
++    "duration": "耗时",
++    "yes": "是",
++    "no": "否",
++    "emptyRequests": "最近请求窗口中没有匹配记录。",
++    "edit": "编辑额度",
++    "limitNote": "三个每日额度填 0 表示不限；并发数为 1–16，每分钟请求数至少为 1。修改影响后续请求。",
++    "dailyRequests": "每日请求数",
++    "dailyTokens": "每日计费 Token",
++    "dailyInputBytes": "每日输入字节数",
++    "concurrentRequests": "并发请求数",
++    "requestsPerMinute": "每分钟请求数",
++    "save": "保存额度",
++    "cancel": "取消",
++    "saved": "额度已保存。",
++    "back": "返回 Hub 工作区",
++    "charged": "计费 Token",
++    "inputBytes": "输入字节"
    }
  }
 diff --git a/apps/desktop/src/renderer/lib/authService.ts b/apps/desktop/src/renderer/lib/authService.ts
@@ -2756,20 +3506,21 @@ index d59a21c8..a47b26ba 100644
    ownerGeneration: number;
    /** Main marks the transient signed-out projection while an owner boundary is pending. */
 diff --git a/apps/desktop/src/renderer/router.tsx b/apps/desktop/src/renderer/router.tsx
-index 9b7757f5..072795cb 100644
+index 9b7757f5..951bd1ac 100644
 --- a/apps/desktop/src/renderer/router.tsx
 +++ b/apps/desktop/src/renderer/router.tsx
-@@ -1,6 +1,9 @@
+@@ -1,6 +1,10 @@
  import { RemoteBotSessionView } from '@/features/bots/RemoteBotSessionView';
  import { createHashRouter, Navigate } from 'react-router-dom';
  
 +import { VibeLinkControlCenter } from '@/features/vibelink/VibeLinkControlCenter';
 +import { VibeLinkLoginPage } from '@/features/vibelink/LoginPage';
++import {HubAdminWorkspace} from '@/features/vibelink/HubAdminWorkspace';
 +import { HubWorkspace } from '@/features/vibelink/HubWorkspace';
  import { MainLayout } from '@/components/layout/MainLayout';
  import { MainEntryRedirect } from '@/components/layout/MainEntryRedirect';
  import { RouteErrorFallback } from '@/components/error/RouteErrorFallback';
-@@ -59,7 +62,7 @@ export const router = createHashRouter([
+@@ -59,7 +63,7 @@ export const router = createHashRouter([
      element: <GuestRoute />,
      // 登录线渲染崩溃时的全屏兜底(没有它 react-router 会渲染开发者默认错误页)。
      errorElement: <RouteErrorFallback />,
@@ -2778,15 +3529,16 @@ index 9b7757f5..072795cb 100644
    },
    {
      path: '/',
-@@ -76,6 +79,7 @@ export const router = createHashRouter([
+@@ -76,6 +80,8 @@ export const router = createHashRouter([
          // 主功能区入口 —— 经过 LocalDbGate（localDb 就绪）才能进
          element: <LocalDbGate />,
          children: [
 +          { path: 'hub', element: <HubWorkspace /> },
++          { path: 'hub-admin', element: <HubAdminWorkspace /> },
            // 右侧栏独立子窗口(?sidebarWindow=1)的根路由 —— 与 MainLayout 平级,
            // 只挂 SidebarWindowLayout(50px chrome + RightSidebarShell),不挂完整壳。
            {
-@@ -93,6 +97,7 @@ export const router = createHashRouter([
+@@ -93,6 +99,7 @@ export const router = createHashRouter([
                  errorElement: <RouteErrorFallback variant="section" />,
                  children: [
                    { index: true, element: <MainEntryRedirect /> },

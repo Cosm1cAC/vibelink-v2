@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import {HubAdminEntry} from './HubAdminEntry';
 import { HubPairQr } from './HubPairQr';
 import { requestVibeLink } from './desktopBridge';
 import {useHubAuth} from './useHubAuth';
@@ -397,6 +398,7 @@ export function VibeLinkControlCenter({ embedded = false, fullHeight = false }: 
               {actionToast}
             </span>
           )}
+          <HubAdminEntry session={hubAuth.session} bridge={window.electronAPI?.vibelink} onOpen={()=>{window.location.hash='/hub-admin';}}/>
           <button
             type="button"
             onClick={() => setActiveModal(activeModal === 'mobile' ? 'none' : 'mobile')}

@@ -3,6 +3,7 @@ export interface VibeLinkReply { ok: boolean; status: number; data: unknown }
 export interface VibeLinkDesktopBridge {
   readonly enabled: boolean;
   auth(input: import('./vibelinkAuth').HubAuthInput): Promise<import('./vibelinkAuth').HubAuthResult>;
+  admin(input: import('./vibelinkAdmin').AdminInput): Promise<import('./vibelinkAdmin').AdminResult>;
   work(input: import('./vibelinkWork').HubWorkInput): Promise<import('./vibelinkWork').HubWorkResult>;
   notifications(input: import('./vibelinkNotifications').NotificationInput): Promise<import('./vibelinkNotifications').NotificationResult>;
   onNotificationOpen(listener:(target:import('./vibelinkNotifications').NotificationTarget)=>void):()=>void;
