@@ -12,6 +12,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -33,6 +34,8 @@ import com.wangzan101.vibelink.ui.theme.VibeLinkTheme
 import com.wangzan101.vibelink.ui.theme.VibeLinkType
 import io.github.g00fy2.quickie.QRResult
 import io.github.g00fy2.quickie.ScanQRCode
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -57,6 +60,8 @@ internal fun PairSetup(
     val scope = rememberCoroutineScope()
     val deviceName = remember { "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}".trim().take(40) }
 
+    val attempts = remember { PairAttemptFence() }
+    var scanJob by remember { mutableStateOf<Job?>(null) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     /** 扫到、已报到、等用户确认的那个码 */
@@ -65,24 +70,42 @@ internal fun PairSetup(
     var manual by remember { mutableStateOf(false) }
     var pasted by remember { mutableStateOf("") }
 
+    fun cancelAttempt() {
+        attempts.cancel()
+        scanJob?.cancel()
+        scanJob = null
+        link = null
+        scan = null
+        busy = false
+    }
+    DisposableEffect(Unit) { onDispose { attempts.cancel(); scanJob?.cancel() } }
+
     fun checkIn(l: PairLink) {
         val urls = LoginPolicy.allowedUrls(l.urls, com.wangzan101.vibelink.BuildConfig.IS_BETA_EDITION)
         if (urls.isEmpty()) { error = "二维码属于其他版本，请使用对应的开发版或内测版"; return }
         val allowed = l.copy(urls = urls)
+        val attempt = attempts.begin(allowed)
+        scanJob?.cancel()
         error = null
         link = allowed
         scan = null
         busy = true
-        scope.launch {
-            runCatching { withContext(Dispatchers.IO) { RemoteApi.pairScan(allowed, deviceName) } }
-                .onSuccess { scan = it }
-                .onFailure { error = it.message ?: it.toString(); link = null }
-            busy = false
+        scanJob = scope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) { RemoteApi.pairScan(allowed, deviceName) }
+                if (attempts.accepts(attempt)) scan = result
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (attempts.accepts(attempt)) { error = e.message ?: "无法读取手机连接码"; link = null; scan = null }
+            } finally {
+                if (attempts.accepts(attempt)) busy = false
+            }
         }
     }
 
     fun handleRaw(raw: String?) {
-        if (LoginQrLink.parse(raw) != null) { LoginQrInbox.offer(raw); return }
+        if (LoginQrLink.parse(raw) != null) { cancelAttempt(); LoginQrInbox.offer(raw); return }
         val l = PairLink.parse(raw)
         if (l == null) error = "这不是 VibeLink 配对码：请扫电脑上「远程控制」弹窗（或 VibeLink 控制台「📱 连接手机」）里的二维码" else checkIn(l)
     }
@@ -133,7 +156,7 @@ internal fun PairSetup(
             Row(Modifier.fillMaxWidth().padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 VibeLinkButton(
                     "取消",
-                    onClick = { link = null; scan = null; error = null },
+                    onClick = { cancelAttempt(); error = null },
                     modifier = Modifier.weight(1f),
                     kind = ButtonKind.Secondary,
                     enabled = !busy,
@@ -141,12 +164,24 @@ internal fun PairSetup(
                 VibeLinkButton(
                     if (busy) "登录中…" else "确认手机登录",
                     onClick = {
-                        busy = true; error = null
-                        scope.launch {
-                            runCatching { withContext(Dispatchers.IO) { RemoteApi.pairConfirm(s.hub, l, deviceName) } }
-                                .onSuccess { t -> onPaired(s.hub, t, l, s.host) }
-                                .onFailure { error = it.message ?: it.toString(); link = null; scan = null }
-                            busy = false
+                        val attempt = attempts.capture(l)
+                        if (attempt != null) {
+                            busy = true; error = null
+                            scope.launch {
+                                try {
+                                    val credential = withContext(Dispatchers.IO) {
+                                        check(attempts.accepts(attempt)) { "扫码请求已更换，请重试" }
+                                        RemoteApi.pairConfirm(s.hub, l, deviceName)
+                                    }
+                                    if (attempts.accepts(attempt)) onPaired(s.hub, credential, l, s.host)
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    if (attempts.accepts(attempt)) { error = e.message ?: "手机登录失败，请重新扫码"; link = null; scan = null }
+                                } finally {
+                                    if (attempts.accepts(attempt)) busy = false
+                                }
+                            }
                         }
                     },
                     modifier = Modifier.weight(1f),

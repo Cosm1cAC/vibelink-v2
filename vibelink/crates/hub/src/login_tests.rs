@@ -502,3 +502,52 @@ async fn a_phone_task_can_be_followed_up_and_cancelled_by_its_qr_authenticated_d
     assert_eq!(status, StatusCode::OK);
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[tokio::test]
+async fn first_phone_enrollment_can_resume_the_original_desktop_challenge() {
+    let (dir, app, admin) = fixture();
+    let (_, start) = request(app.clone(), "", Method::POST, "/api/auth/qr/start", json!({"deviceName":"First Desktop"})).await;
+    let link = reqwest::Url::parse(start["link"].as_str().unwrap()).unwrap();
+    let query: HashMap<_, _> = link.query_pairs().into_owned().collect();
+    let approval = json!({"id":start["id"],"scanSecret":query["s"],"decision":"approve"});
+    let (status, _) = request(app.clone(), "", Method::POST, "/api/auth/qr/confirm", approval.clone()).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, _) = request(app.clone(), "", Method::POST, "/api/pair/start", json!({})).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    // The local desktop explicitly logs in before requesting its admin-only phone QR.
+    let (status, local) = request(app.clone(), &admin, Method::POST, "/api/auth/session", json!({"deviceName":"Local Desktop"})).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = request(app.clone(), local["token"].as_str().unwrap(), Method::POST, "/api/pair/start", json!({})).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, pair) = request(app.clone(), &admin, Method::POST, "/api/pair/start", json!({"name":"First Phone"})).await;
+    assert_eq!(status, StatusCode::OK);
+    let pair_link = reqwest::Url::parse(pair["link"].as_str().unwrap()).unwrap();
+    let pair_query: HashMap<_, _> = pair_link.query_pairs().into_owned().collect();
+    let body = json!({"code":pair_query["s"],"name":"First Phone"});
+    let (status, phone) = request(app.clone(), "", Method::POST, "/api/pair", body.clone()).await;
+    assert_eq!(status, StatusCode::OK);
+    let phone_token = phone["token"].as_str().unwrap();
+    assert_ne!(phone_token, admin);
+    let (status, phone_me) = request(app.clone(), phone_token, Method::GET, "/api/auth/me", Value::Null).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(phone_me["session"]["userId"], "owner");
+    assert_eq!(phone_me["session"]["permissions"], json!(["client"]));
+    let (status, _) = request(app.clone(), "", Method::POST, "/api/pair", body).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    let (status, _) = request(app.clone(), phone_token, Method::POST, "/api/auth/qr/confirm", approval).await;
+    assert_eq!(status, StatusCode::OK);
+    let poll = json!({"id":start["id"],"pollSecret":start["pollSecret"]});
+    let (status, desktop) = request(app.clone(), "", Method::POST, "/api/auth/qr/poll", poll.clone()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(desktop["status"], "approved");
+    assert_eq!(desktop["session"]["userId"], phone_me["session"]["userId"]);
+    assert_eq!(desktop["session"]["issuer"], phone_me["session"]["issuer"]);
+    assert_ne!(desktop["session"]["sessionId"], phone_me["session"]["sessionId"]);
+    assert_ne!(desktop["token"], phone["token"]);
+    let (status, ack) = request(app.clone(), "", Method::POST, "/api/auth/qr/ack", poll).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(ack["status"], "consumed");
+    std::fs::remove_dir_all(dir).unwrap();
+}

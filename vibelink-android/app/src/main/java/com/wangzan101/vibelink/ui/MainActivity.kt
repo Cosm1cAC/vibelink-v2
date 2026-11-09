@@ -236,7 +236,8 @@ private fun VibeLinkRoot(store: ProviderStore, monitor: SystemStatusMonitor, act
         if (ready != null && !credentialPresent) com.wangzan101.vibelink.remote.AuthStore.credentialUnavailable(context)
     }
     if (!authorized || accountPage) {
-        LoginScreen(onContinue = { accountPage = false }, onBack = if (authorized) ({ accountPage = false }) else null)
+        LoginScreen(onContinue = { accountPage = false }, onBack = if (authorized) ({ accountPage = false }) else null,
+            onDesktopRequest = { accountPage = true })
         return
     }
     androidx.compose.runtime.key(ready!!.session.subjectKey(com.wangzan101.vibelink.remote.RemoteStore.hub(context))) {

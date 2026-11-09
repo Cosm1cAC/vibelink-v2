@@ -57,4 +57,24 @@ class LoginQrInboxReaderTest {
             assertEquals(2, secondReads)
         } finally { reader.cancelAndJoin(); LoginQrInbox.pending.value = null }
     }
+
+    @Test fun acceptedDesktopRequestLocksAccountPageEvenWhenInboxIsImmediatelyEmpty() = runBlocking {
+        LoginQrInbox.pending.value = null
+        var accountPage = false
+        val entered = CompletableDeferred<Unit>()
+        val reader = launch(start = CoroutineStart.UNDISPATCHED) {
+            LoginQrInbox.consume(onAccepted = { accountPage = true }) {
+                assertNull(LoginQrInbox.pending.value)
+                entered.complete(Unit)
+                awaitCancellation()
+            }
+        }
+        try {
+            LoginQrInbox.pending.value = LoginQrLink("first-phone-login", "fixture-secret", emptyList())
+            withTimeout(2000) { entered.await() }
+            // Becoming authenticated must not depend on observing a transient inbox event.
+            assertTrue(accountPage)
+            assertNull(LoginQrInbox.pending.value)
+        } finally { reader.cancelAndJoin(); LoginQrInbox.pending.value = null }
+    }
 }

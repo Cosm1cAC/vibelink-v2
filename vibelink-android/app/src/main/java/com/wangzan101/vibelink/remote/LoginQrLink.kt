@@ -35,9 +35,9 @@ object LoginQrInbox {
         return accepted
     }
     /** Clearing the inbox must not cancel the request just handed to its reader. */
-    internal suspend fun consume(read: suspend (LoginQrLink) -> Unit) {
+    internal suspend fun consume(onAccepted: () -> Unit = {}, read: suspend (LoginQrLink) -> Unit) {
         pending.filterNotNull().collectLatest { link ->
-            if (pending.compareAndSet(link, null)) read(link)
+            if (pending.compareAndSet(link, null)) { onAccepted(); read(link) }
         }
     }
     fun take(): LoginQrLink? = pending.value.also { pending.value = null }
