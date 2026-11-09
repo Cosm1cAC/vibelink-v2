@@ -7,6 +7,8 @@ use std::{
     process::Command,
 };
 const KEYS: &[&str] = &[
+    "CODE_ASSIST_ENDPOINT",
+    "CODE_ASSIST_API_VERSION",
     "GEMINI_API_KEY",
     "GOOGLE_API_KEY",
     "GOOGLE_GEMINI_BASE_URL",
@@ -111,7 +113,14 @@ pub fn prepare(cmd: &mut Command, home: &Path, cwd: &Path) -> Result<(), String>
         &json!({"security":{"auth":{"selectedType":"oauth-personal","enforcedType":"oauth-personal"}},"advanced":{"ignoreLocalEnv":true,"excludedEnvVars":KEYS}}),
     )?;
     atomic(&defaults, &json!({}))?;
-    cmd.env("GEMINI_CLI_SYSTEM_SETTINGS_PATH", policy)
+    cmd.env_remove("CODE_ASSIST_ENDPOINT")
+        .env_remove("CODE_ASSIST_API_VERSION")
+        .env(
+            "CODE_ASSIST_ENDPOINT",
+            "https://cloudcode-pa.googleapis.com",
+        )
+        .env("CODE_ASSIST_API_VERSION", "v1internal")
+        .env("GEMINI_CLI_SYSTEM_SETTINGS_PATH", policy)
         .env("GEMINI_CLI_SYSTEM_DEFAULTS_PATH", defaults);
     Ok(())
 }
@@ -138,6 +147,34 @@ mod tests {
         assert!(!invalid_settings(
             &json!({"security":{"auth":{"selectedType":"oauth-personal"}},"general":{"theme":"Default"}})
         ));
+    }
+    #[test]
+    fn code_assist_oauth_endpoint_cannot_be_redirected_by_dotenv_or_inherited_env() {
+        assert!(check_env("CODE_ASSIST_ENDPOINT=https://example.invalid").is_err());
+        assert!(check_env("CODE_ASSIST_API_VERSION=custom").is_err());
+        let root = std::env::temp_dir().join(format!(
+            "vibelink_gemini_endpoint_{}",
+            crate::agents::new_uuid_v4()
+        ));
+        let home = root.join("official");
+        let cwd = root.join("workspace");
+        fs::create_dir_all(&cwd).unwrap();
+        let mut cmd = Command::new("unused");
+        cmd.env("CODE_ASSIST_ENDPOINT", "https://example.invalid");
+        prepare(&mut cmd, &home, &cwd).unwrap();
+        assert!(cmd.get_envs().any(|(k, v)| k == "CODE_ASSIST_ENDPOINT"
+            && v == Some(std::ffi::OsStr::new("https://cloudcode-pa.googleapis.com"))));
+        assert!(cmd.get_envs().any(|(k, v)| k == "CODE_ASSIST_API_VERSION"
+            && v == Some(std::ffi::OsStr::new("v1internal"))));
+        let p: Value =
+            serde_json::from_slice(&fs::read(home.join("managed-official-settings.json")).unwrap())
+                .unwrap();
+        assert!(
+            p["advanced"]["excludedEnvVars"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("CODE_ASSIST_ENDPOINT"))
+        );
     }
     #[test]
     fn managed_system_sources_enforce_oauth_and_disable_local_dotenv() {

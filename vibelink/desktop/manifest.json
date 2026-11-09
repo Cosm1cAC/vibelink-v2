@@ -109,7 +109,7 @@
     },
     {
       "path": "overlay/apps/desktop/src/main/terminal/__tests__/cliLaunchPlan.test.ts",
-      "sha256": "b46039fb7a0f7d46b1086fec10490f47c486416fe34cbc64b9aefdbb1ef560ae"
+      "sha256": "bfbbbe54978ea658c6b0fcc64f887175af8f9f4911b1be0100905296a1816e86"
     },
     {
       "path": "overlay/apps/desktop/src/main/terminal/accessPolicy.ts",
@@ -117,7 +117,7 @@
     },
     {
       "path": "overlay/apps/desktop/src/main/terminal/cliLaunchPlan.ts",
-      "sha256": "a40e30e0de90e55ad3532c88630962122e4d4822763bd86bbd1f28ec6cb2353f"
+      "sha256": "0ace5912801673aa114002674cf0b3d380a2266635f758e8d473644a9d9ec67a"
     },
     {
       "path": "overlay/apps/desktop/src/main/vibelink/__tests__/adminPolicy.test.ts",

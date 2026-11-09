@@ -29,7 +29,7 @@ export function prepareManagedCliConfig(intent: TerminalCliIntent, plan: CliLaun
   fs.writeFileSync(path.join(home, 'config.toml'), 'model_provider = "openai"\nforced_login_method = "chatgpt"\ncli_auth_credentials_store = "file"\n');
 }
 
-const GEMINI_PROVIDER_KEYS = ['GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GOOGLE_GEMINI_BASE_URL',
+const GEMINI_PROVIDER_KEYS = ['GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GOOGLE_GEMINI_BASE_URL', 'CODE_ASSIST_ENDPOINT', 'CODE_ASSIST_API_VERSION',
   'GOOGLE_GENAI_USE_VERTEXAI', 'GOOGLE_CLOUD_PROJECT', 'GOOGLE_CLOUD_LOCATION',
   'GOOGLE_APPLICATION_CREDENTIALS', 'GEMINI_CLI_HOME', 'GEMINI_CLI_SYSTEM_SETTINGS_PATH', 'GEMINI_CLI_SYSTEM_DEFAULTS_PATH'];
 
@@ -121,6 +121,8 @@ export function buildCliLaunchPlan(intent: TerminalCliIntent, options: {
     args.push('--standalone');
   } else if (intent.agent === 'gemini') {
     env.GEMINI_CLI_HOME = home;
+    env.CODE_ASSIST_ENDPOINT = 'https://cloudcode-pa.googleapis.com';
+    env.CODE_ASSIST_API_VERSION = 'v1internal';
     env.GEMINI_CLI_SYSTEM_SETTINGS_PATH = path.join(home, 'managed-official-settings.json');
     env.GEMINI_CLI_SYSTEM_DEFAULTS_PATH = path.join(home, 'managed-official-defaults.json');
   }

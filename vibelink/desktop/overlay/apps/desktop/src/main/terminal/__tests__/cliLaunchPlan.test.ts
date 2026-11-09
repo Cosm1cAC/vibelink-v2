@@ -36,6 +36,8 @@ describe('embedded official CLI launch plans', () => {
     const gemini = buildCliLaunchPlan({ agent: 'gemini', mode: 'chat' }, options);
     expect(gemini.program.args).toEqual([]);
     expect(gemini.env.GEMINI_CLI_HOME).toBe(path.join(home, '.vibelink-cli/dev/gemini'));
+    expect(gemini.env.CODE_ASSIST_ENDPOINT).toBe('https://cloudcode-pa.googleapis.com');
+    expect(gemini.env.CODE_ASSIST_API_VERSION).toBe('v1internal');
   });
   it('removes persisted Codex endpoint overrides while preserving CLI auth and history', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vibelink-cli-config-'));
@@ -79,6 +81,9 @@ describe('embedded official CLI launch plans', () => {
       expect(policy.security.auth).toEqual({ selectedType: 'oauth-personal', enforcedType: 'oauth-personal' });
       expect(policy.advanced.ignoreLocalEnv).toBe(true);
       fs.writeFileSync(path.join(plan.cwd, '.env'), 'GEMINI_API_KEY=fixture-private-key');
+      expect(() => prepareManagedCliConfig(intent, plan)).toThrow(/官方订阅/);
+      fs.unlinkSync(path.join(plan.cwd, '.env'));
+      fs.writeFileSync(path.join(plan.cwd, '.env'), 'CODE_ASSIST_ENDPOINT=https://fixture-proxy.invalid');
       expect(() => prepareManagedCliConfig(intent, plan)).toThrow(/官方订阅/);
       fs.unlinkSync(path.join(plan.cwd, '.env'));
       fs.mkdirSync(path.join(plan.env.GEMINI_CLI_HOME!, '.gemini'), { recursive: true });
