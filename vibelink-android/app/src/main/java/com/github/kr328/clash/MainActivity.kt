@@ -40,6 +40,7 @@ class MainActivity : BaseActivity<MainDesign>() {
     private val authRefreshLock = kotlinx.coroutines.sync.Mutex()
     private val probeLock = kotlinx.coroutines.sync.Mutex()
     private val reconnectLock = kotlinx.coroutines.sync.Mutex()
+    private var connectionGeneration = 0L
     private var lastExitProbeAt = 0L
     private var exitReachable: Boolean? = null
     private var exitProbeProfile: String? = null
@@ -66,6 +67,7 @@ class MainActivity : BaseActivity<MainDesign>() {
         while (isActive) {
             select<Unit> {
                 events.onReceive {
+                    if (it == Event.ProfileChanged) connectionGeneration++
                     when (it) {
                         Event.ActivityStart,
                         Event.ServiceRecreated,
@@ -76,6 +78,7 @@ class MainActivity : BaseActivity<MainDesign>() {
                     }
                 }
                 design.requests.onReceive {
+                    if (it == MainDesign.Request.ToggleStatus) connectionGeneration++
                     when (it) {
                         MainDesign.Request.ToggleStatus -> launch {
                             val target = !clashRunning
@@ -111,16 +114,31 @@ class MainActivity : BaseActivity<MainDesign>() {
                         MainDesign.Request.ReconnectExit -> launch {
                             if (!reconnectLock.tryLock()) return@launch
                             try {
-                            if (!managedProfileSelected()) return@launch
-                            runCatching {
-                                stopClashService()
-                                kotlinx.coroutines.withTimeout(20_000) {
-                                    while (Remote.broadcasts.refreshStatus()) delay(200)
+                                val generation = ++connectionGeneration
+                                val profile = withProfile { queryActive()?.uuid }
+                                suspend fun stillCurrent() = uiStore.enableVpn && managedProfileSelected() &&
+                                    withProfile { queryActive()?.uuid } == profile && generation == connectionGeneration
+                                if (!stillCurrent() || !ownVpnActive()) {
+                                    design.showToast("请先启用本应用的 VPN 模式，再重新连接出口", ToastDuration.Long)
+                                    return@launch
                                 }
-                                exitReachable = null
-                                lastExitProbeAt = 0L
-                                design.startClash()
-                            }.onFailure { design.showToast("重新连接失败，请稍后重试", ToastDuration.Long) }
+                                try {
+                                    stopClashService()
+                                    kotlinx.coroutines.withTimeout(20_000) {
+                                        while (Remote.broadcasts.refreshStatus()) {
+                                            if (!stillCurrent()) throw kotlinx.coroutines.CancellationException("连接操作已变更")
+                                            delay(200)
+                                        }
+                                    }
+                                    if (!stillCurrent()) return@launch
+                                    exitReachable = null
+                                    lastExitProbeAt = 0L
+                                    design.startClash()
+                                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                                    throw cancelled
+                                } catch (_: Exception) {
+                                    if (stillCurrent()) design.showToast("重新连接失败，请稍后重试", ToastDuration.Long)
+                                }
                             } finally { reconnectLock.unlock() }
                         }
                         MainDesign.Request.ProbeTailscale -> launch { design.probeManagedExit() }
@@ -199,6 +217,15 @@ class MainActivity : BaseActivity<MainDesign>() {
         }
     }
 
+    private fun ownVpnActive(): Boolean {
+        if (!uiStore.enableVpn) return false
+        val manager = getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+        return runCatching { manager.allNetworks.any { network ->
+            val caps = manager.getNetworkCapabilities(network)
+            caps?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN) == true && caps.ownerUid == android.os.Process.myUid()
+        } }.getOrDefault(false)
+    }
+
     private suspend fun managedProfileSelected(): Boolean {
         if (com.wangzan101.vibelink.BuildConfig.IS_BETA_EDITION || !com.wangzan101.vibelink.BuildConfig.HAS_DEV_CLASH_SEED) return false
         val managed = getSharedPreferences("clash_seed", MODE_PRIVATE).getString("managed_uuid", null) ?: return false
@@ -211,13 +238,14 @@ class MainActivity : BaseActivity<MainDesign>() {
             val running = Remote.broadcasts.refreshStatus()
             val url = withClash { queryTailscaleAuthUrl() }
             val managed = managedProfileSelected()
+            val vpn = ownVpnActive()
             val selected = withProfile { queryActive()?.uuid?.toString() }
-            if (!running || !managed || selected != exitProbeProfile) {
+            if (!running || !managed || !vpn || selected != exitProbeProfile) {
                 lastExitProbeAt = 0L; exitReachable = null; exitProbeProfile = selected
             }
             setTailscaleState(url != null && managed, running && managed,
-                com.wangzan101.vibelink.clash.ExitProbeStatus.text(probeLock.isLocked, url != null, exitReachable))
-            if (running && managed && (lastExitProbeAt == 0L || android.os.SystemClock.elapsedRealtime() - lastExitProbeAt >= 30_000)) {
+                com.wangzan101.vibelink.clash.ExitProbeStatus.text(probeLock.isLocked, url != null, exitReachable, vpn))
+            if (running && managed && vpn && (lastExitProbeAt == 0L || android.os.SystemClock.elapsedRealtime() - lastExitProbeAt >= 30_000)) {
                 launch { runCatching { probeManagedExit() } }
             }
         } finally { authRefreshLock.unlock() }
@@ -226,8 +254,9 @@ class MainActivity : BaseActivity<MainDesign>() {
     private suspend fun MainDesign.probeManagedExit() {
         if (!probeLock.tryLock()) return
         try {
+            val generation = connectionGeneration
             val profile = withProfile { queryActive()?.uuid }
-            if (!managedProfileSelected() || !Remote.broadcasts.refreshStatus()) return
+            if (!managedProfileSelected() || !Remote.broadcasts.refreshStatus() || !ownVpnActive()) return
             lastExitProbeAt = android.os.SystemClock.elapsedRealtime()
             setTailscaleState(withClash { queryTailscaleAuthUrl() } != null, true, "正在检测 YouTube 连接…")
             // An explicit NO_PROXY request is captured by Android VPN, never by
@@ -237,7 +266,7 @@ class MainActivity : BaseActivity<MainDesign>() {
                     exitProbeClient.newCall(okhttp3.Request.Builder().url("https://www.youtube.com/").head().build()).execute().use { it.isSuccessful }
                 } catch (_: java.io.IOException) { false }
             }
-            if (withProfile { queryActive()?.uuid } == profile && Remote.broadcasts.refreshStatus()) exitReachable = reachable
+            if (withProfile { queryActive()?.uuid } == profile && Remote.broadcasts.refreshStatus() && ownVpnActive() && generation == connectionGeneration) exitReachable = reachable
         } finally {
             probeLock.unlock()
             runCatching { refreshTailscale() }
