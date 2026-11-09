@@ -13,7 +13,7 @@
     },
     {
       "path": "Install-DesktopEntry.ps1",
-      "sha256": "37c597471c9e922aaa818d1d5b383625836c01a4ddba11b6d80187a5f29ae6b3"
+      "sha256": "260d88ed05c8e0713bee8ace9fd06d5c1c334228dbb8875f22b4bb92c790087d"
     },
     {
       "path": "Prepare-CindyFusion.ps1",

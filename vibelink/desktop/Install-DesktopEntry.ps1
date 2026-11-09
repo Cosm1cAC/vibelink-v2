@@ -145,6 +145,35 @@ foreach ($folder in $folders) {
     $link.Save()
     [VibeLinkShellIdentity]::Set($target, $notificationAppId, $notificationActivator)
 }
+# Unpackaged Electron uses its executable product name for its own shortcut,
+# even after app.setName(). Seed a hidden compatible link so its lazy notifier
+# accepts the fixed executable/cwd/identity and preserves the safe stub args.
+$programsFolder = [Environment]::GetFolderPath('Programs')
+$compatibilityLink = Join-Path $programsFolder (([IO.Path]::GetFileNameWithoutExtension($notificationExecutable)) + '.lnk')
+$manageCompatibility = $true
+if (Test-Path -LiteralPath $compatibilityLink) {
+    $shellFolder = (New-Object -ComObject Shell.Application).Namespace($programsFolder)
+    $item = $shellFolder.ParseName((Split-Path $compatibilityLink -Leaf))
+    $existingId = [string]$item.ExtendedProperty('System.AppUserModel.ID')
+    $existingActivator = [string]$item.ExtendedProperty('System.AppUserModel.ToastActivatorCLSID')
+    $manageCompatibility = $existingId -eq $notificationAppId -and $existingActivator.Trim('{}') -ieq $notificationActivator.ToString()
+    if ($manageCompatibility) {
+        Copy-Item -LiteralPath $compatibilityLink -Destination (Join-Path $backup 'notification-compatibility.lnk')
+    }
+}
+if ($manageCompatibility) {
+    $link = $shell.CreateShortcut($compatibilityLink)
+    $link.TargetPath = $notificationExecutable
+    $link.Arguments = '"' + $notificationLauncher + '"'
+    $link.WorkingDirectory = Split-Path $notificationExecutable -Parent
+    $link.Description = 'VibeLink notification compatibility entry'
+    if (Test-Path -LiteralPath $icon) { $link.IconLocation = $icon + ',0' }
+    $link.Save()
+    [VibeLinkShellIdentity]::Set($compatibilityLink, $notificationAppId, $notificationActivator)
+    [IO.File]::SetAttributes($compatibilityLink, ([IO.File]::GetAttributes($compatibilityLink) -bor [IO.FileAttributes]::Hidden))
+} else {
+    Write-Warning 'An existing Electron entry belongs to another application; preserved it. VibeLink source notifications remain unavailable until that identity conflict is resolved.'
+}
 $startupEntry = Join-Path ([Environment]::GetFolderPath('Startup')) 'vibelink.lnk'
 if (Test-Path -LiteralPath $startupEntry) {
     $oldStartup = $shell.CreateShortcut($startupEntry)
