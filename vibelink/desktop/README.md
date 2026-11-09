@@ -10,6 +10,16 @@
 
 安装器将 ICO/PNG 发布到稳定的 `%LOCALAPPDATA%\vibelink-mesh\desktop\assets`，显式设置桌面、开始菜单及本项目隐藏兼容入口图标，并仅刷新 AUMID 为 `cloud.vibelink.desktop` 的已有任务栏固定入口。快捷方式不再依赖旧 `bin\vibelink-gui.exe`；原启动目标、参数、通知身份和 userData 保留。已运行窗口的图标在下一次安全启动生效，更新图标资源及快捷方式不会重启应用。
 
+## 内嵌 CLI
+
+开发版的控制中心与 Hub 工作区均有“CLI 界面”入口。选择 Codex、OpenCode2 / DeepSeek、Claude Code 或 Gemini CLI，再点击“新建会话”或“登录 CLI”；界面可直接键入、调整终端尺寸、Ctrl+C、关闭和重开。DeepSeek 不需要单独登录。Gemini 若未安装，显示真实缺失状态，仍保留其入口。
+
+终端使用真实 node-pty + xterm，当前是独立的原生会话；不会把新开终端假称为已接管某个 Hub Bot 会话。DeepSeek 走 Hub 的模型专用授权和原有用户计量，授权两小时后可关闭新建或退出后重开刷新。客户端/管理员 Token 不交给 CLI。退出、切换或过期的 Hub 身份会关闭旧终端；内测不开放宿主终端。
+
+Claude 登录与执行共用 `~/.vibelink-cli/dev/claude` 的官方订阅配置，不沿用个人 `~/.claude` 里的反代设置。仅官方 CLI 负责网页登录和凭据保存；应用不接收订阅 Token。登录仍需用户在官方网页完成，CLI 支持不以当前是否已登录来裁减。
+
+交互参考 [Orca](https://github.com/stablyai/orca)；本批沿用本项目已有终端，没有复制 Orca 源码。
+
 ## 准备与启动
 
 ```powershell

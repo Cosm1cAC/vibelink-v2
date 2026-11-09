@@ -8,13 +8,18 @@ internal object BotRuntimeSettings {
 
     fun detachIncompatibleSessions(previous: BotFriend?, next: BotFriend): BotFriend =
         if (previous != null && (previous.engine != next.engine || previous.model != next.model))
-            next.copy(activeSessionId = "", sessionIds = emptyList()) else next
+            next.copy(activeSessionId = "", sessionIds = emptyList(), legacySessions =
+                (next.legacySessions + previous.legacySessions + (previous.sessionIds + previous.activeSessionId)
+                    .filter { it.isNotBlank() }.map { BotSessionLink(previous.engine, previous.model, it) }).distinct()) else next
 
-    fun selectAgent(bot: BotFriend, agent: String): BotFriend =
-        detachIncompatibleSessions(bot, bot.copy(engine = BotModelPolicy.requireEngine(agent)))
+    fun selectAgent(bot: BotFriend, agent: String, beta: Boolean = com.wangzan101.vibelink.BuildConfig.IS_BETA_EDITION): BotFriend {
+        BotModelPolicy.requireEngine(agent, beta)
+        return selectModel(bot, if (BotModelPolicy.engineForModel(bot.model) == agent) bot.model else BotModelPolicy.modelForEngine(agent), beta)
+    }
 
     fun selectModel(bot: BotFriend, model: String, beta: Boolean): BotFriend {
-        require(model in BotModelPolicy.availableModels(beta)) { "当前版本不支持此运行模型" }
-        return detachIncompatibleSessions(bot, bot.copy(model = model))
+        val engine = BotModelPolicy.engineForModel(model)
+        BotModelPolicy.requireBinding(engine, model, beta)
+        return detachIncompatibleSessions(bot, bot.copy(model = model, engine = engine))
     }
 }

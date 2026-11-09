@@ -170,7 +170,7 @@ index 8ed676ef..b3b92610 100644
    mode: Extract<AppSessionMode, 'signed-out' | 'local'>,
    reason: string,
 diff --git a/apps/desktop/src/main/bootstrap-electron.ts b/apps/desktop/src/main/bootstrap-electron.ts
-index b842bf8d..d5649b29 100644
+index b842bf8d..0dcf7577 100644
 --- a/apps/desktop/src/main/bootstrap-electron.ts
 +++ b/apps/desktop/src/main/bootstrap-electron.ts
 @@ -1,4 +1,12 @@
@@ -202,7 +202,15 @@ index b842bf8d..d5649b29 100644
  } from './device-link';
  import { closeSharedTasksBeforeLogout } from './device-link/sharedTaskRuntime.js';
  import { closeSharedTasksBeforeAccountHandover } from './device-link/sharedTaskAccountBoundary.js';
-@@ -3467,11 +3477,12 @@ function destroyWindowsTray(): void {
+@@ -674,6 +684,7 @@ import { registerSidebarSettingsIpc, loadSidebarSettingsSnapshot, setLocalMainVi
+ import { registerModelVisibilityOwnerClaimIpc } from './maker-host/model-visibility-owner-claim.js';
+ import { registerRemotePrecreatedWorktreeLedgerIpc } from './remotePrecreatedWorktreeLedger';
+ import { registerTerminalHandlers } from './maker-ipc/terminal-handlers';
++import { createVibeLinkTerminalPolicy } from './vibelink/terminalRuntime';
+ import { registerLocalThemesIpc } from './local-themes/register';
+ import {
+   registerRemoteSshIpc,
+@@ -3467,11 +3478,12 @@ function destroyWindowsTray(): void {
  }
  
  const linuxTrayLog = createLogger('linux-tray');
@@ -218,7 +226,7 @@ index b842bf8d..d5649b29 100644
      const icon = nativeImage.createFromPath(iconPath);
      if (icon.isEmpty()) throw new Error(`tray icon is empty: ${iconPath}`);
      // Keep the source resolution: Linux panels choose their own icon size/scale.
-@@ -3491,9 +3502,7 @@ function ensureWindowsTray(): boolean {
+@@ -3491,9 +3503,7 @@ function ensureWindowsTray(): boolean {
  
    let tray: Tray | null = null;
    try {
@@ -229,7 +237,7 @@ index b842bf8d..d5649b29 100644
      const icon = nativeImage.createFromPath(iconPath);
      if (icon.isEmpty()) throw new Error(`tray icon is empty: ${iconPath}`);
      tray = new Tray(icon.resize({ width: 16, height: 16 }));
-@@ -4091,9 +4100,7 @@ const createWindow = () => {
+@@ -4091,9 +4101,7 @@ const createWindow = () => {
      minWidth: 800,
      minHeight: 600,
      title: BRAND_NAME,
@@ -240,7 +248,7 @@ index b842bf8d..d5649b29 100644
      autoHideMenuBar: true,
      show: false,
      backgroundColor: bgColor,
-@@ -4128,6 +4135,9 @@ const createWindow = () => {
+@@ -4128,6 +4136,9 @@ const createWindow = () => {
      },
    });
    markAppContentWindow(mainWindow);
@@ -250,7 +258,7 @@ index b842bf8d..d5649b29 100644
    installSelectionContextMenu(mainWindow);
    installWindowResponsivenessDiagnostics(mainWindow, { label: 'main' });
    mainWindowRef = mainWindow;
-@@ -4564,7 +4574,49 @@ function parseOptionalDeviceLinkDeviceId(value: unknown): string | null | undefi
+@@ -4564,7 +4575,49 @@ function parseOptionalDeviceLinkDeviceId(value: unknown): string | null | undefi
    return trimmed;
  }
  
@@ -300,7 +308,7 @@ index b842bf8d..d5649b29 100644
    ipcMain.handle('database-size-warning:get-settings', (event) => {
      assertTrustedAppRendererEvent(event);
      const state = readDatabaseSizeWarningSettingsState();
-@@ -4868,7 +4920,7 @@ const registerIpcHandlers = () => {
+@@ -4868,7 +4921,7 @@ const registerIpcHandlers = () => {
    });
  
    ipcMain.on('get-app-display-version-info', (event) => {
@@ -309,7 +317,7 @@ index b842bf8d..d5649b29 100644
    });
  
    // 开屏卡住诊断:renderer 的 r: 日志不进上传,这条快照由 main 校验后写进 renderer-guard。
-@@ -6186,7 +6238,14 @@ const registerIpcHandlers = () => {
+@@ -6186,7 +6239,14 @@ const registerIpcHandlers = () => {
  
    // ── Auth IPC handlers (delegated to authManager) ──
  
@@ -325,7 +333,7 @@ index b842bf8d..d5649b29 100644
      try {
        let pendingCompletion: Promise<authManager.AuthState> | null = null;
        const state = await authManager
-@@ -6236,10 +6295,14 @@ const registerIpcHandlers = () => {
+@@ -6236,10 +6296,14 @@ const registerIpcHandlers = () => {
      }
    });
  
@@ -341,7 +349,7 @@ index b842bf8d..d5649b29 100644
      // Login can be the first real credential operation to observe an unavailable
      // backend. Reuse the bounded, idle-only recovery after the action settles.
      return authManager.dispatchLoginAction(action).finally(() => authCredentialRecovery.request());
-@@ -6252,17 +6315,21 @@ const registerIpcHandlers = () => {
+@@ -6252,17 +6316,21 @@ const registerIpcHandlers = () => {
      return authManager.getLoginCaptchaChallengeUrl();
    });
  
@@ -364,7 +372,7 @@ index b842bf8d..d5649b29 100644
      try {
        return await authManager.syncSavedAccounts();
      } catch (error) {
-@@ -6272,6 +6339,7 @@ const registerIpcHandlers = () => {
+@@ -6272,6 +6340,7 @@ const registerIpcHandlers = () => {
  
    ipcMain.handle('auth:accounts:switch', async (event, accountKey: unknown) => {
      assertTrustedAppRendererEvent(event);
@@ -372,7 +380,7 @@ index b842bf8d..d5649b29 100644
      try {
        await authManager.switchSavedAccount(accountKey);
      } catch (error) {
-@@ -6281,6 +6349,7 @@ const registerIpcHandlers = () => {
+@@ -6281,6 +6350,7 @@ const registerIpcHandlers = () => {
  
    ipcMain.handle('auth:accounts:begin-add', async (event) => {
      assertTrustedAppRendererEvent(event);
@@ -380,7 +388,7 @@ index b842bf8d..d5649b29 100644
      try {
        return await authManager.beginAddAccountLogin();
      } catch (error) {
-@@ -6293,7 +6362,9 @@ const registerIpcHandlers = () => {
+@@ -6293,7 +6363,9 @@ const registerIpcHandlers = () => {
      authManager.cancelAddAccountLogin();
    });
  
@@ -391,7 +399,7 @@ index b842bf8d..d5649b29 100644
      if (getActiveAppSession().mode === 'local') {
        return authManager.getAuthState();
      }
-@@ -6301,7 +6372,9 @@ const registerIpcHandlers = () => {
+@@ -6301,7 +6373,9 @@ const registerIpcHandlers = () => {
      return authManager.enterLocalMode();
    });
  
@@ -402,7 +410,7 @@ index b842bf8d..d5649b29 100644
      if (getActiveAppSession().mode !== 'local') {
        throwIpcError('PRECONDITION_FAILED', 'Local mode is not active.');
      }
-@@ -6309,6 +6382,7 @@ const registerIpcHandlers = () => {
+@@ -6309,6 +6383,7 @@ const registerIpcHandlers = () => {
    });
  
    ipcMain.handle('auth:refresh', async () => {
@@ -410,7 +418,7 @@ index b842bf8d..d5649b29 100644
      return authManager.refresh();
    });
  
-@@ -9389,7 +9463,7 @@ app.on('ready', async () => {
+@@ -9389,7 +9464,7 @@ app.on('ready', async () => {
    // setIcon 会原样显示资源，不会替应用图标自动加圆角。
    if (!app.isPackaged && process.platform === 'darwin') {
      try {
@@ -419,7 +427,7 @@ index b842bf8d..d5649b29 100644
      } catch (err) {
        // 仅影响 dev Dock 观感,失败不挡启动
        createLogger('dock-icon').warn('setIcon failed', { error: String(err) });
-@@ -9449,9 +9523,12 @@ app.on('ready', async () => {
+@@ -9449,9 +9524,12 @@ app.on('ready', async () => {
    //
    // 必须在创建任何 Notification 之前调用。macOS / Linux 不需要。
    if (process.platform === 'win32') {
@@ -435,7 +443,7 @@ index b842bf8d..d5649b29 100644
    }
  
    registerImageProtocolHandler();
-@@ -9463,6 +9540,27 @@ app.on('ready', async () => {
+@@ -9463,6 +9541,27 @@ app.on('ready', async () => {
    registerCindyMediaProtocolHandler();
    registerMcpAppProtocol();
  
@@ -463,7 +471,15 @@ index b842bf8d..d5649b29 100644
    // Inject a Content-Security-Policy response header onto the app's own
    // top-level document (defaultSession mainFrame) before any window loads.
    // Blocks an XSS from escalating to preload privileges via inline / eval
-@@ -10148,6 +10246,9 @@ app.on('ready', async () => {
+@@ -10022,6 +10121,7 @@ app.on('ready', async () => {
+   //   - 主窗销毁(app 退出)→ fallback 解析不到活 webContents,PtyManager 回落 dispose,
+   //     无需在这里手动 wire shutdown 钩子。
+   registerTerminalHandlers({
++    policy: createVibeLinkTerminalPolicy(),
+     getFallbackOwner: () =>
+       mainWindowRef && !mainWindowRef.isDestroyed() ? mainWindowRef.webContents : null,
+   });
+@@ -10148,6 +10248,9 @@ app.on('ready', async () => {
    registerProviderShareIpc();
    // 自建中转服务(docs/self-hosted-relay-plan.md):本机中转与加入别的中转。
    registerSelfHostedRelayIpc();
@@ -473,6 +489,40 @@ index b842bf8d..d5649b29 100644
    registerProviderGroupIpc({ reshare: providerGroupReshare });
    registerProviderGroupRemoteHandler({ onGroupChanged: () => providerGroupReshare.kick('group') });
    registerProviderGroupReshare();
+diff --git a/apps/desktop/src/main/maker-host/__tests__/claudeAuthAdapterOAuthEnv.test.ts b/apps/desktop/src/main/maker-host/__tests__/claudeAuthAdapterOAuthEnv.test.ts
+index d86087f4..2c95c1e5 100644
+--- a/apps/desktop/src/main/maker-host/__tests__/claudeAuthAdapterOAuthEnv.test.ts
++++ b/apps/desktop/src/main/maker-host/__tests__/claudeAuthAdapterOAuthEnv.test.ts
+@@ -150,6 +150,29 @@ describe('DesktopClaudeAuthAdapter — Claude 订阅只经 CLI 自己的登录',
+     h.legacyMigrations = 0;
+   });
+ 
++  it('VibeLink implicit Claude uses official CLI login even when a Cindy gateway key exists', async () => {
++    vi.stubEnv('CINDY_VIBELINK_EMBEDDED', '1');
++    try {
++      const adapter = await makeAdapter();
++      await expect(adapter.getState({ model: 'claude-opus-4-7' })).resolves.toMatchObject({ authenticated: true, authSource: 'oauth' });
++      const env = await adapter.getAuthEnv({ model: 'claude-opus-4-7' });
++      for (const key of CREDENTIAL_KEYS) expect(env[key]).toBeUndefined();
++    } finally { vi.unstubAllEnvs(); }
++  });
++
++  it('VibeLink missing native login never falls back to a gateway credential; explicit API choice stays explicit', async () => {
++    vi.stubEnv('CINDY_VIBELINK_EMBEDDED', '1');
++    try {
++      h.nativeLogin = false;
++      const adapter = await makeAdapter();
++      await expect(adapter.getState({ model: 'claude' })).resolves.toMatchObject({ authenticated: false, errorReason: 'no_oauth' });
++      const env = await adapter.getAuthEnv({ model: 'claude' });
++      for (const key of CREDENTIAL_KEYS) expect(env[key]).toBeUndefined();
++      await expect(adapter.getState({ credentialMode: 'gateway-key' })).resolves.toMatchObject({ authenticated: true, authSource: 'api-key' });
++      await expect(adapter.getAuthEnv({ credentialMode: 'gateway-key' })).resolves.toMatchObject({ ANTHROPIC_API_KEY: 'sk-xd-gateway' });
++    } finally { vi.unstubAllEnvs(); }
++  });
++
+   it('keeps the owner-scoped BYOK key readable when Cindy gateway access is disabled', async () => {
+     h.canUseGateway = false;
+     const { readClaudeApiKey, readOwnerScopedXdGatewayKey } = mod;
 diff --git a/apps/desktop/src/main/maker-host/__tests__/piNativeSubscriptionForwarding.test.ts b/apps/desktop/src/main/maker-host/__tests__/piNativeSubscriptionForwarding.test.ts
 index c0eb9547..acc54d98 100644
 --- a/apps/desktop/src/main/maker-host/__tests__/piNativeSubscriptionForwarding.test.ts
@@ -571,6 +621,91 @@ index 40fadc5f..4b6f61b1 100644
      const upstream = piNativeUpstream(providerId, ctx.url);
      if (ctx.method !== 'POST' || !upstream) {
        res.writeHead(404, { 'content-type': 'application/json; charset=utf-8' });
+diff --git a/apps/desktop/src/main/maker-host/auth-adapters.ts b/apps/desktop/src/main/maker-host/auth-adapters.ts
+index d9b9d79d..eac291b0 100644
+--- a/apps/desktop/src/main/maker-host/auth-adapters.ts
++++ b/apps/desktop/src/main/maker-host/auth-adapters.ts
+@@ -93,6 +93,7 @@ import { CLAUDE_PROVIDER_AUTH_PLACEHOLDER_KEY, isAnthropicWireModel } from './cl
+ import { hasClaudeNativeLogin } from './claude-native-auth.js';
+ import { disconnectClaudeNativeLogin, readClaudeNativeLogin } from './claude-native-connection.js';
+ import { claudeCliNetworkEnv } from './claude-native-cli.js';
++import { nativeClaudeProfileEnv } from './vibelink-claude-profile.js';
+ import { ensureLegacyClaudeConfigMigrated } from './claude-legacy-config-migration.js';
+ import { isAnthropicCompatProxyHandleReady } from './anthropic-compat-proxy-host.js';
+ import { claudeUpstreamEndpoint } from './runtime-configs.js';
+@@ -553,6 +554,15 @@ function claudeSubscriptionServesModel(model: string | undefined): boolean {
+   return model === undefined || isAnthropicWireModel(model);
+ }
+ 
++// A VibeLink subscription default is selected by its official CLI login, never
++// by the presence of an unrelated Cindy gateway credential. Explicit API sources
++// keep their own configuration and never impersonate that subscription.
++function nativeClaudeDefault(options?: AuthAdapterOptions): boolean {
++  return process.env.CINDY_VIBELINK_EMBEDDED === '1'
++    && !options?.providerId && !options?.credentialMode
++    && (options?.model === 'claude' || claudeSubscriptionServesModel(options?.model));
++}
++
+ /** Claude AuthAdapter —— 只回鉴权 env, endpoint / behavior flag 走 runtime-configs.ts。 */
+ export class DesktopClaudeAuthAdapter implements AuthAdapter {
+   private readonly sharedSkillsPreparation = new PreparationCache(30_000);
+@@ -674,7 +684,7 @@ export class DesktopClaudeAuthAdapter implements AuthAdapter {
+       return { authenticated: true, identity: 'Provider · Proxy', authSource: 'api-key' };
+     }
+     // Claude 订阅:由 CLI 用本机 Claude Code 的登录直连 Anthropic(不经 loopback proxy)。
+-    if (options?.credentialMode === 'oauth-bearer') {
++    if (options?.credentialMode === 'oauth-bearer' || nativeClaudeDefault(options)) {
+       return claudeNativeLoginState();
+     }
+     // 未指定来源:有网关 key 就走网关(与未连订阅时一致);没有才交给本机 Claude Code
+@@ -722,23 +732,23 @@ export class DesktopClaudeAuthAdapter implements AuthAdapter {
+     } else if (options?.credentialMode === 'provider-oauth') {
+       // 真实供应商凭证只留在 host/proxy;占位 key 仅用于通过 CC CLI 本地鉴权检查。
+       env.ANTHROPIC_API_KEY = CLAUDE_PROVIDER_AUTH_PLACEHOLDER_KEY;
+-    } else if (options?.credentialMode === 'oauth-bearer') {
++    } else if (options?.credentialMode === 'oauth-bearer' || nativeClaudeDefault(options)) {
+       // Claude 订阅:不递凭证,CLI 读自己的登录;只补系统代理(CLI 不读系统代理设置)。
+-      Object.assign(env, await claudeCliNetworkEnv());
++      Object.assign(env, nativeClaudeProfileEnv(), await claudeCliNetworkEnv());
+     } else {
+       // 未指定来源:与 getState 同序 —— 有网关 key 走网关;否则 Anthropic 模型交给本机
+       // Claude Code 登录,其它模型经 proxy 隐式桥(只带占位 key,真实凭证由 proxy 注入)。
+       const apiKey = readClaudeApiKey();
+       if (apiKey) env.ANTHROPIC_API_KEY = apiKey;
+       else if (hasClaudeNativeLogin()) {
+-        if (claudeSubscriptionServesModel(options?.model)) Object.assign(env, await claudeCliNetworkEnv());
++        if (claudeSubscriptionServesModel(options?.model)) Object.assign(env, nativeClaudeProfileEnv(), await claudeCliNetworkEnv());
+         else env.ANTHROPIC_API_KEY = CLAUDE_PROVIDER_AUTH_PLACEHOLDER_KEY;
+       }
+     }
+     // 所有来源都用 CLI 默认配置目录(dev 多实例与正式版一致,不设 CLAUDE_CONFIG_DIR):
+     // 订阅会话的凭证库按配置目录区分,隔离会看不到本机已有的 Claude Code 登录。
+     // 旧版 dev 隔离在 <userData>/claude-home 的转录,拉起 CLI 前补拷到默认目录供 resume。
+-    await ensureLegacyClaudeConfigMigrated();
++    if (process.env.CINDY_VIBELINK_EMBEDDED !== '1') await ensureLegacyClaudeConfigMigrated();
+     return env;
+   }
+ 
+diff --git a/apps/desktop/src/main/maker-host/claude-native-cli.ts b/apps/desktop/src/main/maker-host/claude-native-cli.ts
+index 8a135e5f..ee14f6f7 100644
+--- a/apps/desktop/src/main/maker-host/claude-native-cli.ts
++++ b/apps/desktop/src/main/maker-host/claude-native-cli.ts
+@@ -15,6 +15,7 @@
+  */
+ 
+ import { spawn, type ChildProcess } from 'node:child_process';
++import { nativeClaudeProfileEnv } from './vibelink-claude-profile.js';
+ 
+ import { cleanProcessEnv } from '@cindy/maker-core';
+ import { hasProxyEnvConfig, parseOutboundProxyUrl } from '@cindy/anthropic-compat-proxy';
+@@ -100,6 +101,7 @@ function cliBinaryPath(): string | null {
+ async function cliEnv(options: { network: boolean }): Promise<NodeJS.ProcessEnv> {
+   return {
+     ...cleanProcessEnv(),
++    ...nativeClaudeProfileEnv(),
+     ...(options.network ? await claudeCliNetworkEnv() : {}),
+   };
+ }
 diff --git a/apps/desktop/src/main/maker-host/index.ts b/apps/desktop/src/main/maker-host/index.ts
 index 658cb444..90d9593f 100644
 --- a/apps/desktop/src/main/maker-host/index.ts
@@ -642,6 +777,435 @@ index 658cb444..90d9593f 100644
          },
          onBeforeStart: async ({ agentKind, workingDir, remoteHostId }) => {
            // 延迟记忆重启 pending 时,本地 Codex 新会话加入 shared host 前先尝试
+diff --git a/apps/desktop/src/main/maker-ipc/__tests__/terminalHandlers.test.ts b/apps/desktop/src/main/maker-ipc/__tests__/terminalHandlers.test.ts
+index 554152f9..9bdd5dba 100644
+--- a/apps/desktop/src/main/maker-ipc/__tests__/terminalHandlers.test.ts
++++ b/apps/desktop/src/main/maker-ipc/__tests__/terminalHandlers.test.ts
+@@ -5,6 +5,8 @@ import type { IpcMainInvokeEvent, WebContents } from 'electron';
+ const mocks = vi.hoisted(() => ({
+   ipcHandle: vi.fn(),
+   managerCreate: vi.fn(() => ({ shellId: 'bash', shellDisplayName: 'Bash', pid: 123 })),
++  managerDispose: vi.fn(),
++  managerRestart: vi.fn(() => ({ shellId: 'bash', shellDisplayName: 'CLI', pid: 124 })),
+   getDefaultShellPref: vi.fn(() => 'bash' as const),
+ }));
+ 
+@@ -15,6 +17,9 @@ vi.mock('electron', () => ({
+ vi.mock('../../terminal/ptyManager.js', () => ({
+   PtyManager: class {
+     create = mocks.managerCreate;
++    dispose = mocks.managerDispose;
++    has = () => true;
++    restart = mocks.managerRestart;
+   },
+ }));
+ 
+@@ -28,7 +33,7 @@ vi.mock('../../terminal/terminalPrefsStore.js', () => ({
+ }));
+ 
+ import { TERMINAL_INVOKE } from '../channels';
+-import { registerTerminalHandlers } from '../terminal-handlers';
++import { registerTerminalHandlers, type TerminalAccessPolicy } from '../terminal-handlers';
+ 
+ type InvokeHandler = (event: IpcMainInvokeEvent, params: unknown) => unknown;
+ 
+@@ -78,3 +83,54 @@ describe('terminal CREATE shell preference', () => {
+     expect(mocks.managerCreate).not.toHaveBeenCalled();
+   });
+ });
++
++describe('terminal CLI capability boundary', () => {
++  beforeEach(() => vi.clearAllMocks());
++  function policy(): TerminalAccessPolicy {
++    return { attach: vi.fn(), authorize: vi.fn(() => ({ key: 'login-epoch' })),
++      resolveCli: vi.fn(async () => ({ cwd: '/private/workspace', env: { MODEL_TOKEN: 'model-only' },
++        program: { command: '/official/cli', args: ['auth', 'login'], displayName: 'CLI Login' } })),
++      created: vi.fn(), disposed: vi.fn() };
++  }
++  it('only Main resolves the executable and environment of a fixed CLI intent', async () => {
++    const access = policy(); registerTerminalHandlers({ policy: access });
++    await invokeCreate({ id: 'cli-1', cwd: '', cli: { agent: 'claude', mode: 'login' }, command: 'renderer-command', env: { OTHER: 'bad' } });
++    expect(mocks.managerCreate).toHaveBeenCalledWith(expect.objectContaining({ cwd: '/private/workspace',
++      program: { command: '/official/cli', args: ['auth', 'login'], displayName: 'CLI Login' }, env: { MODEL_TOKEN: 'model-only' } }));
++    expect(access.created).toHaveBeenCalledOnce();
++  });
++  it('revalidates the original login epoch before spawning a delayed CLI launch', async () => {
++    const access = policy(); registerTerminalHandlers({ policy: access });
++    vi.mocked(access.authorize).mockImplementationOnce(() => ({ key: 'old-login' })).mockImplementation(() => { throw new Error('login changed'); });
++    await expect(invokeCreate({ id: 'late-cli', cwd: '', cli: { agent: 'opencode2', mode: 'chat' } })).rejects.toThrow('login changed');
++    expect(mocks.managerCreate).not.toHaveBeenCalled();
++  });
++  it('rejects native shell creation before spawn when the current account cannot execute locally', () => {
++    const access = policy(); registerTerminalHandlers({ policy: access });
++    vi.mocked(access.authorize).mockImplementation(() => { throw new Error('login required'); });
++    expect(() => invokeCreate({ id: 'shell', cwd: '/tmp' })).toThrow('login required');
++    expect(mocks.managerCreate).not.toHaveBeenCalled();
++  });
++  it('does not expose CLI spawning in an unverified legacy host', () => {
++    registerTerminalHandlers();
++    expect(() => invokeCreate({ id: 'cli', cwd: '', cli: { agent: 'codex', mode: 'chat' } })).toThrow(/verified VibeLink/);
++    expect(mocks.managerCreate).not.toHaveBeenCalled();
++  });
++  it('disposes a process if login expires between spawn and identity binding', async () => {
++    const access = policy(); registerTerminalHandlers({ policy: access });
++    vi.mocked(access.created).mockImplementation(() => { throw new Error('expired'); });
++    await expect(invokeCreate({ id: 'expiry-cli', cwd: '', cli: { agent: 'claude', mode: 'chat' } })).rejects.toThrow('expired');
++    expect(mocks.managerDispose).toHaveBeenCalledExactlyOnceWith('expiry-cli');
++  });
++  it('renews the model-only CLI environment on explicit reopen', async () => {
++    const access = policy(); registerTerminalHandlers({ policy: access });
++    await invokeCreate({ id: 'ds-cli', cwd: '', cli: { agent: 'opencode2', mode: 'chat' } });
++    const renewed = { cwd: '/private/workspace', env: { MODEL_TOKEN: 'fresh-model-only' },
++      program: { command: '/official/cli', args: [], displayName: 'OpenCode2' } };
++    vi.mocked(access.resolveCli).mockResolvedValueOnce(renewed);
++    const handler = mocks.ipcHandle.mock.calls.find(([channel]) => channel === TERMINAL_INVOKE.RESTART)![1] as InvokeHandler;
++    await handler({ sender: { isDestroyed: () => false } } as IpcMainInvokeEvent, 'ds-cli');
++    expect(access.resolveCli).toHaveBeenCalledTimes(2);
++    expect(mocks.managerRestart).toHaveBeenCalledWith('ds-cli', expect.anything(), renewed);
++  });
++});
+diff --git a/apps/desktop/src/main/maker-ipc/terminal-handlers.ts b/apps/desktop/src/main/maker-ipc/terminal-handlers.ts
+index 224fcb4f..95822d31 100644
+--- a/apps/desktop/src/main/maker-ipc/terminal-handlers.ts
++++ b/apps/desktop/src/main/maker-ipc/terminal-handlers.ts
+@@ -31,6 +31,7 @@ import {
+   getDefaultShellPref,
+   setDefaultShellPref,
+ } from '../terminal/terminalPrefsStore.js';
++import type { TerminalCliIntent } from '../../shared/terminal-bridge.js';
+ 
+ const VALID_SHELL_PREFS: ReadonlySet<ShellId> = new Set<ShellId>([
+   'auto',
+@@ -46,6 +47,7 @@ const VALID_SHELL_PREFS: ReadonlySet<ShellId> = new Set<ShellId>([
+ ]);
+ 
+ export interface TerminalHandlersOptions {
++  policy?: TerminalAccessPolicy;
+   /**
+    * owner webContents destroyed 时的 PTY 接管者(典型:主窗 webContents)。
+    * RSB 独立子窗口销毁时把它名下的 PTY 转移回主窗保活,而不是杀掉;
+@@ -54,6 +56,15 @@ export interface TerminalHandlersOptions {
+   getFallbackOwner?: () => WebContents | null;
+ }
+ 
++/** Privileged CLI resolution stays in Main; Renderer sends only a fixed runner intent. */
++export interface TerminalAccessPolicy {
++  attach(manager: PtyManager): void;
++  authorize(event: IpcMainInvokeEvent, id?: string, proof?: unknown): unknown;
++  resolveCli(intent: unknown, proof: unknown): Promise<Pick<CreateOptions, 'cwd' | 'program' | 'env'>>;
++  created(event: IpcMainInvokeEvent, id: string, proof: unknown): void;
++  disposed(id: string): void;
++}
++
+ /**
+  * 在 main 进程注册所有终端 IPC handler。
+  * 必须只调一次（重复注册会被 ipcMain 抛错）。返回 PtyManager 实例供调用方在
+@@ -73,9 +84,25 @@ export function registerTerminalHandlers(options?: TerminalHandlersOptions): Pty
+       ? () => options.getFallbackOwner?.() ?? null
+       : undefined,
+   });
++  const policy = options?.policy;
++  policy?.attach(manager);
++  const cliIntents = new Map<string, unknown>();
+ 
+   ipcMain.handle(TERMINAL_INVOKE.CREATE, (event: IpcMainInvokeEvent, params: unknown) => {
+     const opts = parseCreateParams(params, event.sender);
++    const proof = policy?.authorize(event, opts.id);
++    const cli = (params as { cli?: TerminalCliIntent }).cli;
++    if (cli !== undefined) {
++      if (!policy) throwIpcError('PRECONDITION_FAILED', 'CLI terminals require a verified VibeLink workspace');
++      return policy.resolveCli(cli, proof).then(plan => {
++        policy.authorize(event, opts.id, proof);
++        const result = manager.create({ ...opts, ...plan });
++        try { policy.created(event, opts.id, proof); }
++        catch (error) { manager.dispose(opts.id); throw error; }
++        cliIntents.set(opts.id, cli);
++        return result;
++      });
++    }
+     // Renderer callers normally omit shellPref. Resolve the persisted default
+     // once at the main-process create boundary so the session snapshots the
+     // choice and restart keeps using the same preference even if Settings
+@@ -87,6 +114,8 @@ export function registerTerminalHandlers(options?: TerminalHandlersOptions): Pty
+     };
+     try {
+       const result = manager.create(resolvedOpts);
++      try { policy?.created(event, opts.id, proof); }
++      catch (error) { manager.dispose(opts.id); throw error; }
+       return result satisfies CreateResult;
+     } catch (err) {
+       // 区分 shell not found vs 通用 spawn 失败。shellResolver 永远返回 ResolvedShell，
+@@ -99,29 +128,41 @@ export function registerTerminalHandlers(options?: TerminalHandlersOptions): Pty
+     }
+   });
+ 
+-  ipcMain.handle(TERMINAL_INVOKE.WRITE, (_event, idArg: unknown, dataArg: unknown) => {
++  ipcMain.handle(TERMINAL_INVOKE.WRITE, (event, idArg: unknown, dataArg: unknown) => {
+     const id = requireString(idArg, 'id');
++    policy?.authorize(event, id);
+     const data = requireString(dataArg, 'data');
+     if (!manager.has(id)) throwIpcError('TERMINAL_NOT_FOUND', `pty session not found: ${id}`);
+     manager.write(id, data);
+   });
+ 
+-  ipcMain.handle(TERMINAL_INVOKE.RESIZE, (_event, idArg: unknown, colsArg: unknown, rowsArg: unknown) => {
++  ipcMain.handle(TERMINAL_INVOKE.RESIZE, (event, idArg: unknown, colsArg: unknown, rowsArg: unknown) => {
+     const id = requireString(idArg, 'id');
++    policy?.authorize(event, id);
+     const cols = requirePositiveInt(colsArg, 'cols');
+     const rows = requirePositiveInt(rowsArg, 'rows');
+     if (!manager.has(id)) throwIpcError('TERMINAL_NOT_FOUND', `pty session not found: ${id}`);
+     manager.resize(id, cols, rows);
+   });
+ 
+-  ipcMain.handle(TERMINAL_INVOKE.DISPOSE, (_event, idArg: unknown) => {
++  ipcMain.handle(TERMINAL_INVOKE.DISPOSE, (event, idArg: unknown) => {
+     const id = requireString(idArg, 'id');
++    policy?.authorize(event, id);
+     manager.dispose(id);
++    cliIntents.delete(id);
++    policy?.disposed(id);
+   });
+ 
+   ipcMain.handle(TERMINAL_INVOKE.RESTART, (event, idArg: unknown) => {
+     const id = requireString(idArg, 'id');
++    const proof = policy?.authorize(event, id);
+     if (!manager.has(id)) throwIpcError('TERMINAL_NOT_FOUND', `pty session not found: ${id}`);
++    if (policy && cliIntents.has(id)) {
++      return policy.resolveCli(cliIntents.get(id), proof).then(plan => {
++        policy.authorize(event, id, proof);
++        return manager.restart(id, event.sender, plan);
++      });
++    }
+     try {
+       const result = manager.restart(id, event.sender);
+       return result satisfies CreateResult;
+@@ -137,15 +178,18 @@ export function registerTerminalHandlers(options?: TerminalHandlersOptions): Pty
+     }
+   });
+ 
+-  ipcMain.handle(TERMINAL_INVOKE.LIST_AVAILABLE_SHELLS, (): AvailableShell[] => {
++  ipcMain.handle(TERMINAL_INVOKE.LIST_AVAILABLE_SHELLS, (event): AvailableShell[] => {
++    policy?.authorize(event);
+     return probeAvailableShells();
+   });
+ 
+-  ipcMain.handle(TERMINAL_INVOKE.GET_DEFAULT_SHELL_PREF, (): ShellId => {
++  ipcMain.handle(TERMINAL_INVOKE.GET_DEFAULT_SHELL_PREF, (event): ShellId => {
++    policy?.authorize(event);
+     return getDefaultShellPref();
+   });
+ 
+-  ipcMain.handle(TERMINAL_INVOKE.SET_DEFAULT_SHELL_PREF, (_event, valueArg: unknown) => {
++  ipcMain.handle(TERMINAL_INVOKE.SET_DEFAULT_SHELL_PREF, (event, valueArg: unknown) => {
++    policy?.authorize(event);
+     if (typeof valueArg !== 'string' || !VALID_SHELL_PREFS.has(valueArg as ShellId)) {
+       throwIpcError('INVALID_PARAMS', `invalid shell pref: ${String(valueArg)}`);
+     }
+@@ -163,7 +207,7 @@ function parseCreateParams(raw: unknown, owner: WebContents): CreateOptions {
+   }
+   const obj = raw as Record<string, unknown>;
+   const id = requireString(obj.id, 'id');
+-  const cwd = requireString(obj.cwd, 'cwd');
++  const cwd = obj.cli === undefined ? requireString(obj.cwd, 'cwd') : '';
+   const cols = optionalPositiveInt(obj.cols);
+   const rows = optionalPositiveInt(obj.rows);
+   const shellPref = optionalShellPref(obj.shellPref);
+diff --git a/apps/desktop/src/main/terminal/__tests__/ptyManager.test.ts b/apps/desktop/src/main/terminal/__tests__/ptyManager.test.ts
+index 78353350..78be46ff 100644
+--- a/apps/desktop/src/main/terminal/__tests__/ptyManager.test.ts
++++ b/apps/desktop/src/main/terminal/__tests__/ptyManager.test.ts
+@@ -30,6 +30,7 @@ interface FakePty extends IPty {
+   __dataListenersDisposed: boolean;
+   __exitListenersDisposed: boolean;
+   __spawnEnv: Record<string, string | undefined>;
++  __spawnArgs: string[];
+ }
+ 
+ function makeFakePty(spawnArgs: { command: string; args: string[]; cols?: number; rows?: number; env?: Record<string, string | undefined> }): FakePty {
+@@ -85,6 +86,7 @@ function makeFakePty(spawnArgs: { command: string; args: string[]; cols?: number
+     __dataListenersDisposed: false,
+     __exitListenersDisposed: false,
+     __spawnEnv: spawnArgs.env ?? {},
++    __spawnArgs: [...spawnArgs.args],
+   };
+   return fake;
+ }
+@@ -351,6 +353,71 @@ describe('PtyManager.dispose', () => {
+ });
+ 
+ describe('PtyManager.restart', () => {
++  it('directly launches a Main-selected CLI with literal argv and retains its env and argv on restart', () => {
++    const mgr = makeManager();
++    const owner = makeFakeWebContents() as unknown as WebContents;
++    const program = { command: '/trusted/claude', args: ['--resume', 'session; $(never-run)'], displayName: 'Claude Code' };
++    const env = { HOME: '/isolated/cli-home', SECRET_FROM_HOST: undefined, CLI_FIXTURE: 'first' };
++    process.env.SECRET_FROM_HOST = 'must-not-inherit';
++    const first = mgr.create({ id: 'cli', cwd: '/workspace', owner, program, env });
++    const old = lastSpawn!;
++    expect(old.process).toBe('/trusted/claude');
++    expect(old.__spawnArgs).toEqual(['--resume', 'session; $(never-run)']);
++    expect(first.shellDisplayName).toBe('Claude Code');
++    expect(old.__writes).toEqual([]);
++    const firstEnv = { ...old.__spawnEnv };
++    program.args.push('unexpected');
++    program.command = '/changed';
++    env.CLI_FIXTURE = 'changed';
++    process.env.NEW_AFTER_CREATE = 'must-not-inherit-on-restart';
++    old.__triggerExit({ exitCode: 0 });
++    const restarted = mgr.restart('cli', owner);
++    expect(lastSpawn!.process).toBe('/trusted/claude');
++    expect(lastSpawn!.__spawnArgs).toEqual(['--resume', 'session; $(never-run)']);
++    expect(JSON.stringify(lastSpawn!.__spawnEnv) === JSON.stringify(firstEnv)).toBe(true);
++    expect(lastSpawn!.__spawnEnv.SECRET_FROM_HOST).toBeUndefined();
++    expect(restarted.shellDisplayName).toBe('Claude Code');
++    expect(old.__dataListenersDisposed).toBe(true);
++    expect(old.__exitListenersDisposed).toBe(true);
++    old.__triggerData('late old output');
++    expect(dataPayloads).toEqual([]);
++    mgr.dispose('cli');
++    expect(lastSpawn!.__killed).toBe(true);
++    expect(lastSpawn!.__dataListenersDisposed).toBe(true);
++    expect(lastSpawn!.__exitListenersDisposed).toBe(true);
++    delete process.env.SECRET_FROM_HOST;
++    delete process.env.NEW_AFTER_CREATE;
++  });
++
++  it('preserves default shell env overrides and deletions on restart', () => {
++    const mgr = makeManager();
++    const owner = makeFakeWebContents() as unknown as WebContents;
++    mgr.create({ id: 'shell', cwd: '/tmp', owner, env: { HOME: '/retained-home', PATH: '/trusted/bin' } });
++    const first = { ...lastSpawn!.__spawnEnv };
++    lastSpawn!.__triggerExit({ exitCode: 0 });
++    mgr.restart('shell', owner);
++    expect(JSON.stringify(lastSpawn!.__spawnEnv) === JSON.stringify(first)).toBe(true);
++  });
++
++  it('uses a freshly authorized Main plan on CLI restart without retaining the expired grant', () => {
++    const mgr = makeManager();
++    const owner = makeFakeWebContents() as unknown as WebContents;
++    const program = { command: '/trusted/opencode2', args: ['--standalone'], displayName: 'OpenCode2' };
++    mgr.create({ id: 'renew', cwd: '/scope/workspace', owner, program,
++      env: { VIBELINK_MODEL_GATEWAY_TOKEN: 'expired-fixture-grant', OLD_ONLY: 'must-disappear' } });
++    expect(() => mgr.restart('renew', owner, { cwd: '/new-scope', program, env: {} })).toThrow(/still running/);
++    expect(allSpawns).toHaveLength(1);
++    lastSpawn!.__triggerExit({ exitCode: 1 });
++    mgr.restart('renew', owner, { cwd: '/scope/workspace', program,
++      env: { VIBELINK_MODEL_GATEWAY_TOKEN: 'renewed-fixture-grant' } });
++    expect(lastSpawn!.__spawnEnv.VIBELINK_MODEL_GATEWAY_TOKEN).toBe('renewed-fixture-grant');
++    expect(lastSpawn!.__spawnEnv.OLD_ONLY).toBeUndefined();
++    expect(lastSpawn!.__spawnArgs).toEqual(['--standalone']);
++    lastSpawn!.__triggerExit({ exitCode: 0 });
++    mgr.restart('renew', owner);
++    expect(lastSpawn!.__spawnEnv.VIBELINK_MODEL_GATEWAY_TOKEN).toBe('renewed-fixture-grant');
++  });
++
+   it('exit 后 restart → 新 PTY 接管同 id', () => {
+     const mgr = makeManager();
+     const owner = makeFakeWebContents() as unknown as WebContents;
+diff --git a/apps/desktop/src/main/terminal/ptyManager.ts b/apps/desktop/src/main/terminal/ptyManager.ts
+index 784184d0..d82e4198 100644
+--- a/apps/desktop/src/main/terminal/ptyManager.ts
++++ b/apps/desktop/src/main/terminal/ptyManager.ts
+@@ -103,6 +103,8 @@ export interface CreateOptions {
+   owner: WebContents;
+   /** 额外 env 覆盖（不强制）。会跟 process.env 浅合并。 */
+   env?: Record<string, string | undefined>;
++  /** Main-only fixed CLI launch; never accepted directly from a renderer request. */
++  program?: { command: string; args: string[]; displayName: string };
+ }
+ 
+ export interface CreateResult {
+@@ -140,6 +142,9 @@ interface PtySession {
+   cols: number;
+   rows: number;
+   shellPref: ShellId | null;
++  program: CreateOptions['program'];
++  /** Final scrubbed launch environment, retained exactly for an explicit restart. */
++  env: Record<string, string>;
+   exit: ExitInfo | null;
+   owner: WebContents;
+   /** 累积待发的 input；flush 完清空。 */
+@@ -325,20 +330,29 @@ export class PtyManager {
+   }
+ 
+   /** 在已 exit 的 session 上重启；id 保留，PTY 实例替换。 */
+-  restart(id: string, owner: WebContents): CreateResult {
++  restart(id: string, owner: WebContents, renew?: Pick<CreateOptions, 'cwd' | 'program' | 'env'>): CreateResult {
+     const old = this.sessions.get(id);
+     if (!old) throw new Error(`terminal session not found: ${id}`);
+     if (!old.exit) throw new Error(`terminal session still running: ${id}`);
+     // 先 dispose 旧的（exit 后 kill 是 no-op，主要是解订阅 + 移出 Map）
+     this.dispose(id);
+-    return this.create({
++    const session = this.spawnSession({
+       id,
+       cwd: old.cwd,
+       cols: old.cols,
+       rows: old.rows,
+       shellPref: old.shellPref,
++      program: old.program,
++      ...renew,
+       owner,
+-    });
++    }, renew ? undefined : old.env);
++    this.sessions.set(id, session);
++    this.trackOwner(owner);
++    return {
++      shellId: session.resolved.id,
++      shellDisplayName: session.resolved.displayName,
++      pid: session.pty.pid,
++    };
+   }
+ 
+   /** 触发某 owner 的全部 session 关闭，用于 webContents destroyed。 */
+@@ -367,19 +381,21 @@ export class PtyManager {
+     }));
+   }
+ 
+-  private spawnSession(opts: CreateOptions): PtySession {
++  private spawnSession(opts: CreateOptions, retainedEnv?: Record<string, string>): PtySession {
+     const cols = opts.cols && opts.cols > 0 ? opts.cols : DEFAULT_COLS;
+     const rows = opts.rows && opts.rows > 0 ? opts.rows : DEFAULT_ROWS;
+-    const resolved = resolveShellForCreate(opts.shellPref ?? null);
++    const shell = resolveShellForCreate(opts.shellPref ?? null);
++    const program = opts.program ? { ...opts.program, args: [...opts.program.args] } : undefined;
++    const resolved = program ? { ...shell, ...program } : shell;
+ 
+     // 合并 env:先复制父进程环境,做平台兜底,再应用调用方显式覆盖。
+     // ENV_KEYS_TO_STRIP 与 TERM 仍在下方强制执行,不允许 opts.env 改写。
+-    const env: Record<string, string> = {};
+-    for (const [k, v] of Object.entries(process.env)) {
++    const env: Record<string, string> = { ...retainedEnv };
++    for (const [k, v] of Object.entries(retainedEnv ? {} : process.env)) {
+       if (typeof v === 'string') env[k] = v;
+     }
+-    ensureMacTerminalUtf8Locale(env, this.platform);
+-    if (opts.env) {
++    if (!retainedEnv) ensureMacTerminalUtf8Locale(env, this.platform);
++    if (!retainedEnv && opts.env) {
+       for (const [k, v] of Object.entries(opts.env)) {
+         if (typeof v === 'string') env[k] = v;
+         else if (v === undefined) delete env[k];
+@@ -401,7 +417,8 @@ export class PtyManager {
+       encoding: 'utf8',
+     };
+ 
+-    const pty = this.spawnFn(resolved.command, resolved.args, spawnOpts);
++    // node-pty executes this program/argv directly; no intermediary shell parses arguments.
++    const pty = this.spawnFn(resolved.command, [...resolved.args], spawnOpts);
+     const session: PtySession = {
+       id: opts.id,
+       pty,
+@@ -410,6 +427,8 @@ export class PtyManager {
+       cols,
+       rows,
+       shellPref: opts.shellPref ?? null,
++      program,
++      env: { ...env },
+       exit: null,
+       owner: opts.owner,
+       pendingInput: '',
 diff --git a/apps/desktop/src/main/voice-input/CodexResponsesTextModelClient.ts b/apps/desktop/src/main/voice-input/CodexResponsesTextModelClient.ts
 index 23ed9aa6..dab1a7f7 100644
 --- a/apps/desktop/src/main/voice-input/CodexResponsesTextModelClient.ts
@@ -1147,10 +1711,10 @@ index 8f777768..c3e32412 100644
        try {
          await exitLocalMode();
 diff --git a/apps/desktop/src/renderer/i18n/locales/de/common.json b/apps/desktop/src/renderer/i18n/locales/de/common.json
-index c258b6d1..7d26c4c2 100644
+index c258b6d1..ab51cc72 100644
 --- a/apps/desktop/src/renderer/i18n/locales/de/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/de/common.json
-@@ -18951,5 +18951,249 @@
+@@ -18951,5 +18951,268 @@
      "rendered": "Dokument anzeigen",
      "wrap": "Zeilenumbruch",
      "lineNumbers": "Zeilennummern"
@@ -1249,7 +1813,8 @@ index c258b6d1..7d26c4c2 100644
 +    "messages": "Gruppengespräch",
 +    "localRecords": "Lokale Sendeprotokolle",
 +    "dismissFailed": "Eintrag entfernen",
-+    "localHistory": "Lokale Gespräche"
++    "localHistory": "Lokale Gespräche",
++    "cliDefaultModel": "CLI default model (unspecified)"
 +  },
 +  "vibelinkNotifications": {
 +    "title": "Desktop-Erinnerungen",
@@ -1398,13 +1963,31 @@ index c258b6d1..7d26c4c2 100644
 +    "reason_off": "Operation is off",
 +    "reason_revoked": "Rule was revoked",
 +    "reason_matched": "Matched the rule"
++  },
++  "vibelinkCli": {
++    "open": "CLI terminal",
++    "closePanel": "Close CLI terminals",
++    "title": "Embedded CLI",
++    "agent": "CLI",
++    "new": "New conversation",
++    "login": "Sign in",
++    "chat": "Conversation",
++    "close": "Close terminal",
++    "noLogin": "DeepSeek through Magpie needs no CLI sign-in. Model access lasts 2 hours; close and create a terminal again, or reopen after exit, to refresh access.",
++    "independent": "Independent native CLI sessions. These terminals do not attach to an existing Hub Bot conversation. Switching the CLI selector keeps existing tabs; closing the panel ends its terminal processes.",
++    "unavailable": "This terminal requires a current local development login and the desktop bridge.",
++    "exited": "Process exited:",
++    "reopen": "Reopen",
++    "starting": "Starting CLI…",
++    "failed": "CLI operation failed. Check the message below and the CLI installation/sign-in status.",
++    "retry": "Retry"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/en/common.json b/apps/desktop/src/renderer/i18n/locales/en/common.json
-index bc45dcdd..29a46b96 100644
+index bc45dcdd..892d2b89 100644
 --- a/apps/desktop/src/renderer/i18n/locales/en/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/en/common.json
-@@ -18951,5 +18951,249 @@
+@@ -18951,5 +18951,268 @@
      "rendered": "View document",
      "wrap": "Wrap lines",
      "lineNumbers": "Line numbers"
@@ -1503,7 +2086,8 @@ index bc45dcdd..29a46b96 100644
 +    "messages": "Group conversation",
 +    "localRecords": "Local delivery records",
 +    "dismissFailed": "Remove record",
-+    "localHistory": "Local conversations"
++    "localHistory": "Local conversations",
++    "cliDefaultModel": "CLI default model (unspecified)"
 +  },
 +  "vibelinkNotifications": {
 +    "title": "Desktop reminders",
@@ -1652,13 +2236,31 @@ index bc45dcdd..29a46b96 100644
 +    "reason_off": "Operation is off",
 +    "reason_revoked": "Rule was revoked",
 +    "reason_matched": "Matched the rule"
++  },
++  "vibelinkCli": {
++    "open": "CLI terminal",
++    "closePanel": "Close CLI terminals",
++    "title": "Embedded CLI",
++    "agent": "CLI",
++    "new": "New conversation",
++    "login": "Sign in",
++    "chat": "Conversation",
++    "close": "Close terminal",
++    "noLogin": "DeepSeek through Magpie needs no CLI sign-in. Model access lasts 2 hours; close and create a terminal again, or reopen after exit, to refresh access.",
++    "independent": "Independent native CLI sessions. These terminals do not attach to an existing Hub Bot conversation. Switching the CLI selector keeps existing tabs; closing the panel ends its terminal processes.",
++    "unavailable": "This terminal requires a current local development login and the desktop bridge.",
++    "exited": "Process exited:",
++    "reopen": "Reopen",
++    "starting": "Starting CLI…",
++    "failed": "CLI operation failed. Check the message below and the CLI installation/sign-in status.",
++    "retry": "Retry"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/es/common.json b/apps/desktop/src/renderer/i18n/locales/es/common.json
-index d4d5c25a..66030617 100644
+index d4d5c25a..ec57c2ae 100644
 --- a/apps/desktop/src/renderer/i18n/locales/es/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/es/common.json
-@@ -19122,5 +19122,249 @@
+@@ -19122,5 +19122,268 @@
      "rendered": "Ver documento",
      "wrap": "Ajustar líneas",
      "lineNumbers": "Números de línea"
@@ -1757,7 +2359,8 @@ index d4d5c25a..66030617 100644
 +    "messages": "Conversación del grupo",
 +    "localRecords": "Envíos locales",
 +    "dismissFailed": "Quitar registro",
-+    "localHistory": "Conversaciones locales"
++    "localHistory": "Conversaciones locales",
++    "cliDefaultModel": "CLI default model (unspecified)"
 +  },
 +  "vibelinkNotifications": {
 +    "title": "Recordatorios de escritorio",
@@ -1906,13 +2509,31 @@ index d4d5c25a..66030617 100644
 +    "reason_off": "Operation is off",
 +    "reason_revoked": "Rule was revoked",
 +    "reason_matched": "Matched the rule"
++  },
++  "vibelinkCli": {
++    "open": "CLI terminal",
++    "closePanel": "Close CLI terminals",
++    "title": "Embedded CLI",
++    "agent": "CLI",
++    "new": "New conversation",
++    "login": "Sign in",
++    "chat": "Conversation",
++    "close": "Close terminal",
++    "noLogin": "DeepSeek through Magpie needs no CLI sign-in. Model access lasts 2 hours; close and create a terminal again, or reopen after exit, to refresh access.",
++    "independent": "Independent native CLI sessions. These terminals do not attach to an existing Hub Bot conversation. Switching the CLI selector keeps existing tabs; closing the panel ends its terminal processes.",
++    "unavailable": "This terminal requires a current local development login and the desktop bridge.",
++    "exited": "Process exited:",
++    "reopen": "Reopen",
++    "starting": "Starting CLI…",
++    "failed": "CLI operation failed. Check the message below and the CLI installation/sign-in status.",
++    "retry": "Retry"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/fr/common.json b/apps/desktop/src/renderer/i18n/locales/fr/common.json
-index 67f0538c..a0fa488d 100644
+index 67f0538c..417c9f06 100644
 --- a/apps/desktop/src/renderer/i18n/locales/fr/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/fr/common.json
-@@ -19122,5 +19122,249 @@
+@@ -19122,5 +19122,268 @@
      "rendered": "Afficher le document",
      "wrap": "Retour à la ligne",
      "lineNumbers": "Numéros de ligne"
@@ -2011,7 +2632,8 @@ index 67f0538c..a0fa488d 100644
 +    "messages": "Conversation du groupe",
 +    "localRecords": "Envois locaux",
 +    "dismissFailed": "Retirer l’entrée",
-+    "localHistory": "Conversations locales"
++    "localHistory": "Conversations locales",
++    "cliDefaultModel": "CLI default model (unspecified)"
 +  },
 +  "vibelinkNotifications": {
 +    "title": "Rappels sur cet ordinateur",
@@ -2160,13 +2782,31 @@ index 67f0538c..a0fa488d 100644
 +    "reason_off": "Operation is off",
 +    "reason_revoked": "Rule was revoked",
 +    "reason_matched": "Matched the rule"
++  },
++  "vibelinkCli": {
++    "open": "CLI terminal",
++    "closePanel": "Close CLI terminals",
++    "title": "Embedded CLI",
++    "agent": "CLI",
++    "new": "New conversation",
++    "login": "Sign in",
++    "chat": "Conversation",
++    "close": "Close terminal",
++    "noLogin": "DeepSeek through Magpie needs no CLI sign-in. Model access lasts 2 hours; close and create a terminal again, or reopen after exit, to refresh access.",
++    "independent": "Independent native CLI sessions. These terminals do not attach to an existing Hub Bot conversation. Switching the CLI selector keeps existing tabs; closing the panel ends its terminal processes.",
++    "unavailable": "This terminal requires a current local development login and the desktop bridge.",
++    "exited": "Process exited:",
++    "reopen": "Reopen",
++    "starting": "Starting CLI…",
++    "failed": "CLI operation failed. Check the message below and the CLI installation/sign-in status.",
++    "retry": "Retry"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/ja/common.json b/apps/desktop/src/renderer/i18n/locales/ja/common.json
-index e3383953..c0859195 100644
+index e3383953..b080e329 100644
 --- a/apps/desktop/src/renderer/i18n/locales/ja/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/ja/common.json
-@@ -18879,5 +18879,249 @@
+@@ -18879,5 +18879,268 @@
      "rendered": "文書を表示",
      "wrap": "行の折り返し",
      "lineNumbers": "行番号"
@@ -2265,7 +2905,8 @@ index e3383953..c0859195 100644
 +    "messages": "グループの会話",
 +    "localRecords": "この端末の送信記録",
 +    "dismissFailed": "記録を削除",
-+    "localHistory": "この端末の会話"
++    "localHistory": "この端末の会話",
++    "cliDefaultModel": "CLI default model (unspecified)"
 +  },
 +  "vibelinkNotifications": {
 +    "title": "デスクトップ通知",
@@ -2414,13 +3055,31 @@ index e3383953..c0859195 100644
 +    "reason_off": "Operation is off",
 +    "reason_revoked": "Rule was revoked",
 +    "reason_matched": "Matched the rule"
++  },
++  "vibelinkCli": {
++    "open": "CLI terminal",
++    "closePanel": "Close CLI terminals",
++    "title": "Embedded CLI",
++    "agent": "CLI",
++    "new": "New conversation",
++    "login": "Sign in",
++    "chat": "Conversation",
++    "close": "Close terminal",
++    "noLogin": "DeepSeek through Magpie needs no CLI sign-in. Model access lasts 2 hours; close and create a terminal again, or reopen after exit, to refresh access.",
++    "independent": "Independent native CLI sessions. These terminals do not attach to an existing Hub Bot conversation. Switching the CLI selector keeps existing tabs; closing the panel ends its terminal processes.",
++    "unavailable": "This terminal requires a current local development login and the desktop bridge.",
++    "exited": "Process exited:",
++    "reopen": "Reopen",
++    "starting": "Starting CLI…",
++    "failed": "CLI operation failed. Check the message below and the CLI installation/sign-in status.",
++    "retry": "Retry"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/ko/common.json b/apps/desktop/src/renderer/i18n/locales/ko/common.json
-index 30577f6d..ec57379c 100644
+index 30577f6d..c758dd3c 100644
 --- a/apps/desktop/src/renderer/i18n/locales/ko/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/ko/common.json
-@@ -18879,5 +18879,249 @@
+@@ -18879,5 +18879,268 @@
      "rendered": "문서 보기",
      "wrap": "자동 줄 바꿈",
      "lineNumbers": "줄 번호"
@@ -2519,7 +3178,8 @@ index 30577f6d..ec57379c 100644
 +    "messages": "그룹 대화",
 +    "localRecords": "로컬 전송 기록",
 +    "dismissFailed": "기록 제거",
-+    "localHistory": "로컬 대화"
++    "localHistory": "로컬 대화",
++    "cliDefaultModel": "CLI default model (unspecified)"
 +  },
 +  "vibelinkNotifications": {
 +    "title": "데스크톱 알림",
@@ -2668,13 +3328,31 @@ index 30577f6d..ec57379c 100644
 +    "reason_off": "Operation is off",
 +    "reason_revoked": "Rule was revoked",
 +    "reason_matched": "Matched the rule"
++  },
++  "vibelinkCli": {
++    "open": "CLI terminal",
++    "closePanel": "Close CLI terminals",
++    "title": "Embedded CLI",
++    "agent": "CLI",
++    "new": "New conversation",
++    "login": "Sign in",
++    "chat": "Conversation",
++    "close": "Close terminal",
++    "noLogin": "DeepSeek through Magpie needs no CLI sign-in. Model access lasts 2 hours; close and create a terminal again, or reopen after exit, to refresh access.",
++    "independent": "Independent native CLI sessions. These terminals do not attach to an existing Hub Bot conversation. Switching the CLI selector keeps existing tabs; closing the panel ends its terminal processes.",
++    "unavailable": "This terminal requires a current local development login and the desktop bridge.",
++    "exited": "Process exited:",
++    "reopen": "Reopen",
++    "starting": "Starting CLI…",
++    "failed": "CLI operation failed. Check the message below and the CLI installation/sign-in status.",
++    "retry": "Retry"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/pt-BR/common.json b/apps/desktop/src/renderer/i18n/locales/pt-BR/common.json
-index 7b546ee2..6e635b88 100644
+index 7b546ee2..da0f3f3e 100644
 --- a/apps/desktop/src/renderer/i18n/locales/pt-BR/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/pt-BR/common.json
-@@ -19122,5 +19122,249 @@
+@@ -19122,5 +19122,268 @@
      "rendered": "Ver documento",
      "wrap": "Quebra de linha",
      "lineNumbers": "Números de linha"
@@ -2773,7 +3451,8 @@ index 7b546ee2..6e635b88 100644
 +    "messages": "Conversa do grupo",
 +    "localRecords": "Registros locais de envio",
 +    "dismissFailed": "Remover registro",
-+    "localHistory": "Conversas locais"
++    "localHistory": "Conversas locais",
++    "cliDefaultModel": "CLI default model (unspecified)"
 +  },
 +  "vibelinkNotifications": {
 +    "title": "Lembretes do computador",
@@ -2922,13 +3601,31 @@ index 7b546ee2..6e635b88 100644
 +    "reason_off": "Operation is off",
 +    "reason_revoked": "Rule was revoked",
 +    "reason_matched": "Matched the rule"
++  },
++  "vibelinkCli": {
++    "open": "CLI terminal",
++    "closePanel": "Close CLI terminals",
++    "title": "Embedded CLI",
++    "agent": "CLI",
++    "new": "New conversation",
++    "login": "Sign in",
++    "chat": "Conversation",
++    "close": "Close terminal",
++    "noLogin": "DeepSeek through Magpie needs no CLI sign-in. Model access lasts 2 hours; close and create a terminal again, or reopen after exit, to refresh access.",
++    "independent": "Independent native CLI sessions. These terminals do not attach to an existing Hub Bot conversation. Switching the CLI selector keeps existing tabs; closing the panel ends its terminal processes.",
++    "unavailable": "This terminal requires a current local development login and the desktop bridge.",
++    "exited": "Process exited:",
++    "reopen": "Reopen",
++    "starting": "Starting CLI…",
++    "failed": "CLI operation failed. Check the message below and the CLI installation/sign-in status.",
++    "retry": "Retry"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/pt-PT/common.json b/apps/desktop/src/renderer/i18n/locales/pt-PT/common.json
-index bae75933..08d7f0a5 100644
+index bae75933..0fc12851 100644
 --- a/apps/desktop/src/renderer/i18n/locales/pt-PT/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/pt-PT/common.json
-@@ -19122,5 +19122,249 @@
+@@ -19122,5 +19122,268 @@
      "rendered": "Ver documento",
      "wrap": "Moldar linhas",
      "lineNumbers": "Números de linha"
@@ -3027,7 +3724,8 @@ index bae75933..08d7f0a5 100644
 +    "messages": "Conversa do grupo",
 +    "localRecords": "Registos locais de envio",
 +    "dismissFailed": "Remover registo",
-+    "localHistory": "Conversas locais"
++    "localHistory": "Conversas locais",
++    "cliDefaultModel": "CLI default model (unspecified)"
 +  },
 +  "vibelinkNotifications": {
 +    "title": "Lembretes do computador",
@@ -3176,13 +3874,31 @@ index bae75933..08d7f0a5 100644
 +    "reason_off": "Operation is off",
 +    "reason_revoked": "Rule was revoked",
 +    "reason_matched": "Matched the rule"
++  },
++  "vibelinkCli": {
++    "open": "CLI terminal",
++    "closePanel": "Close CLI terminals",
++    "title": "Embedded CLI",
++    "agent": "CLI",
++    "new": "New conversation",
++    "login": "Sign in",
++    "chat": "Conversation",
++    "close": "Close terminal",
++    "noLogin": "DeepSeek through Magpie needs no CLI sign-in. Model access lasts 2 hours; close and create a terminal again, or reopen after exit, to refresh access.",
++    "independent": "Independent native CLI sessions. These terminals do not attach to an existing Hub Bot conversation. Switching the CLI selector keeps existing tabs; closing the panel ends its terminal processes.",
++    "unavailable": "This terminal requires a current local development login and the desktop bridge.",
++    "exited": "Process exited:",
++    "reopen": "Reopen",
++    "starting": "Starting CLI…",
++    "failed": "CLI operation failed. Check the message below and the CLI installation/sign-in status.",
++    "retry": "Retry"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/zh-CN/common.json b/apps/desktop/src/renderer/i18n/locales/zh-CN/common.json
-index dcd22815..6bb999b7 100644
+index dcd22815..4a817d09 100644
 --- a/apps/desktop/src/renderer/i18n/locales/zh-CN/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/zh-CN/common.json
-@@ -18879,5 +18879,249 @@
+@@ -18879,5 +18879,268 @@
      "rendered": "查看文稿",
      "wrap": "自动换行",
      "lineNumbers": "行号"
@@ -3281,7 +3997,8 @@ index dcd22815..6bb999b7 100644
 +    "messages": "群聊记录",
 +    "localRecords": "本机发送记录",
 +    "dismissFailed": "移除记录",
-+    "localHistory": "本机对话"
++    "localHistory": "本机对话",
++    "cliDefaultModel": "CLI 默认模型（未指定）"
 +  },
 +  "vibelinkNotifications": {
 +    "title": "桌面提醒",
@@ -3430,13 +4147,31 @@ index dcd22815..6bb999b7 100644
 +    "reason_off": "运行已关闭",
 +    "reason_revoked": "规则已撤销",
 +    "reason_matched": "命中规则"
++  },
++  "vibelinkCli": {
++    "open": "CLI 界面",
++    "closePanel": "关闭 CLI 终端",
++    "title": "内嵌 CLI",
++    "agent": "运行器",
++    "new": "新建会话",
++    "login": "登录 CLI",
++    "chat": "对话",
++    "close": "关闭终端",
++    "noLogin": "DeepSeek 通过 Magpie 使用，无需 CLI 登录。模型授权有效 2 小时；到期后关闭并新建终端，或在进程退出后重新打开，可刷新授权。",
++    "independent": "这里运行独立的原生 CLI 会话，暂不接管已有 Hub Bot 的同一会话。切换运行器选择不会结束已有页签；关闭整个面板会结束其中的终端进程。",
++    "unavailable": "此终端需要有效的本机开发版登录和桌面桥接。",
++    "exited": "进程已退出：",
++    "reopen": "重新打开",
++    "starting": "正在启动 CLI…",
++    "failed": "CLI 操作失败，请查看下方信息并检查运行器安装与登录状态。",
++    "retry": "重试"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/zh-Hans-x-lzh/common.json b/apps/desktop/src/renderer/i18n/locales/zh-Hans-x-lzh/common.json
-index 56395a07..39d5afae 100644
+index 56395a07..855eefe1 100644
 --- a/apps/desktop/src/renderer/i18n/locales/zh-Hans-x-lzh/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/zh-Hans-x-lzh/common.json
-@@ -18879,5 +18879,249 @@
+@@ -18879,5 +18879,268 @@
      "rendered": "观文",
      "wrap": "折行",
      "lineNumbers": "行数"
@@ -3535,7 +4270,8 @@ index 56395a07..39d5afae 100644
 +    "messages": "群聊记录",
 +    "localRecords": "本机发送记录",
 +    "dismissFailed": "移除记录",
-+    "localHistory": "本机对话"
++    "localHistory": "本机对话",
++    "cliDefaultModel": "CLI 默认模型（未指定）"
 +  },
 +  "vibelinkNotifications": {
 +    "title": "桌面提醒",
@@ -3684,13 +4420,31 @@ index 56395a07..39d5afae 100644
 +    "reason_off": "运行已关闭",
 +    "reason_revoked": "规则已撤销",
 +    "reason_matched": "命中规则"
++  },
++  "vibelinkCli": {
++    "open": "CLI 界面",
++    "closePanel": "关闭 CLI 终端",
++    "title": "内嵌 CLI",
++    "agent": "运行器",
++    "new": "新建会话",
++    "login": "登录 CLI",
++    "chat": "对话",
++    "close": "关闭终端",
++    "noLogin": "DeepSeek 通过 Magpie 使用，无需 CLI 登录。模型授权有效 2 小时；到期后关闭并新建终端，或在进程退出后重新打开，可刷新授权。",
++    "independent": "这里运行独立的原生 CLI 会话，暂不接管已有 Hub Bot 的同一会话。切换运行器选择不会结束已有页签；关闭整个面板会结束其中的终端进程。",
++    "unavailable": "此终端需要有效的本机开发版登录和桌面桥接。",
++    "exited": "进程已退出：",
++    "reopen": "重新打开",
++    "starting": "正在启动 CLI…",
++    "failed": "CLI 操作失败，请查看下方信息并检查运行器安装与登录状态。",
++    "retry": "重试"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/zh-Hant-x-lzh/common.json b/apps/desktop/src/renderer/i18n/locales/zh-Hant-x-lzh/common.json
-index f35e1826..43e5498f 100644
+index f35e1826..219bf417 100644
 --- a/apps/desktop/src/renderer/i18n/locales/zh-Hant-x-lzh/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/zh-Hant-x-lzh/common.json
-@@ -18879,5 +18879,249 @@
+@@ -18879,5 +18879,268 @@
      "rendered": "觀文",
      "wrap": "折行",
      "lineNumbers": "行數"
@@ -3789,7 +4543,8 @@ index f35e1826..43e5498f 100644
 +    "messages": "群聊記錄",
 +    "localRecords": "本機傳送記錄",
 +    "dismissFailed": "移除記錄",
-+    "localHistory": "本機對話"
++    "localHistory": "本機對話",
++    "cliDefaultModel": "CLI 默认模型（未指定）"
 +  },
 +  "vibelinkNotifications": {
 +    "title": "桌面提醒",
@@ -3938,13 +4693,31 @@ index f35e1826..43e5498f 100644
 +    "reason_off": "运行已关闭",
 +    "reason_revoked": "规则已撤销",
 +    "reason_matched": "命中规则"
++  },
++  "vibelinkCli": {
++    "open": "CLI 界面",
++    "closePanel": "关闭 CLI 终端",
++    "title": "内嵌 CLI",
++    "agent": "运行器",
++    "new": "新建会话",
++    "login": "登录 CLI",
++    "chat": "对话",
++    "close": "关闭终端",
++    "noLogin": "DeepSeek 通过 Magpie 使用，无需 CLI 登录。模型授权有效 2 小时；到期后关闭并新建终端，或在进程退出后重新打开，可刷新授权。",
++    "independent": "这里运行独立的原生 CLI 会话，暂不接管已有 Hub Bot 的同一会话。切换运行器选择不会结束已有页签；关闭整个面板会结束其中的终端进程。",
++    "unavailable": "此终端需要有效的本机开发版登录和桌面桥接。",
++    "exited": "进程已退出：",
++    "reopen": "重新打开",
++    "starting": "正在启动 CLI…",
++    "failed": "CLI 操作失败，请查看下方信息并检查运行器安装与登录状态。",
++    "retry": "重试"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/zh-TW/common.json b/apps/desktop/src/renderer/i18n/locales/zh-TW/common.json
-index 7075672e..c63c6698 100644
+index 7075672e..5c93e177 100644
 --- a/apps/desktop/src/renderer/i18n/locales/zh-TW/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/zh-TW/common.json
-@@ -18879,5 +18879,249 @@
+@@ -18879,5 +18879,268 @@
      "rendered": "查看文件",
      "wrap": "自動換行",
      "lineNumbers": "行號"
@@ -4043,7 +4816,8 @@ index 7075672e..c63c6698 100644
 +    "messages": "群聊記錄",
 +    "localRecords": "本機傳送記錄",
 +    "dismissFailed": "移除記錄",
-+    "localHistory": "本機對話"
++    "localHistory": "本機對話",
++    "cliDefaultModel": "CLI 默认模型（未指定）"
 +  },
 +  "vibelinkNotifications": {
 +    "title": "桌面提醒",
@@ -4192,6 +4966,24 @@ index 7075672e..c63c6698 100644
 +    "reason_off": "运行已关闭",
 +    "reason_revoked": "规则已撤销",
 +    "reason_matched": "命中规则"
++  },
++  "vibelinkCli": {
++    "open": "CLI 界面",
++    "closePanel": "关闭 CLI 终端",
++    "title": "内嵌 CLI",
++    "agent": "运行器",
++    "new": "新建会话",
++    "login": "登录 CLI",
++    "chat": "对话",
++    "close": "关闭终端",
++    "noLogin": "DeepSeek 通过 Magpie 使用，无需 CLI 登录。模型授权有效 2 小时；到期后关闭并新建终端，或在进程退出后重新打开，可刷新授权。",
++    "independent": "这里运行独立的原生 CLI 会话，暂不接管已有 Hub Bot 的同一会话。切换运行器选择不会结束已有页签；关闭整个面板会结束其中的终端进程。",
++    "unavailable": "此终端需要有效的本机开发版登录和桌面桥接。",
++    "exited": "进程已退出：",
++    "reopen": "重新打开",
++    "starting": "正在启动 CLI…",
++    "failed": "CLI 操作失败，请查看下方信息并检查运行器安装与登录状态。",
++    "retry": "重试"
    }
  }
 diff --git a/apps/desktop/src/renderer/lib/authService.ts b/apps/desktop/src/renderer/lib/authService.ts
@@ -4313,6 +5105,24 @@ index 9c134caf..b8bb9710 100644
  const HANDOFF_PHASES = [
    'boot',
    'settle',
+diff --git a/apps/desktop/src/shared/terminal-bridge.ts b/apps/desktop/src/shared/terminal-bridge.ts
+index f8a36361..01606297 100644
+--- a/apps/desktop/src/shared/terminal-bridge.ts
++++ b/apps/desktop/src/shared/terminal-bridge.ts
+@@ -33,6 +33,13 @@ export interface TerminalCreateParams {
+   rows?: number;
+   /** Settings 用户偏好；不传走 main 端的 GET_DEFAULT_SHELL_PREF。 */
+   shellPref?: ShellId | null;
++  /** Fixed runner intent. Executable paths, arguments and credentials are resolved in Main. */
++  cli?: TerminalCliIntent;
++}
++
++export interface TerminalCliIntent {
++  agent: 'codex' | 'opencode2' | 'claude' | 'gemini';
++  mode: 'chat' | 'login';
+ }
+ 
+ export interface TerminalCreateResult {
 diff --git a/apps/desktop/vite.main.config.ts b/apps/desktop/vite.main.config.ts
 index 12672af3..c01d5685 100644
 --- a/apps/desktop/vite.main.config.ts

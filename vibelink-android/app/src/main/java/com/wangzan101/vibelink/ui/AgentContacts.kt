@@ -40,7 +40,9 @@ const val VIBELINK_AGENT_ID = "vibelink"
 
 fun agentDisplayName(id: String): String = when (id) {
     VIBELINK_AGENT_ID -> "Mika"
-    "opencode" -> "opencode"
+    "opencode" -> "OpenCode（历史）"
+    "opencode2" -> "OpenCode2"
+    "gemini" -> "Gemini CLI"
     "deepseek" -> "DeepSeek"
     "codex" -> "Codex"
     "claude" -> "Claude Code"

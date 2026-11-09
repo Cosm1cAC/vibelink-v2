@@ -1231,33 +1231,33 @@ fun TeamGroupChatScreen(
             title = { Text("成员模型", color = c.ink) },
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    Text("按成员绑定模型，下次发送时使用。会话由 Codex 管理。", style = VibeLinkType.Hint, color = c.ink2)
+                    Text("按成员绑定模型，下次发送时使用。会话由对应的 CLI 运行器管理。", style = VibeLinkType.Hint, color = c.ink2)
                     memberBots.forEach { bot ->
                         val busy = bot.id in runningBotIds
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                 Text(bot.name, style = VibeLinkType.BodyStrong, color = c.ink, modifier = Modifier.weight(1f))
-                                Text(if (busy) "执行中" else "Codex", style = VibeLinkType.Hint, color = c.ink3)
+                                Text(if (busy) "执行中" else BotModelPolicy.label(bot.engine), style = VibeLinkType.Hint, color = c.ink3)
                             }
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 BotModelPolicy.models.forEach { choice ->
                                     val selected = if (choice.isEmpty()) bot.model.isEmpty() || bot.model.startsWith("gpt-") else bot.model == choice
                                     Box(
-                                        Modifier.weight(1f)
+                                        Modifier
                                             .clip(RoundedCornerShape(12.dp))
                                             .background(if (selected) c.accent.copy(alpha = 0.12f) else c.fill)
                                             .border(1.dp, if (selected) c.accent else c.edge, RoundedCornerShape(12.dp))
                                             .clickable(enabled = !busy) {
                                                 if (!selected) {
                                                     val latest = BotTeamStore.getBot(ctx, bot.id) ?: bot
-                                                    BotTeamStore.upsertBot(ctx, latest.copy(engine = "codex", model = choice))
+                                                    BotTeamStore.upsertBot(ctx, BotRuntimeSettings.selectModel(latest, choice, com.wangzan101.vibelink.BuildConfig.IS_BETA_EDITION))
                                                 }
                                             }
                                             .padding(horizontal = 10.dp, vertical = 12.dp),
                                         contentAlignment = Alignment.Center,
                                     ) {
                                         Text(
-                                            (if (selected) "✓ " else "") + if (choice == BotModelPolicy.DEEPSEEK_MODEL) "DeepSeek" else "GPT",
+                                            (if (selected) "✓ " else "") + BotProfilePresentation.modelName("", choice, null),
                                             style = VibeLinkType.BodyStrong,
                                             color = if (selected) c.accent else c.ink2,
                                         )
@@ -1463,6 +1463,7 @@ fun CreateOrEditBotDialog(
         selectedTemplate = tpl
         templateId = tpl.id
         model = BotModelPolicy.modelAfterTemplateChange(model, modelExplicitlySelected, tpl.id)
+        engine = BotModelPolicy.engineForModel(model)
         name = tpl.defaultName.ifBlank { tpl.jobTitle }
         if (avatar.isBlank() || avatar.startsWith("preset:")) {
             avatar = tpl.defaultAvatar
@@ -1585,7 +1586,7 @@ fun CreateOrEditBotDialog(
                                             jobTitle = jobTitle,
                                             department = department,
                                             lifecycle = lifecycle,
-                                            engine = "codex",
+                                            engine = BotModelPolicy.engineForModel(model),
                         model = model,
                                             cwd = cwd,
                                             publicDescription = publicDescription,
@@ -1640,7 +1641,7 @@ fun CreateOrEditBotDialog(
                 }
                 Text(selectedTemplate.summary, style = VibeLinkType.Hint, color = c.ink3)
 
-                Text("运行模型 · 默认 agent：Codex 官方 CLI", style = VibeLinkType.Label, color = c.ink3)
+                Text("运行模型 · 自动匹配 CLI 运行器", style = VibeLinkType.Label, color = c.ink3)
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -1653,6 +1654,7 @@ fun CreateOrEditBotDialog(
                                 .background(if (active) c.ink else c.fill)
                                 .clickable {
                                     model = selectedModel
+                                    engine = BotModelPolicy.engineForModel(model)
                                     modelExplicitlySelected = true
                                 }
                                 .padding(horizontal = 12.dp, vertical = 6.dp),
@@ -1800,7 +1802,7 @@ fun CreateOrEditBotDialog(
                 // 自定义 Bot 头像选择器（默认绑定底层模型四宫格 AI 拟人头像，支持相册上传自定义头像）
                 BotAvatarPickerSection(
                     currentAvatar = avatar,
-                    engine = "codex",
+                    engine = BotModelPolicy.engineForModel(model),
                     name = name,
                     defaultAvatar = selectedTemplate.defaultAvatar,
                     onAvatarChange = { avatar = it },
@@ -2112,10 +2114,10 @@ fun CreateOrEditBotDialog(
                         jobTitle = jobTitle.ifBlank { "工程师" },
                         department = department,
                         lifecycle = lifecycle,
-                        engine = "codex",
+                        engine = BotModelPolicy.engineForModel(model),
                         model = model,
-                        activeSessionId = if (initialBot?.engine == engine && initialBot.model == model) initialBot.activeSessionId else "",
-                        sessionIds = if (initialBot?.engine == engine && initialBot.model == model) initialBot.sessionIds else emptyList(),
+                        activeSessionId = if (initialBot?.engine == BotModelPolicy.engineForModel(model) && initialBot.model == model) initialBot.activeSessionId else "",
+                        sessionIds = if (initialBot?.engine == BotModelPolicy.engineForModel(model) && initialBot.model == model) initialBot.sessionIds else emptyList(),
                         cwd = cwd,
                         publicDescription = publicDescription,
                         rolePrompt = rolePrompt,
@@ -2139,10 +2141,10 @@ fun CreateOrEditBotDialog(
                         jobTitle = jobTitle.ifBlank { "工程师" },
                         department = department,
                         lifecycle = lifecycle,
-                        engine = "codex",
+                        engine = BotModelPolicy.engineForModel(model),
                         model = model,
-                        activeSessionId = if (initialBot?.engine == engine && initialBot.model == model) initialBot.activeSessionId else "",
-                        sessionIds = if (initialBot?.engine == engine && initialBot.model == model) initialBot.sessionIds else emptyList(),
+                        activeSessionId = if (initialBot?.engine == BotModelPolicy.engineForModel(model) && initialBot.model == model) initialBot.activeSessionId else "",
+                        sessionIds = if (initialBot?.engine == BotModelPolicy.engineForModel(model) && initialBot.model == model) initialBot.sessionIds else emptyList(),
                         cwd = cwd,
                         publicDescription = publicDescription,
                         rolePrompt = rolePrompt,

@@ -117,6 +117,8 @@ data class BotInstructionVersion(
     val note: String = "",
 )
 
+data class BotSessionLink(val agent: String, val model: String, val sessionId: String)
+
 data class BotFriend(
     val id: String,
     val templateId: String = "",
@@ -150,6 +152,7 @@ data class BotFriend(
     val memories: List<BotMemoryFact> = emptyList(),
     val activeSessionId: String = "",
     val sessionIds: List<String> = emptyList(),
+    val legacySessions: List<BotSessionLink> = emptyList(),
     val archived: Boolean = false,
     val lastText: String = "",
     val lastAt: Long = 0L,
@@ -998,7 +1001,7 @@ object BotTeamStore {
             jobTitle = tpl.jobTitle,
             department = tpl.department,
             lifecycle = tpl.lifecycle,
-            engine = "codex",
+            engine = BotModelPolicy.defaultEngine(tpl.id),
             model = BotModelPolicy.defaultModel(tpl.id),
             device = "pc",
             cwd = cwd,
@@ -1214,23 +1217,11 @@ object BotTeamStore {
                 .putBoolean(KEY_CLEAN_STALE_SESSIONS_V7, true)
                 .apply()
         }
-        if (!p.getBoolean("model_policy_v10", false)) {
-            val upgraded = readBotsFromPrefs(context).map { old ->
-                val tpl = TEMPLATES.firstOrNull { it.id == old.templateId }
-                val engine = BotModelPolicy.defaultEngine(old.templateId)
-                old.copy(
-                    engine = engine,
-                    model = old.model,
-                    name = if (isDefaultOrLegacyBotName(old.name)) tpl?.defaultName ?: old.jobTitle else old.name,
-                    avatar = old.avatar,
-                    publicDescription = tpl?.publicDescription ?: old.publicDescription,
-                    rolePrompt = if (listOf("Antigravity", "Gemini", "@情报官", "@代码主程", "@审校官", "Harper", "Benjamin", "Lucas").any { old.rolePrompt.contains(it) }) tpl?.rolePrompt ?: old.rolePrompt else old.rolePrompt,
-                    activeSessionId = if (old.engine != engine) "" else old.activeSessionId,
-                    sessionIds = if (old.engine != engine) emptyList() else old.sessionIds,
-                ).also { AgentPrefs.setAvatar(context, it.id, it.avatar) }
-            }
-            writeBotsToPrefs(context, upgraded)
-            p.edit().putBoolean("model_policy_v10", true).apply()
+        if (!p.getBoolean("model_policy_v11_cli_mapping", false)) {
+            // Parsing repairs only runtime bindings and archives their original references.
+            // Never replace a user's role, avatar, prompt, permissions or model family here.
+            writeBotsToPrefs(context, readBotsFromPrefs(context))
+            p.edit().putBoolean("model_policy_v10", true).putBoolean("model_policy_v11_cli_mapping", true).apply()
         }
         if (!initialized) {
             initialized = true
@@ -1378,6 +1369,7 @@ object BotTeamStore {
                         avatar = if (keepCustomAvatar) old.avatar else fresh.avatar,
                         activeSessionId = old.activeSessionId,
                         sessionIds = old.sessionIds,
+                        legacySessions = old.legacySessions,
                         instructionsVersion = old.instructionsVersion + 1L,
                         memories = (fresh.memories + old.memories).distinctBy { it.fact },
                     )
@@ -1777,8 +1769,17 @@ object BotTeamStore {
         }
         val lcStr = o.optString("lifecycle", "PROJECT")
         val lifecycle = if (lcStr == "MANAGEMENT") BotLifecycle.MANAGEMENT else BotLifecycle.PROJECT
-        val parsedEngine = BotModelPolicy.normalize(o.optString("engine"), o.optString("templateId"))
-        val parsedModel = BotModelPolicy.normalizeModel(o.optString("model"), o.optString("templateId"), o.has("model"))
+        val rawEngine = o.optString("engine")
+        val inferredModel = if (!o.has("model") && rawEngine in listOf("claude", "gemini", "antigravity"))
+            BotModelPolicy.modelForEngine(if (rawEngine == "antigravity") "gemini" else rawEngine) else o.optString("model")
+        val parsedModel = BotModelPolicy.normalizeModel(inferredModel, o.optString("templateId"), o.has("model") || inferredModel.isNotEmpty())
+        val parsedEngine = BotModelPolicy.engineForModel(parsedModel)
+        val sessionHistory = o.optJSONArray("legacySessions")?.let { array -> (0 until array.length()).mapNotNull { i ->
+            array.optJSONObject(i)?.let { item -> BotSessionLink(item.optString("agent"), item.optString("model"), item.optString("sessionId")) }
+        } }.orEmpty()
+        val previousBindings = if (parsedEngine != rawEngine || parsedModel != o.optString("model"))
+            (sIds + o.optString("activeSessionId")).filter { it.isNotBlank() }.map { BotSessionLink(rawEngine, o.optString("model"), it) }
+            else emptyList()
         val rawName = o.optString("name").trim()
         val parsedName = if (parsedEngine.equals("antigravity", ignoreCase = true) && rawName == "Grok") {
             "Gemini"
@@ -1835,6 +1836,7 @@ object BotTeamStore {
             memories = memories,
             activeSessionId = if (parsedEngine == o.optString("engine") && parsedModel == o.optString("model")) o.optString("activeSessionId") else "",
             sessionIds = if (parsedEngine == o.optString("engine") && parsedModel == o.optString("model")) sIds else emptyList(),
+            legacySessions = (sessionHistory + previousBindings).distinct(),
             archived = o.optBoolean("archived", false),
             lastText = o.optString("lastText"),
             lastAt = o.optLong("lastAt"),
@@ -1951,6 +1953,7 @@ object BotTeamStore {
             )
             put("activeSessionId", b.activeSessionId)
             put("sessionIds", JSONArray(b.sessionIds))
+            put("legacySessions", JSONArray().apply { b.legacySessions.forEach { link -> put(JSONObject().put("agent", link.agent).put("model", link.model).put("sessionId", link.sessionId)) } })
             put("archived", b.archived)
             put("lastText", b.lastText)
             put("lastAt", b.lastAt)
@@ -1993,10 +1996,12 @@ object BotTeamStore {
     @Synchronized
     fun upsertBot(context: Context, bot: BotFriend) {
         val previous = getBot(context, bot.id)
+        BotModelPolicy.requireBinding(bot.engine, bot.model)
         val normalized = BotRuntimeSettings.detachIncompatibleSessions(previous, bot.copy(
             name = bot.name.trim().ifBlank { bot.jobTitle },
             avatar = bot.avatar.trim(),
             engine = BotModelPolicy.requireEngine(bot.engine),
+            legacySessions = (previous?.legacySessions.orEmpty() + bot.legacySessions).distinct(),
         ))
         AgentPrefs.setAvatar(context, normalized.id, normalized.avatar)
         val all = listBots(context, includeArchived = true).toMutableList()
@@ -2079,8 +2084,10 @@ object BotTeamStore {
         saveBots(context, all)
     }
 
-    fun bindSessionToBot(context: Context, botId: String, sessionId: String, summaryText: String? = null) {
+    @Synchronized
+    fun bindSessionToBot(context: Context, botId: String, sessionId: String, summaryText: String? = null, expectedRuntime: BotFriend? = null) {
         val b = getBot(context, botId) ?: return
+        if (expectedRuntime != null && !BotRuntimeSettings.sameSessionRuntime(expectedRuntime, b)) return
         val updatedIds = if (sessionId.isNotBlank()) (listOf(sessionId) + b.sessionIds).distinct() else b.sessionIds
         upsertBot(
             context,
@@ -2351,7 +2358,7 @@ object BotTeamStore {
      */
     // Conversation IDs, memories and server history are not profile edits.
     private fun hubProfile(bot: BotFriend): JSONObject = botToJson(bot).apply {
-        listOf("activeSessionId", "sessionIds", "lastText", "lastAt", "memories", "openWork", "instructionsHistory", "instructionsVersion")
+        listOf("activeSessionId", "sessionIds", "legacySessions", "lastText", "lastAt", "memories", "openWork", "instructionsHistory", "instructionsVersion")
             .forEach { remove(it) }
     }
 
@@ -2464,6 +2471,7 @@ object BotTeamStore {
                             name = if (preferLocalName) lb.name else rb.name,
                             avatar = if (preferLocalAvatar) lb.avatar else rb.avatar.ifBlank { defaultAvatarForRole(rb.templateId) },
                             activeSessionId = rb.activeSessionId.ifBlank { if (sameBinding) lb.activeSessionId else "" },
+                            legacySessions = (lb.legacySessions + rb.legacySessions).distinct(),
                             sessionIds = (rb.sessionIds + if (sameBinding) lb.sessionIds else emptyList()).distinct(),
                             publicDescription = rb.publicDescription.ifBlank { lb.publicDescription },
                             exampleRequests = rb.exampleRequests.ifEmpty { lb.exampleRequests },
@@ -2513,6 +2521,7 @@ object BotTeamStore {
             val hub = connection.hub
             val token = connection.token
             val engine = BotModelPolicy.requireEngine(latestBot.engine)
+            BotModelPolicy.requireBinding(engine, latestBot.model)
             check(hub.isNotBlank() && token.isNotBlank()) { "请先在远程连接中配置 Hub 并完成配对" }
             BotSessionBootstrap.create(
                 synchronize = {
@@ -2540,7 +2549,7 @@ object BotTeamStore {
                         botId = latestBot.id, thinkingEffort = latestBot.thinkingEffort,
                         isolationMode = latestBot.isolationMode,
                     )
-                    check(created.id.isNotBlank()) { "Codex 未返回可用会话 ID" }
+                    check(created.id.isNotBlank()) { "运行器未返回可用会话 ID" }
                     synchronized(this@BotTeamStore) {
                         check(RemoteStore.matches(context, connection) && getBot(context, latestBot.id)?.let {
                             BotRuntimeSettings.sameSessionRuntime(latestBot, it)
@@ -2795,6 +2804,7 @@ object BotTeamStore {
         val hub = RemoteStore.hub(context)
         val token = RemoteStore.token(context)
         val engine = BotModelPolicy.requireEngine(liveBot.engine)
+        BotModelPolicy.requireBinding(engine, liveBot.model)
         var sessionId = try {
             ensureBotRemoteSession(context, liveBot, userMessage, forceNew = forceNewSession)
         } catch (e: Exception) {
@@ -2843,7 +2853,7 @@ object BotTeamStore {
         val resolvedSid = promptResp.optString("id").trim()
         if (resolvedSid.isNotBlank() && resolvedSid != sessionId) {
             sessionId = resolvedSid
-            bindSessionToBot(context, liveBot.id, sessionId, userMessage.take(40))
+            bindSessionToBot(context, liveBot.id, sessionId, userMessage.take(40), expectedRuntime = liveBot)
             onSessionLinked?.invoke(sessionId)
         }
 
@@ -2914,7 +2924,7 @@ object BotTeamStore {
             // 仅有后台思维链/工具操作，无答复正文；保持为空让 UI 仅展示 ThinkingBlock 折叠卡片，绝不把工具调用日志冒充正文
             ""
         }
-        bindSessionToBot(context, liveBot.id, sessionId, finalReply.lineSequence().firstOrNull()?.take(40))
+        bindSessionToBot(context, liveBot.id, sessionId, finalReply.lineSequence().firstOrNull()?.take(40), expectedRuntime = liveBot)
         sessionId to finalReply
     }
 

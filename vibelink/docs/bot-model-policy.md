@@ -1,40 +1,48 @@
 # Bot、模型与 agent
 
-职位模板只保存职责、名称、权限、技能、例行任务和种子记忆，不绑定厂商或模型。Bot 实例分别保存 `engine`（agent）和 `model`（模型选择）。当前 GPT 与 DeepSeek 的默认 agent 都是官方 Codex CLI；不再使用 Hub 自建的 DeepSeek 会话执行器。
+职位模板只保存职责、名称、权限、技能、例行任务和种子记忆，不绑定厂商或模型。Bot 实例分别保存 `engine`（实际 CLI 运行器）和 `model`（模型选择）。安装、登录是否完成属于运行状态，不决定产品支持范围。
 
-| 配置 | 开发版 | 内测版 |
-| --- | --- | --- |
-| 默认幕僚长模型 | GPT 订阅 | DeepSeek |
-| 其他默认 Bot 模型 | DeepSeek | DeepSeek |
-| 默认 agent | Codex 官方 CLI | Codex 官方 CLI |
-| DeepSeek 路由 | `auto/deepseek-v4.1-flash` | 同一 Magpie 路由组 |
-| Android 包名 | `com.wangzan101.vibelink` | `com.wangzan101.vibelink.beta` |
-| Hub 数据 | `<VIBELINK_DATA>/dev` | `<VIBELINK_DATA>/beta` |
+| 模型 | 实际 agent | 开发版 | 内测版 |
+| --- | --- | --- | --- |
+| GPT 订阅 | 官方 Codex CLI | 默认幕僚长 | 不开放 |
+| DeepSeek | OpenCode2 CLI（v2） | 其他默认 Bot | 全部默认 Bot |
+| Claude 订阅 | 官方 Claude Code CLI | 可选 | 不开放 |
+| Gemini 订阅 | 官方 Gemini CLI | 可选，需安装并登录 | 不开放 |
+
+DeepSeek 使用 Magpie API ID `auto/deepseek-v4.1-flash`，对应组 `group/auto-deepseek-v4-1-flash`；开发版、内测版共用该组，不要求 DeepSeek API Key。GPT、Claude、Gemini 的订阅请求由各自官方 CLI 直连其官方服务，不经 Magpie 或兼容反代。
 
 ## 请求与会话
 
 ```mermaid
 flowchart LR
-  A[用户 / Bot] --> B[所属 Codex agent 会话]
-  B -->|GPT 订阅| C[官方 OpenAI 登录与服务]
-  B -->|DeepSeek Responses| D[Hub 用户认证与计量]
-  D --> E[Magpie auto/deepseek-v4.1-flash]
-  E --> F[DeepSeek]
+  U[用户 / Bot] --> H[Hub 用户、模型与 agent 绑定]
+  H --> A[Agent 实际 CLI 会话]
+  A -->|GPT / Claude / Gemini 订阅| O[对应官方 CLI 和官方服务]
+  A -->|DeepSeek / OpenCode2| M[Hub 用户计量网关]
+  M --> P[Magpie 指定 DeepSeek 路由组]
 ```
 
-Magpie 本机模型目录实际公布的兼容 API ID 是 `auto/deepseek-v4.1-flash`；其 Responses 响应中的路由组名是 `group/auto-deepseek-v4-1-flash`。两个版本均使用该组，不要求 DeepSeek API Key。
+`agent_sessions.json` 是 Hub 的用户、设备、模型和运行器索引；原生会话由实际 CLI 保存。OpenCode2 以 `--standalone` 使用独立服务和配置，不使用个人共享 OpenCode 服务。其 v2 `providers` 配置只启用 `vibelink`，主模型、辅助模型均指向同一组，所有请求进入 `/api/llm/v1` 后计量。
 
-Hub 网关默认转发到 `http://127.0.0.1:3425/v1`，可由服务端环境变量 `VIBELINK_MAGPIE_URL` 指定其他部署地址。客户端只能请求该 DeepSeek 模型的 `/responses`、`/chat/completions`，不能选择 GPT、Claude、Gemini 或其他上游。GPT 订阅始终使用官方 Codex 的 OpenAI provider 和 ChatGPT 登录，不经过 Magpie。Claude/Gemini 暂不可选；恢复时须分别使用官方 CLI。
+改变模型或 agent 后新建活动绑定，原历史归原运行器保留。此前 DeepSeek/Codex 历史可读，不用 OpenCode2 伪装续接；UI 同时展示实际模型和 agent，并能从 Bot 资料页编辑。迁移只修正运行器绑定，不重置用户职位、技能和记忆。
 
-Codex 的 DeepSeek provider 使用 Responses API，地址为 Hub 的 `/api/llm/v1`。Hub 为每轮 agent 调用签发只允许模型网关使用的短期能力 Token；该 Token 绑定已认证用户，不能用来访问会话管理或管理员接口。传给 Magpie 的身份由服务端覆盖，客户端填写的 `user` 不参与归属。开发者不需要配置两套 DeepSeek Key。
+GPT 官方目录为 `~/.vibelink-cli/dev/codex`。Claude 官方订阅目录为 `~/.vibelink-cli/dev/claude`，桌面登录、状态检查、会话与 Agent 共用此目录；不读取或复制个人 `~/.claude/settings.json` 的代理凭据。其他原生 CLI 的会话/缓存目录按实际运行器、身份和模型分开。
 
-会话内容与历史文件保存在 agent 的 Codex 目录中。Hub 的 `agent_sessions.json` 只记录会话 ID、所属 agent、用户、模型、设备和标题等索引。新建、续聊、读消息和中断均使用同一个运行目录；改变模型会清除旧活动绑定，重新建立会话。旧 Hub 自建 DeepSeek 会话不会伪装成 Codex 会话继续使用。
+Hub 与 Agent 必须同时更新。新 `cli.runtime.*` RPC 由新 Agent 识别；旧 Agent 不得忽略模型或运行器后回退 GPT。旧版 Agent 定时任务仍暂停，新的 Hub 授权调度每次携带绑定信息和短期模型凭据，不得脱离计量直接执行。
 
-GPT 的默认官方登录目录为 `~/.vibelink-cli/dev/codex`。DeepSeek 使用隔离的 `~/.vibelink-cli/scopes/<scope>/codex`，不复制 ChatGPT 登录信息。scope 从版本、用户身份和模型生成。内测用户的工作区、HOME、CLI 缓存与会话目录独立，工具进程不继承宿主的 Agent Token 或其他账号环境；执行采用 Codex 限制读取权限配置：文件系统默认拒绝，只开放当前工作区和最小运行库，工具网络访问关闭；只读职位的工作区仅可读。启用 `--strict-config`，旧 CLI 不得静默忽略配置。宿主无法执行限制读取策略时，创建/续聊会话或工具调用失败，不降级为宽泛读取或无沙箱。内测工作区禁止项目级 Codex 配置覆盖。生产内测可通过 `VIBELINK_BETA_AGENT_DEVICE` 选择独立主机上的工作节点；默认使用 `pc` 的隔离运行目录。远程节点需设置 `VIBELINK_MODEL_GATEWAY_URL` 为节点可达的 Hub 模型网关地址。Windows 内测明确使用 `windows.sandbox = "mxc"`，不启用自动降级。此前失败来自旧的 unelevated/elevated 后端，不代表本机无法隔离；本机 Codex 0.167.0 的 MXC 已通过工作区读写、目录外/同级用户/CLI 配置拒绝读取及本机网络拒绝连接验证。清空继承环境时保留 MXC 必需的 `SystemDrive`。不支持 MXC 的 Windows 节点会拒绝启动，可改用支持限制读取的 Linux/WSL 节点。
+## 内测执行隔离
 
-Hub 与 Agent 必须一起更新。新的 `codex.runtime.*` 请求会被旧 Agent 拒绝，不允许旧 Agent 忽略模型配置后意外调用 GPT 订阅。
+内测 DeepSeek 使用 WSL Ubuntu 中的真实 Linux OpenCode2 和 bubblewrap。每个 scope 分配独立 OS UID、HOME、工作区和数据目录；用户、挂载、PID、网络命名空间隔离。仅挂载当前 scope、最小运行库和当前作业的 Unix 模型桥；宿主 `/mnt/c`、个人 HOME、其他 scope、Windows 订阅凭据不可见。只读职位禁止写工作区，且不提供 edit/shell/subagent/execute 工具。
 
-旧 Agent 本地 Bot 定时任务缺少每次执行所需的用户绑定和新网关授权，现已暂停创建、手动运行和后台自动执行，避免回退 GPT 或绕过计量；普通 Bot 会话可正常使用。恢复自动任务前必须接入 Hub 授权续签。
+CLI 网络只允许经过当前作业的模型桥；真实 Hub 模型 grant 保留在受信代理侧，CLI 仅接触占位凭据。内测不能获得宿主交互 shell、Root 终端或管理员 Hub Token。取消和重启后的状态要由 Linux 作业状态确认，不能把 Windows `wsl.exe` 退出当作进程树已结束。隔离工作节点不可用时报告真实错误，不改用开发者目录。
+
+## 程序内 CLI
+
+桌面复用 node-pty 与 xterm，把真实交互 CLI 嵌在应用界面，支持键入、可见尺寸调整、Ctrl+C、关闭和重开。Renderer 只发送固定 agent 与 chat/login 意图，不提供可执行路径、任意参数或环境。Main 校验受信窗口及当前开发版登录 epoch，解析 CLI；账号切换/退出/过期后关闭旧终端。内测继续在隔离工作节点执行，不开放宿主 shell。
+
+当前内嵌原生终端是独立会话，不冒充 Hub Bot 原生会话的接管。DeepSeek 通过仅开发版 `POST /api/cli/launch-grant` 获取两小时模型专用凭据；该凭据不能访问 Bot、会话、管理员接口，也不能自续。主进程持有客户端凭据，CLI 只获得模型 grant；显式重开重新签发 grant，绝不回退客户端或管理员 Token。
+
+实现参考 [Orca 终端](https://github.com/stablyai/orca/tree/main/src/renderer/src/components/terminal-pane) 的可见 resize、先订阅后启动及生命周期处理。本批复用本项目现有 PTY/xterm，没有复制 Orca 源码。
 
 ## 按用户计量和限制
 
@@ -72,14 +80,11 @@ Hub 与 Agent 必须一起更新。新的 `codex.runtime.*` 请求会被旧 Agen
 }
 ```
 
-## 验证
+## 验证与历史记录
 
-Rust 测试覆盖用户隔离、限额预占、并发、重启恢复、UTC+8 换日、JSON/SSE usage、身份防伪、仅模型能力 Token 和实际 agent 会话绑定。`gateway_smoke` 是默认不运行的真实调用测试，读取 `VIBELINK_CODEX_SMOKE_REQUEST` 指定的临时请求文件。已在临时 Hub 上通过生产 Agent 处理函数验证开发版 DeepSeek 的官方 Codex 新建与续聊：同一 session 两轮，2 次真实请求，20,037 tokens（输入 20,033、输出 4、缓存命中 13,824），缺失 usage 为 0。内测 MXC 已另行验证真实新建与续聊，以及读写职位和只读职位的文件边界。临时 Hub 已停止。
+本次 CLI 迁移的 Rust、Android、内嵌终端及真实推理验证随发布记录更新；实际 token 与上游缺失时的估算量分别报告。没有连接 ADB 的手机不宣称实机验证通过。
 
-Android 开发版与内测版分别验证模型策略、订阅入口和更新分版相关 24 项测试，并构建独立包名的 1.5.3 APK；全量测试在上次运行时仍有既有 Windows/POSIX、资源与功能断言失败，不宣称全量测试通过。
-
-依据：[OpenAI 自定义 provider 配置](https://learn.chatgpt.com/docs/config-file/config-advanced)、[配置参考](https://learn.chatgpt.com/docs/config-file/config-reference)、[权限配置](https://learn.chatgpt.com/docs/permissions)，以及本机 Magpie `/v1/models` 与真实 Responses 调用。
-
+以下段落保留较早版本的部署记录，描述的是当时实现，不作为当前运行器策略。
 
 ## Windows 运行部署
 

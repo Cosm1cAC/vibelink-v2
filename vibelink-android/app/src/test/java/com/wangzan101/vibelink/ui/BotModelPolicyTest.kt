@@ -6,9 +6,9 @@ import org.junit.Test
 class BotModelPolicyTest {
     @Test fun editionPolicyAssignsDispatcherAndWorkersIndependentlyOfRecipes() {
         for (template in BotTeamStore.TEMPLATES) {
-            assertEquals("codex", BotModelPolicy.defaultEngine(template.id, beta = true))
+            assertEquals("opencode2", BotModelPolicy.defaultEngine(template.id, beta = true))
             assertEquals(BotModelPolicy.DEEPSEEK_MODEL, BotModelPolicy.defaultModel(template.id, beta = true))
-            assertEquals("codex", BotModelPolicy.defaultEngine(template.id, beta = false))
+            assertEquals(if (template.id == "tpl_grok_cos") "codex" else "opencode2", BotModelPolicy.defaultEngine(template.id, beta = false))
             assertEquals(if (template.id == "tpl_grok_cos") "" else BotModelPolicy.DEEPSEEK_MODEL, BotModelPolicy.defaultModel(template.id, beta = false))
             assertFalse(template.defaultName in setOf("GPT", "Claude", "Gemini", "GLM", "DeepSeek"))
         }
@@ -16,8 +16,17 @@ class BotModelPolicyTest {
     }
 
     @Test fun unsupportedEngineNeverSilentlyFallsBackToSubscriptionRuntime() {
-        for (engine in listOf("antigravity", "claude", "opencode")) {
-            assertThrows(IllegalArgumentException::class.java) { BotModelPolicy.requireEngine(engine) }
+        for (engine in listOf("antigravity", "deepseek", "opencode")) {
+            assertThrows(IllegalArgumentException::class.java) { BotModelPolicy.requireEngine(engine, beta = false) }
+        }
+    }
+
+    @Test fun subscriptionModelFamiliesUseTheirOwnOfficialCliWithoutPinnedModelVersions() {
+        for ((model, agent) in listOf("" to "codex", "gpt-test" to "codex", "claude" to "claude",
+            "claude-test" to "claude", "gemini" to "gemini", "gemini-test" to "gemini",
+            BotModelPolicy.DEEPSEEK_MODEL to "opencode2")) {
+            assertEquals(agent, BotModelPolicy.engineForModel(model))
+            BotModelPolicy.requireBinding(agent, model, beta = false)
         }
     }
 

@@ -10,6 +10,17 @@ vi.mock('react-i18next', () => {
   return { useTranslation: () => ({ t }) };
 });
 afterEach(cleanup);
+it('preserves actual runners and never labels an unspecified model as GPT',async()=>{
+  const work=vi.fn(async(input:{action:string})=>input.action==='groups'?{success:true,data:{kind:'groups',groups:[{id:'g',name:'G',botIds:[]}]}}:input.action==='list'?{success:true,data:{kind:'list',work:[{...row('runtime'),mandate:{authority:'fixture',revokedAt:0,acceptance:'Runtime fixture',members:['opencode2','claude','codex'].map((agent,index)=>({botId:`bot_${index}`,agent,model:'',device:'fixture',configuredWorkspace:'/workspace',allowWrite:false}))}}]}}:{success:true,data:{kind:'outbox',outbox:[]}});
+  render(<HubWorkPanel session={session} bridge={{work:work as never}} targetGroupId="g" targetWorkId="runtime"/>);
+  await screen.findByText('Runtime fixture');
+  expect(screen.getAllByText(/vibelinkWork.cliDefaultModel/)).toHaveLength(3);
+  expect(screen.getByText(/bot_0 · opencode2/)).toBeTruthy();
+  expect(screen.getByText(/bot_1 · claude/)).toBeTruthy();
+  expect(screen.getByText(/bot_2 · codex/)).toBeTruthy();
+  expect(screen.queryByText(/· GPT ·/)).toBeNull();
+  expect(work.mock.calls.some(call=>['submit','manage'].includes(call[0].action))).toBe(false);
+});
 const session: HubSession = {
   userId: 'a',
   label: 'A',

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Link2 } from 'lucide-react';
@@ -7,9 +7,10 @@ import { Button } from '@/components/ui/button';
 import { VibeLinkAccountInfo } from './AccountInfo';
 import { HubWorkPanel } from './HubWorkPanel';
 import { useHubAuth } from './useHubAuth';
-import {HubAdminEntry} from './HubAdminEntry';
-import {HubAutomationPanel} from './HubAutomationPanel';
+import { HubAdminEntry } from './HubAdminEntry';
+import { HubAutomationPanel } from './HubAutomationPanel';
 import { NotificationPanel } from './NotificationPanel';
+import { EmbeddedCliPanel } from './EmbeddedCliPanel';
 
 /** All work is mirrored from the authenticated Hub. Native history remains a dev capability. */
 export function HubWorkspace() {
@@ -18,6 +19,11 @@ export function HubWorkspace() {
   const location = useLocation();
   const { snapshot } = useHubAuth();
   const session = snapshot.session;
+  const [showCli, setShowCli] = useState(false);
+  useEffect(() => {
+    if (new URLSearchParams(location.search).get('panel') === 'cli') setShowCli(true);
+  }, [location.search]);
+  const dev = session?.edition === 'dev' && session.expiresAt > Date.now();
   return (
     <main className="flex h-screen flex-col bg-[var(--surface)] text-[var(--text-primary)]">
       <header className="flex h-14 shrink-0 items-center justify-between border-b border-[var(--border-default)] px-6">
@@ -26,18 +32,34 @@ export function HubWorkspace() {
           VibeLink
         </span>
         <div className="flex items-center gap-4">
+          {dev && (
+            <Button variant="secondary" onClick={() => setShowCli((visible) => !visible)}>
+              {t(showCli ? 'vibelinkCli.closePanel' : 'vibelinkCli.open')}
+            </Button>
+          )}
           {session?.edition === 'dev' && (
             <Button variant="secondary" onClick={() => navigate('/')}>
               {t('vibelinkWork.localHistory')}
             </Button>
           )}
-          <HubAdminEntry session={session} bridge={window.electronAPI?.vibelink} onOpen={()=>navigate('/hub-admin')}/>
+          <HubAdminEntry
+            session={session}
+            bridge={window.electronAPI?.vibelink}
+            onOpen={() => navigate('/hub-admin')}
+          />
           <WindowControls />
         </div>
       </header>
       <div className="min-h-0 flex-1 overflow-auto px-6 py-5">
         <div className="mx-auto flex min-h-full w-full max-w-[1280px] flex-col gap-5">
           <VibeLinkAccountInfo />
+          {dev && session && showCli && (
+            <EmbeddedCliPanel
+              key={`${session.issuer}/${session.sessionId}`}
+              bridge={window.electronAPI?.terminal}
+              expiresAt={session.expiresAt}
+            />
+          )}
           <NotificationPanel
             accountKey={
               session
@@ -46,7 +68,7 @@ export function HubWorkspace() {
             }
             bridge={window.electronAPI?.vibelink}
           />
-          <HubAutomationPanel session={session} bridge={window.electronAPI?.vibelink}/>
+          <HubAutomationPanel session={session} bridge={window.electronAPI?.vibelink} />
           <HubWorkPanel
             key={session?.sessionId || 'signed-out'}
             session={session}

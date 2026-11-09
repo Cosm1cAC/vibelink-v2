@@ -377,7 +377,7 @@ private fun VibeLinkAuthenticatedRoot(store: ProviderStore, monitor: SystemStatu
             vibelinkRunning = vibelinkRunning,
         )
         Route.AgentChat -> AgentChatScreen(
-            agentId = selectedAgent ?: "opencode",
+            agentId = selectedAgent ?: BotModelPolicy.defaultEngine(""),
             onBack = back,
             onOpenProfile = { nav.push(Route.AgentProfile) },
             initialSessionId = pendingSession,

@@ -94,7 +94,7 @@ fun WorkspaceInspectorDialog(
     var approvalsInfo by remember { mutableStateOf<RemoteApi.ApprovalsInfo?>(null) }
     var newTaskName by remember { mutableStateOf("") }
     var newTaskPrompt by remember { mutableStateOf("") }
-    var newTaskAgent by remember { mutableStateOf("codex") }
+    var newTaskAgent by remember { mutableStateOf(BotModelPolicy.defaultEngine("")) }
     var newTaskCron by remember { mutableStateOf("每天 09:00") }
     var newMcpName by remember { mutableStateOf("") }
     var newMcpUrl by remember { mutableStateOf("") }
@@ -618,8 +618,8 @@ fun WorkspaceInspectorDialog(
                                 verticalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
                                 Text("新建定时自动任务 (支持标准 5 段 Cron / 每日定点)", style = VibeLinkType.Label, color = c.ink)
-                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    listOf("codex" to "Codex 官方 CLI").forEach { (id, label) ->
+                                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    BotModelPolicy.engines.map { it to BotModelPolicy.label(it) }.forEach { (id, label) ->
                                         val sel = newTaskAgent == id
                                         Box(
                                             Modifier
@@ -702,6 +702,7 @@ fun WorkspaceInspectorDialog(
                                                                 .put("action", "create")
                                                                 .put("name", newTaskName.ifBlank { "自动巡检任务" })
                                                                 .put("agent", newTaskAgent)
+                                                                .put("model", BotModelPolicy.modelForEngine(newTaskAgent))
                                                                 .put("cwd", currentCwd)
                                                                 .put("prompt", newTaskPrompt)
                                                                 .put("cron", newTaskCron.ifBlank { "每天 09:00" }),

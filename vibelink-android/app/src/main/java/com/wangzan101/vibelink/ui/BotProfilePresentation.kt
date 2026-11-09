@@ -7,6 +7,8 @@ internal object BotProfilePresentation {
         if (model != null) return when {
             model.isBlank() || model.startsWith("gpt-", ignoreCase = true) -> "GPT"
             model.contains("deepseek", ignoreCase = true) -> "DeepSeek"
+            model.startsWith("claude", ignoreCase = true) -> "Claude"
+            model.startsWith("gemini", ignoreCase = true) -> "Gemini"
             else -> model
         }
         return if (agent == "vibelink") "按手机助手配置" else "尚未绑定模型"

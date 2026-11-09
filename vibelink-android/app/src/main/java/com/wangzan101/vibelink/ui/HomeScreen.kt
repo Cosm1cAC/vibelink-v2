@@ -251,7 +251,7 @@ fun HomeScreen(
                             text = { Text("⚡ 新建底层远程编码会话") },
                             onClick = {
                                 showPlusMenu = false
-                                newSessionAgent = "codex"
+                                newSessionAgent = BotModelPolicy.defaultEngine("")
                             },
                         )
                     }
@@ -434,7 +434,7 @@ fun HomeScreen(
                         SectionSmallHeader(
                             title = "本机助理与底层 Agent 引擎 (${visibleContacts.size})",
                             actionText = "+ 新建会话",
-                            onAction = { newSessionAgent = "codex" },
+                            onAction = { newSessionAgent = BotModelPolicy.defaultEngine("") },
                         )
                     }
                     items(visibleContacts, key = { "eng_" + it.id }) { contact ->

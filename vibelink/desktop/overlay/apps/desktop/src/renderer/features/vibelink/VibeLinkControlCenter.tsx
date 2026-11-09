@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useTranslation } from 'react-i18next';
 import {HubAdminEntry} from './HubAdminEntry';
 import { HubPairQr } from './HubPairQr';
 import { requestVibeLink } from './desktopBridge';
@@ -101,6 +102,7 @@ function msToClock(ms?: number): string {
 }
 
 export function VibeLinkControlCenter({ embedded = false, fullHeight = false }: { embedded?: boolean; fullHeight?: boolean } = {}) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState<boolean>(() => {
     if (embedded) return true;
     const params = new URLSearchParams(window.location.search);
@@ -399,6 +401,9 @@ export function VibeLinkControlCenter({ embedded = false, fullHeight = false }: 
             </span>
           )}
           <HubAdminEntry session={hubAuth.session} bridge={window.electronAPI?.vibelink} onOpen={()=>{window.location.hash='/hub-admin';}}/>
+          {hubAuth.session?.edition === 'dev' && hubAuth.session.expiresAt > Date.now() && <button
+            type="button" onClick={() => { window.location.hash = '/hub?panel=cli'; }} style={topBtnStyle(false)}
+          >{t('vibelinkCli.open')}</button>}
           <button
             type="button"
             onClick={() => setActiveModal(activeModal === 'mobile' ? 'none' : 'mobile')}

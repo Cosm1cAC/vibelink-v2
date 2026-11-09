@@ -22,7 +22,7 @@ object RemoteApi {
         val title: String,
         val model: String,
         val updated: Long,
-        val agent: String = "codex",
+        val agent: String = runCatching { com.wangzan101.vibelink.ui.BotModelPolicy.engineForModel(model) }.getOrDefault("unknown"),
         val device: String = "",
         val cwd: String = "",
         /** opencode 的 /api/session/active 里正在跑的会话（老 agent 不带这个字段，默认 false）。 */
@@ -458,7 +458,7 @@ object RemoteApi {
         session: String,
         text: String,
         files: List<JSONObject> = emptyList(),
-        agent: String = "codex",
+        agent: String = com.wangzan101.vibelink.ui.BotModelPolicy.defaultEngine(""),
         cwd: String = "",
         botId: String = "",
         thinkingEffort: String = "",
@@ -475,7 +475,7 @@ object RemoteApi {
         return post(hub, token, "/api/sessions/$device/$session/prompt", body)
     }
 
-    fun interrupt(hub: String, token: String, device: String, session: String, agent: String = "codex") {
+    fun interrupt(hub: String, token: String, device: String, session: String, agent: String = com.wangzan101.vibelink.ui.BotModelPolicy.defaultEngine("")) {
         val body = JSONObject().put("agent", agent)
         post(hub, token, "/api/sessions/$device/$session/interrupt", body)
     }

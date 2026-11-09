@@ -126,7 +126,7 @@ private fun notifyRemoteTaskDone(ctx: Context, agentName: String, sessionTitle: 
  *  - 支持多源传文件/图片（含截图红笔涂鸦标注）并自动落盘至远端会话工作目录
  *  - 支持远端生成文件在线代码/图片预览与一键下载到手机
  *  - 支持顶部一键呼出「📁 远程文件树」、「🔀 Git 变更 Diff 审查」、「⏰ 自动任务」、「🔌 插件技能」与「🖥 远程桌面」
- *  - 支持 Antigravity / Claude Code / Codex / OpenCode 四大引擎完整双向交互
+ *  - 支持 Gemini CLI / Claude Code / Codex / OpenCode2 四大引擎完整双向交互
  *  - 支持模型/推理强度/自动审批模式切换、斜杠指令、@远端文件引用与语音输入
  */
 @Composable
@@ -361,7 +361,7 @@ fun AgentChatScreen(
                 val lastAssistant = page.messages.lastOrNull { it.role == "assistant" }
                 val lastReply = lastAssistant?.text?.lineSequence()?.firstOrNull()?.take(45)
                 if (!lastReply.isNullOrBlank()) {
-                    BotTeamStore.bindSessionToBot(ctx, botFriend.id, s.id, lastReply)
+                    BotTeamStore.bindSessionToBot(ctx, botFriend.id, s.id, lastReply, expectedRuntime = botFriend)
                 }
                 if (lastAssistant != null && lastAssistant.at > 0L && lastAssistant.text.isNotBlank()) {
                     BotTeamStore.syncCompletedSessionToGroups(
@@ -413,7 +413,9 @@ fun AgentChatScreen(
             val list = runCatching { loadAgentSessions(ctx, effectiveEngine) }.getOrElse {
                 if (sessions.isEmpty()) fail(it)
                 sessions
-            }
+            }.let { rows -> if (botFriend == null) rows else rows.filter {
+                it.agent == botFriend.engine && it.model == botFriend.model
+            } }
             if (list.isNotEmpty()) {
                 val boundSet = botFriend?.sessionIds.orEmpty().toSet()
                 sessions = if (boundSet.isNotEmpty()) {
@@ -670,7 +672,7 @@ fun AgentChatScreen(
                                     menu = false
                                     session = s
                                     if (botFriend != null) {
-                                        BotTeamStore.bindSessionToBot(ctx, botFriend.id, s.id, s.title)
+                                        BotTeamStore.bindSessionToBot(ctx, botFriend.id, s.id, s.title, expectedRuntime = botFriend)
                                     }
                                     val (cachedMsgs, cachedCur) = RemoteSessionCache.getCachedMessages(ctx, s.id)
                                     latest = cachedMsgs
@@ -880,7 +882,8 @@ fun AgentChatScreen(
                 }
             }
 
-            val canSend = (session != null && session?.agent in BotModelPolicy.engines.toSet()) ||
+            val canSend = (session != null && session?.agent in BotModelPolicy.engines.toSet() &&
+                runCatching { BotModelPolicy.requireBinding(session!!.agent, session!!.model) }.isSuccess) ||
                 (botFriend != null && effectiveEngine in BotModelPolicy.engines.toSet())
 
             // 待发送附件预览条（Cindy 风格：支持图片缩略图 + 🖍涂鸦标注 + 文件芯片 + 移除）
@@ -1210,6 +1213,7 @@ fun AgentChatScreen(
                         botFriend.id,
                         session?.id.orEmpty(),
                         displayText.lineSequence().firstOrNull()?.take(40),
+                        expectedRuntime = botFriend,
                     )
                 }
                 scope.launch {
@@ -1257,7 +1261,7 @@ fun AgentChatScreen(
                         latest = latest.filter { it !== pending && it !== pendingAssistant }
                         input = text
                         pendingAttachments = filesToSend
-                        fail(sessionFailure ?: RuntimeException("Codex 未返回可用会话 ID"))
+                        fail(sessionFailure ?: RuntimeException("运行器未返回可用会话 ID"))
                         sending = false
                         return@launch
                     }
@@ -1300,6 +1304,7 @@ fun AgentChatScreen(
                                         botFriend.id,
                                         resolvedSid,
                                         displayText.lineSequence().firstOrNull()?.take(40),
+                                        expectedRuntime = botFriend,
                                     )
                                 }
                             }
@@ -1605,7 +1610,7 @@ fun AgentChatScreen(
     if (showNewSessionDialog) {
         NewRemoteSessionDialog(
             boundBot = botFriend,
-            initialAgent = if (effectiveEngine in BotModelPolicy.engines.toSet()) effectiveEngine else "codex",
+            initialAgent = if (effectiveEngine in BotModelPolicy.engines.toSet()) effectiveEngine else BotModelPolicy.defaultEngine(""),
             initialDevice = effectiveDevice,
             initialCwd = effectiveCwd,
             recentCwds = recentCwds,
@@ -1613,7 +1618,7 @@ fun AgentChatScreen(
             onCreated = { created ->
                 showNewSessionDialog = false
                 if (botFriend != null) {
-                    BotTeamStore.bindSessionToBot(ctx, botFriend.id, created.id, created.title)
+                    BotTeamStore.bindSessionToBot(ctx, botFriend.id, created.id, created.title, expectedRuntime = botFriend)
                 }
                 if (botFriend == null && created.agent != agentId) {
                     onSwitchAgent(created.agent, created.id)
@@ -1640,7 +1645,7 @@ fun AgentChatScreen(
 @Composable
 fun NewRemoteSessionDialog(
     boundBot: BotFriend? = null,
-    initialAgent: String = "codex",
+    initialAgent: String = BotModelPolicy.defaultEngine(""),
     initialDevice: String = "pc",
     initialCwd: String = "C:\\Users\\22771\\Desktop\\项目\\VibeLink",
     recentCwds: List<String> = emptyList(),
@@ -1653,8 +1658,8 @@ fun NewRemoteSessionDialog(
     val hub = remember { RemoteStore.hub(ctx) }
     val token = remember { RemoteStore.token(ctx) }
 
-    var selectedAgent by remember { mutableStateOf(boundBot?.engine ?: initialAgent) }
-    var selectedModel by remember { mutableStateOf(boundBot?.model ?: BotModelPolicy.defaultModel("")) }
+    var selectedAgent by remember { mutableStateOf(boundBot?.engine ?: initialAgent.takeIf { it in BotModelPolicy.engines } ?: BotModelPolicy.defaultEngine("")) }
+    var selectedModel by remember { mutableStateOf(boundBot?.model ?: BotModelPolicy.modelForEngine(selectedAgent)) }
     var selectedDevice by remember { mutableStateOf(initialDevice.ifBlank { "pc" }) }
     var devices by remember { mutableStateOf<List<RemoteApi.Device>>(emptyList()) }
     var cwd by remember { mutableStateOf(initialCwd) }
@@ -1711,7 +1716,7 @@ fun NewRemoteSessionDialog(
                                 .clip(RoundedCornerShape(8.dp))
                                 .background(if (active) c.accent else c.surface)
                                 .border(1.dp, if (active) c.accent else c.edge, RoundedCornerShape(8.dp))
-                                .clickable(enabled = !creating && boundBot == null) { selectedAgent = id }
+                                .clickable(enabled = !creating && boundBot == null) { selectedAgent = id; selectedModel = BotModelPolicy.modelForEngine(id) }
                                 .padding(horizontal = 10.dp, vertical = 6.dp),
                         ) {
                             Text(
@@ -1728,9 +1733,9 @@ fun NewRemoteSessionDialog(
                 if (boundBot != null) {
                     Text(BotModelPolicy.modelLabel(boundBot.model), style = VibeLinkType.Body, color = c.ink)
                 } else {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         BotModelPolicy.models.forEach { model ->
-                            TextButton(enabled = !creating, onClick = { selectedModel = model }) {
+                            TextButton(enabled = !creating, onClick = { selectedModel = model; selectedAgent = BotModelPolicy.engineForModel(model) }) {
                                 Text((if (selectedModel == model) "✓ " else "") + BotModelPolicy.modelLabel(model))
                             }
                         }

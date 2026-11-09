@@ -9,7 +9,7 @@
     },
     {
       "path": "cindy-fusion.patch",
-      "sha256": "7f7592153ef4030bb8ddf7c5dd96c31eb4762e0d897ae5e3c947c4320dc5513a"
+      "sha256": "1875d3b4892d017737ef9e90ceb52ee8e10eb321c4c8215c66cbe21fc245ecfc"
     },
     {
       "path": "CINDY-LICENSE.txt",
@@ -88,12 +88,36 @@
       "sha256": "546205779abb6e8b6dc5dc0b5fbd2c5c6beb345822c62e117f8ae8b92852c845"
     },
     {
+      "path": "overlay/apps/desktop/src/main/maker-host/__tests__/vibelinkClaudeProfile.test.ts",
+      "sha256": "59206c713b65bda956ca1d08061923a0c69843e75858d1915bb3fa4af262ffad"
+    },
+    {
       "path": "overlay/apps/desktop/src/main/maker-host/__tests__/vibelinkSubscriptionPolicy.test.ts",
       "sha256": "65acaf5627c09558c102c59c619b26be5efa7d1d1a4cc08a074568c779f2b6b5"
     },
     {
+      "path": "overlay/apps/desktop/src/main/maker-host/vibelink-claude-profile.ts",
+      "sha256": "f81545807812ac02abf6d263e93d80181e17ed8371d7cfaf5780529e891cf855"
+    },
+    {
       "path": "overlay/apps/desktop/src/main/maker-host/vibelink-subscription-policy.ts",
       "sha256": "13c234fe90ef58c00188d1ca4f17c3ae635f722c360759d0bf40d602799a8e74"
+    },
+    {
+      "path": "overlay/apps/desktop/src/main/terminal/__tests__/accessPolicy.test.ts",
+      "sha256": "f9892a4841176eca2e761be22f35575d03aa86330fd2cccd10a1862cfc550a32"
+    },
+    {
+      "path": "overlay/apps/desktop/src/main/terminal/__tests__/cliLaunchPlan.test.ts",
+      "sha256": "b46039fb7a0f7d46b1086fec10490f47c486416fe34cbc64b9aefdbb1ef560ae"
+    },
+    {
+      "path": "overlay/apps/desktop/src/main/terminal/accessPolicy.ts",
+      "sha256": "7eafb0e6ef23119f92927cbb35c7f629292450ee64f31b4aa2dcbaf3ca2f216b"
+    },
+    {
+      "path": "overlay/apps/desktop/src/main/terminal/cliLaunchPlan.ts",
+      "sha256": "a40e30e0de90e55ad3532c88630962122e4d4822763bd86bbd1f28ec6cb2353f"
     },
     {
       "path": "overlay/apps/desktop/src/main/vibelink/__tests__/adminPolicy.test.ts",
@@ -224,6 +248,10 @@
       "sha256": "2e48d22ed136e43d861b6759334a2af689d4ea4becffd8ae6a4ca8b3be88f36b"
     },
     {
+      "path": "overlay/apps/desktop/src/main/vibelink/terminalRuntime.ts",
+      "sha256": "bb51123bc997c686b16ab5d3e24314439f85d32bcb821f48eade5fa33cfb4e3c"
+    },
+    {
       "path": "overlay/apps/desktop/src/main/vibelink/verifiedIdentity.ts",
       "sha256": "54760f6ec3ccb71fa49e2acbff47b6b302047173b511c6d2f32fb888ef8cb532"
     },
@@ -266,6 +294,14 @@
     {
       "path": "overlay/apps/desktop/src/renderer/features/vibelink/desktopBridge.ts",
       "sha256": "2a3075379ef7fbc49229e4f278dd803d4ebfab3b544c7fe04b1278080190115c"
+    },
+    {
+      "path": "overlay/apps/desktop/src/renderer/features/vibelink/EmbeddedCliPanel.test.tsx",
+      "sha256": "8da95882bbc744b0aa3d101656a4dbeb170af8695f0e473629365888253a1200"
+    },
+    {
+      "path": "overlay/apps/desktop/src/renderer/features/vibelink/EmbeddedCliPanel.tsx",
+      "sha256": "c97682d188520fea0a65e55a64a75a19b8a43ef9cd5275057451f127396a9d49"
     },
     {
       "path": "overlay/apps/desktop/src/renderer/features/vibelink/FirstPhoneControlCenter.test.tsx",
@@ -325,15 +361,19 @@
     },
     {
       "path": "overlay/apps/desktop/src/renderer/features/vibelink/HubWorkPanel.test.tsx",
-      "sha256": "61b07c3837c409f52f63dbb084f0dc7880d6a37087433123bbc9afddb416bf56"
+      "sha256": "92aafda5c633de45a022ce38ebb6f764a4490905ee48e2892ab7c83cabe0f8d3"
     },
     {
       "path": "overlay/apps/desktop/src/renderer/features/vibelink/HubWorkPanel.tsx",
-      "sha256": "636fa25d67edb2a612197c76b9c987488aea15627f9b69bfcb8e0d66e2f8593e"
+      "sha256": "1c8cfd254d5123e2d814b50571859b24928a5427d12dddb6c4b99a532672cb9b"
     },
     {
       "path": "overlay/apps/desktop/src/renderer/features/vibelink/HubWorkspace.tsx",
-      "sha256": "a23feb5ebefd1b2b319f4fea68e78c494f8f1915a14b3d10a5af458f8e557524"
+      "sha256": "6d01e272898a64311182dba2eec37b68ac604f415aad6665dd7367e07de0d6a0"
+    },
+    {
+      "path": "overlay/apps/desktop/src/renderer/features/vibelink/HubWorkspaceCli.test.tsx",
+      "sha256": "2cad338879ecb736a1a8e4ee0c219a5ef71918f3661ae835257e7a52dab92cde"
     },
     {
       "path": "overlay/apps/desktop/src/renderer/features/vibelink/LoginPage.test.tsx",
@@ -369,7 +409,7 @@
     },
     {
       "path": "overlay/apps/desktop/src/renderer/features/vibelink/VibeLinkControlCenter.tsx",
-      "sha256": "a0b43ba894cf5683492ed846c75989f17fac1f0cfcbc341dee9c59ce2e74f73a"
+      "sha256": "faceed4e39dda5d05ac3af77957e36ea0b4677c52fc9f525aa11bca8b2fd37d3"
     },
     {
       "path": "overlay/apps/desktop/src/renderer/features/vibelink/workPresentation.test.ts",
@@ -409,7 +449,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "abdb7626a80fc1991e35b2fefaca382e2155c7597cc6163a067ee58a7a3de0f5"
+      "sha256": "a2891edb959ebcce4a8823636e523bc386f43ea3e95c7784be149f88e69e8b81"
     },
     {
       "path": "Start-VibeLinkDesktop.ps1",

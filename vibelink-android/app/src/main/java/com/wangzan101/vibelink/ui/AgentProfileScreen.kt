@@ -798,6 +798,12 @@ fun AgentProfileScreen(
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
+                    currentBot?.legacySessions?.forEach { history ->
+                        TextButton(onClick = {
+                            showSessionsSheet = false
+                            onOpenEngineSession(history.agent, history.sessionId)
+                        }) { Text("历史 · ${agentDisplayName(history.agent)} · ${history.sessionId}") }
+                    }
                     if (sessions.isEmpty()) {
                         Text("当前暂无底层会话，点击右上角「+ 新建会话」即可创建。", style = VibeLinkType.Caption, color = c.ink3)
                     } else {
@@ -817,7 +823,7 @@ fun AgentProfileScreen(
                                     .clickable {
                                         showSessionsSheet = false
                                         if (currentBot != null) {
-                                            BotTeamStore.bindSessionToBot(ctx, currentBot.id, s.id, s.title)
+                                            BotTeamStore.bindSessionToBot(ctx, currentBot.id, s.id, s.title, expectedRuntime = currentBot)
                                             onOpenEngineSession(currentBot.id, s.id)
                                         } else {
                                             onOpenEngineSession(targetEngine, s.id)
@@ -885,9 +891,9 @@ fun AgentProfileScreen(
             title = { Text("Agent 设置") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("Agent 是运行器，负责工具执行与会话；运行模型负责生成回答。DeepSeek 可以通过 Codex 官方 CLI 运行，两者是独立设置。")
+                    Text("Agent 是运行器，负责工具执行与会话；运行模型负责生成回答。GPT 使用 Codex，DeepSeek 使用 OpenCode2，Claude 使用 Claude Code，Gemini 使用官方 CLI。")
                     Text("当前：${agentDisplayName(targetEngine)}")
-                    Text("目前可用的电脑运行器只有 Codex 官方 CLI。会话保存在 Agent 上；更换模型后将解除原会话绑定，原会话不会被删除。")
+                    Text("选择其他运行器会同时切换到它对应的默认模型。安装与登录状态由电脑实际检查；未就绪会显示错误，不代表该运行器不支持。会话保存在各运行器上，切换组合保留旧历史。")
                     BotModelPolicy.engines.forEach { engine ->
                         TextButton(onClick = { saveRuntime(agent = engine) }, enabled = currentBot != null) {
                             Text((if (targetEngine == engine) "✓ " else "") + BotModelPolicy.label(engine))
@@ -907,7 +913,7 @@ fun AgentProfileScreen(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("当前：${BotModelPolicy.modelLabel(currentBot.model)}")
-                    Text("选择后立即保存。更换模型会解除当前 Bot 的旧会话绑定；角色、技能、权限和工作区保持原设置，原会话不会被删除。")
+                    Text("选择后立即保存。模型会自动匹配对应运行器，并解除当前 Bot 的旧会话绑定；角色、技能、权限和工作区保持原设置，原会话不会被删除。")
                     if (BuildConfig.IS_BETA_EDITION) Text("内测版仅支持 DeepSeek · Magpie 路由组。")
                     BotModelPolicy.models.forEach { model ->
                         TextButton(onClick = { saveRuntime(model = model) }) {
@@ -944,7 +950,7 @@ fun AgentProfileScreen(
             .take(5)
         NewRemoteSessionDialog(
             boundBot = currentBot,
-            initialAgent = if (targetEngine in BotModelPolicy.engines.toSet()) targetEngine else "codex",
+            initialAgent = if (targetEngine in BotModelPolicy.engines.toSet()) targetEngine else BotModelPolicy.defaultEngine(""),
             initialDevice = currentBot?.device ?: sessions.firstOrNull()?.device ?: "pc",
             initialCwd = currentBot?.cwd ?: recentCwds.firstOrNull() ?: "D:\\AI\\VibeLink",
             recentCwds = recentCwds,
@@ -952,7 +958,7 @@ fun AgentProfileScreen(
             onCreated = { created ->
                 showNewSession = false
                 if (currentBot != null) {
-                    BotTeamStore.bindSessionToBot(ctx, currentBot.id, created.id, created.title)
+                    BotTeamStore.bindSessionToBot(ctx, currentBot.id, created.id, created.title, expectedRuntime = currentBot)
                     onOpenEngineSession(currentBot.id, created.id)
                 } else {
                     onOpenEngineSession(created.agent, created.id)

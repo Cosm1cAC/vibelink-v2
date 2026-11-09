@@ -486,7 +486,7 @@ export function HubWorkPanel({
                           className="mt-2 break-words text-12 text-[var(--text-secondary)]"
                           key={member.botId}
                         >
-                          {member.botId} · {member.agent} · {member.model || 'GPT'} ·{' '}
+                          {member.botId} · {member.agent} · {member.model || text('cliDefaultModel')} ·{' '}
                           {text(member.allowWrite ? 'canWrite' : 'readOnly')}
                           <br />
                           {member.device} · {member.configuredWorkspace}
