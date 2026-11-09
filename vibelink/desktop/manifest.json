@@ -4,6 +4,10 @@
   "license": "Apache-2.0",
   "files": [
     {
+      "path": "Build-DesktopIcon.mjs",
+      "sha256": "2b3b3e615550a62dcad52d9faec6689aebad611375c746617c23b4ad339a5fa4"
+    },
+    {
       "path": "CINDY-LICENSE.txt",
       "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
     },
@@ -13,7 +17,7 @@
     },
     {
       "path": "Install-DesktopEntry.ps1",
-      "sha256": "260d88ed05c8e0713bee8ace9fd06d5c1c334228dbb8875f22b4bb92c790087d"
+      "sha256": "d30a55f71c86ded3a0ab8af354ee2db61793c7777463e8993829b059afd74f1e"
     },
     {
       "path": "Prepare-CindyFusion.ps1",
@@ -21,7 +25,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "529d3745458540a749e651046bd8f4f7bc1a5147dd523bb92d959bf2e54ee98f"
+      "sha256": "fa4f8a276a1ce4df12d394ebc843865464c0da49f70629c5d7200bbbb1a5e84d"
     },
     {
       "path": "Start-VibeLinkDesktop.ps1",
@@ -33,7 +37,23 @@
     },
     {
       "path": "cindy-fusion.patch",
-      "sha256": "b9e6873dd0d862bf10c6a299b3eb6445aaae6204a325704837333003eb4b3783"
+      "sha256": "9e60c9df557119b8a4f9dd8737f971f47f2acf68f9abe976ad2d4c4b35eb8242"
+    },
+    {
+      "path": "overlay/apps/desktop/resources/vibelink-icon-source.json",
+      "sha256": "16bf698e36b4a37da1258a7dad1bc6842ab0a18e600899fc9481214952315be1"
+    },
+    {
+      "path": "overlay/apps/desktop/resources/vibelink-icon.ico",
+      "sha256": "7c150bf4a330fcfc5365a8e402e1262053a82dfd959b5928d0361b40c01becec"
+    },
+    {
+      "path": "overlay/apps/desktop/resources/vibelink-icon.png",
+      "sha256": "8f3425b1e3cf05cde7a9a135194c61234ef934107d0e6fcc9cd31a26e84025f7"
+    },
+    {
+      "path": "overlay/apps/desktop/resources/vibelink-icon.svg",
+      "sha256": "a851c60bf041ba7e360c9ba43e96473556a360ea3c748f644bf0e6f1981a0548"
     },
     {
       "path": "overlay/apps/desktop/scripts/fixtures/vibelink-desktop/desktop-fixture.tsx",
@@ -92,6 +112,10 @@
       "sha256": "07a986e6a74cce895745ab31aa22d992449c39a764f4ae0b69a84f294dc81a75"
     },
     {
+      "path": "overlay/apps/desktop/src/main/vibelink/__tests__/icon.test.ts",
+      "sha256": "952dee383a9bed3f066eb2000bcfa12a091db6afcca2973aeac207ee1145b98d"
+    },
+    {
       "path": "overlay/apps/desktop/src/main/vibelink/__tests__/notificationIdentity.test.ts",
       "sha256": "9c48de33613acdb73d2491c6d447eb59d3d81fba57c3ee93fb824979a95e02d8"
     },
@@ -134,6 +158,10 @@
     {
       "path": "overlay/apps/desktop/src/main/vibelink/embeddedServer.test.cjs",
       "sha256": "cf12f3369eebc2d6f2d72de1a9abb64108f5c7e206dfaeb398666a130f48372e"
+    },
+    {
+      "path": "overlay/apps/desktop/src/main/vibelink/icon.ts",
+      "sha256": "eb7dbfb576c177d2591b75480219b30c726e0b2fcc88ed7f759d05b8f6bc1e37"
     },
     {
       "path": "overlay/apps/desktop/src/main/vibelink/notificationIdentity.ts",

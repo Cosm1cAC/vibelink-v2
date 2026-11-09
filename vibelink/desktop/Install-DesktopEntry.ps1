@@ -71,6 +71,15 @@ foreach ($file in $manifest.files) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file.path) -Destination $target
 }
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'manifest.json') -Destination $package
+$iconRoot = Join-Path $desktopRoot 'assets'
+New-Item -ItemType Directory -Path $iconRoot -Force | Out-Null
+foreach ($asset in @('vibelink.ico','vibelink.png')) {
+    $previousIcon = Join-Path $iconRoot $asset
+    if (Test-Path -LiteralPath $previousIcon) { Copy-Item -LiteralPath $previousIcon -Destination (Join-Path $backup ('icon-before-' + $asset)) }
+}
+$icon = Join-Path $iconRoot 'vibelink.ico'
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'overlay/apps/desktop/resources/vibelink-icon.ico') -Destination $icon
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'overlay/apps/desktop/resources/vibelink-icon.png') -Destination (Join-Path $iconRoot 'vibelink.png')
 foreach ($name in @('launch.json','Open-VibeLinkDesktop.ps1','Open-VibeLinkDesktop.vbs')) {
     $previous = Join-Path $desktopRoot $name
     if (Test-Path -LiteralPath $previous) { Copy-Item -LiteralPath $previous -Destination $backup }
@@ -121,6 +130,7 @@ if (Test-Path -LiteralPath $notificationRegistry) {
 }
 New-Item -Path $notificationRegistry -Force | Out-Null
 New-ItemProperty -LiteralPath $notificationRegistry -Name DisplayName -Value 'VibeLink' -PropertyType String -Force | Out-Null
+New-ItemProperty -LiteralPath $notificationRegistry -Name IconUri -Value $icon -PropertyType String -Force | Out-Null
 New-ItemProperty -LiteralPath $notificationRegistry -Name CustomActivator -Value ('{' + $notificationActivator.ToString() + '}') -PropertyType String -Force | Out-Null
 $cmd = Join-Path $runtime 'run-cindy-desktop.cmd'
 if (Test-Path -LiteralPath $cmd) { Copy-Item -LiteralPath $cmd -Destination $backup }
@@ -140,8 +150,7 @@ foreach ($folder in $folders) {
         $link.WorkingDirectory = Split-Path $notificationExecutable -Parent
     }
     $link.Description = 'VibeLink: conversations, workspace, devices and connections'
-    $icon = Join-Path $runtime 'bin\vibelink-gui.exe'
-    if (Test-Path -LiteralPath $icon) { $link.IconLocation = $icon + ',0' }
+    $link.IconLocation = $icon + ',0'
     $link.Save()
     [VibeLinkShellIdentity]::Set($target, $notificationAppId, $notificationActivator)
 }
@@ -167,13 +176,29 @@ if ($manageCompatibility) {
     $link.Arguments = '"' + $notificationLauncher + '"'
     $link.WorkingDirectory = Split-Path $notificationExecutable -Parent
     $link.Description = 'VibeLink notification compatibility entry'
-    if (Test-Path -LiteralPath $icon) { $link.IconLocation = $icon + ',0' }
+    $link.IconLocation = $icon + ',0'
     $link.Save()
     [VibeLinkShellIdentity]::Set($compatibilityLink, $notificationAppId, $notificationActivator)
     [IO.File]::SetAttributes($compatibilityLink, ([IO.File]::GetAttributes($compatibilityLink) -bor [IO.FileAttributes]::Hidden))
 } else {
     Write-Warning 'An existing Electron entry belongs to another application; preserved it. VibeLink source notifications remain unavailable until that identity conflict is resolved.'
 }
+$pinnedRoot = Join-Path $env:APPDATA 'Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar'
+$pinnedUpdated = 0
+if (Test-Path -LiteralPath $pinnedRoot) {
+    $pinnedFolder = (New-Object -ComObject Shell.Application).Namespace($pinnedRoot)
+    foreach ($pinnedFile in Get-ChildItem -LiteralPath $pinnedRoot -Filter '*.lnk' -File) {
+        $pinnedItem = $pinnedFolder.ParseName($pinnedFile.Name)
+        if ([string]$pinnedItem.ExtendedProperty('System.AppUserModel.ID') -ne $notificationAppId) { continue }
+        Copy-Item -LiteralPath $pinnedFile.FullName -Destination (Join-Path $backup ('pinned-' + $pinnedFile.Name))
+        $pinnedLink = $shell.CreateShortcut($pinnedFile.FullName)
+        $pinnedLink.IconLocation = $icon + ',0'
+        $pinnedLink.Save()
+        [VibeLinkShellIdentity]::Set($pinnedFile.FullName, $notificationAppId, $notificationActivator)
+        $pinnedUpdated++
+    }
+}
+Write-Host "Refreshed $pinnedUpdated existing taskbar entries owned by VibeLink. Icon: $icon"
 $startupEntry = Join-Path ([Environment]::GetFolderPath('Startup')) 'vibelink.lnk'
 if (Test-Path -LiteralPath $startupEntry) {
     $oldStartup = $shell.CreateShortcut($startupEntry)

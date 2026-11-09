@@ -6,6 +6,10 @@
 
 订阅模型仍只走官方 CLI。GPT 官方 Codex app-server 使用原生 OpenAI provider；融合模式拒绝订阅翻译代理以及原语音润色中的直接 ChatGPT OAuth HTTP 调用。非融合上游行为与 API Key 供应商入口保持原有语义。没有修改 maker-core 或数据库 schema。
 
+桌面图标直接取手机实际 adaptive launcher 的 `ic_vibelink_fore.xml` 和 `vibelink_icon_bg`，同一深色底、蓝色 V 与端点。资源包含 PNG512 和 16–256 像素九层 ICO；`Build-DesktopIcon.mjs` 可从 Android 资源及已准备 Cindy 的锁定 sharp 依赖重建，来源哈希见 `resources/vibelink-icon-source.json`。融合主窗、Windows 任务栏身份图标和托盘使用这些资源；Mac 源码模式 Dock 使用同一 PNG。普通 Cindy 图标不变。
+
+安装器将 ICO/PNG 发布到稳定的 `%LOCALAPPDATA%\vibelink-mesh\desktop\assets`，显式设置桌面、开始菜单及本项目隐藏兼容入口图标，并仅刷新 AUMID 为 `cloud.vibelink.desktop` 的已有任务栏固定入口。快捷方式不再依赖旧 `bin\vibelink-gui.exe`；原启动目标、参数、通知身份和 userData 保留。已运行窗口的图标在下一次安全启动生效，更新图标资源及快捷方式不会重启应用。
+
 ## 准备与启动
 
 ```powershell

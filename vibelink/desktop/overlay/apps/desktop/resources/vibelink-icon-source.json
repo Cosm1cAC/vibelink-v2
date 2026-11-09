@@ -1,0 +1,20 @@
+{
+  "adaptive": "mipmap-anydpi-v26/ic_launcher.xml",
+  "foreground": "drawable/ic_vibelink_fore.xml",
+  "background": "vibelink_icon_bg",
+  "foregroundSha256": "3b92ed718d0b215a1260d1c8635639b977c20a95009ab4fd8907211a77be83d2",
+  "colorsSha256": "81cc4d99e2b2f0dba7a7e1a406e9699e67c42c00a7f2312ac69a25c87f767963",
+  "sizes": [
+    16,
+    20,
+    24,
+    32,
+    40,
+    48,
+    64,
+    128,
+    256
+  ],
+  "sharp": "0.35.3",
+  "svgSha256": "a851c60bf041ba7e360c9ba43e96473556a360ea3c748f644bf0e6f1981a0548"
+}

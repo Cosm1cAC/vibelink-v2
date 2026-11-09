@@ -1,8 +1,26 @@
 diff --git a/apps/desktop/forge.config.ts b/apps/desktop/forge.config.ts
-index 4da653f8..a50a4a90 100644
+index 4da653f8..f4a9859b 100644
 --- a/apps/desktop/forge.config.ts
 +++ b/apps/desktop/forge.config.ts
-@@ -2031,7 +2031,12 @@ const config: ForgeConfig = {
+@@ -789,6 +789,8 @@ function stageRipgrep(targetPlatform: string, targetArch: string): void {
+ function extraResourcesForTarget(targetPlatform: string): string[] {
+   const base = [
+     'resources/icon.png',
++    'resources/vibelink-icon.png',
++    'resources/vibelink-icon.ico',
+     'resources/cindy-source.json',
+     'resources/cindy-version-protocol.json',
+     // Input bytes for upgrading retired preset avatars to ordinary managed images.
+@@ -1888,7 +1890,7 @@ const config: ForgeConfig = {
+       ProductName: 'Cindy',
+       FileDescription: BRAND_IDENTITY.displayName,
+     },
+-    icon: 'resources/icon',
++    icon: process.env.CINDY_VIBELINK_EMBEDDED === '1' && requestedTargetPlatform() === 'win32' ? 'resources/vibelink-icon' : 'resources/icon',
+     // 自定义 URL scheme: xdt-maker://session/<id> | xdt-maker://project/<encoded-workingDir>
+     // macOS: electron-packager 把这里的项写进 Info.plist 的 CFBundleURLTypes,
+     //        系统 LaunchServices 据此把 xdt-maker:// 链接路由到本 app。
+@@ -2031,7 +2033,12 @@ const config: ForgeConfig = {
        },
      ],
    },
@@ -152,20 +170,21 @@ index 8ed676ef..b3b92610 100644
    mode: Extract<AppSessionMode, 'signed-out' | 'local'>,
    reason: string,
 diff --git a/apps/desktop/src/main/bootstrap-electron.ts b/apps/desktop/src/main/bootstrap-electron.ts
-index b842bf8d..f8f3018c 100644
+index b842bf8d..b2e1afa5 100644
 --- a/apps/desktop/src/main/bootstrap-electron.ts
 +++ b/apps/desktop/src/main/bootstrap-electron.ts
-@@ -1,4 +1,9 @@
+@@ -1,4 +1,10 @@
  import { deliverRoutineResult, listRoutineDeliveryTargets } from './routines/delivery.js';
 +import { currentHubCredential, currentHubControlSettings, initializeHubAppAuth, invokeHubAuth, isVibeLinkMode } from './vibelink/authRuntime.js';
 +import { invokeHubWork } from './vibelink/workRuntime.js';
 +import { invokeHubNotifications, startHubNotifications } from './vibelink/notificationRuntime.js';
-+import { configureHubNotificationIdentity } from './vibelink/notificationWindows.js';
++import { configureHubNotificationIdentity, VIBELINK_AUMID } from './vibelink/notificationWindows.js';
++import { desktopIconPath } from './vibelink/icon.js';
 +import { randomUUID as vibelinkRandomUUID } from 'node:crypto';
  import { flushPluginUsageLifecycle } from './plugin-usage/current.js';
  import { registerAccessibilitySupportIpc } from './accessibility-support-ipc.js';
  import { mcpAppSchemePrivilege, registerMcpAppProtocol } from './mcp-apps/sandboxProtocol.js';
-@@ -97,6 +102,7 @@ import {
+@@ -97,6 +103,7 @@ import {
    WINDOW_BACKDROP_MATERIAL_CHANGED_CHANNEL,
  } from '../shared/windowBackdrop.js';
  import { isAllowedBillingMailtoRequest } from '../shared/billing.js';
@@ -173,7 +192,7 @@ index b842bf8d..f8f3018c 100644
  import path from 'node:path';
  import fs from 'node:fs';
  import { textFilePreviewResult, TEXT_PREVIEW_LIMIT_MB } from './text-file-preview';
-@@ -631,6 +637,7 @@ import {
+@@ -631,6 +638,7 @@ import {
    handleDeviceLinkSystemResume,
    getControllerName,
    revokeController,
@@ -181,7 +200,55 @@ index b842bf8d..f8f3018c 100644
  } from './device-link';
  import { closeSharedTasksBeforeLogout } from './device-link/sharedTaskRuntime.js';
  import { closeSharedTasksBeforeAccountHandover } from './device-link/sharedTaskAccountBoundary.js';
-@@ -4564,7 +4571,41 @@ function parseOptionalDeviceLinkDeviceId(value: unknown): string | null | undefi
+@@ -3467,11 +3475,12 @@ function destroyWindowsTray(): void {
+ }
+ 
+ const linuxTrayLog = createLogger('linux-tray');
++function runtimeDesktopIcon(pngOnly = false): string {
++  return desktopIconPath({ fusion:isVibeLinkMode(), packaged:app.isPackaged,platform:process.platform,resourcesPath:process.resourcesPath,moduleDirectory:__dirname,pngOnly });
++}
+ const linuxTray = createLinuxTrayController<Menu>({
+   createTray: () => {
+-    const iconPath = app.isPackaged
+-      ? path.join(process.resourcesPath, 'icon.png')
+-      : path.join(__dirname, '../../resources/icon.png');
++    const iconPath = runtimeDesktopIcon(true);
+     const icon = nativeImage.createFromPath(iconPath);
+     if (icon.isEmpty()) throw new Error(`tray icon is empty: ${iconPath}`);
+     // Keep the source resolution: Linux panels choose their own icon size/scale.
+@@ -3491,9 +3500,7 @@ function ensureWindowsTray(): boolean {
+ 
+   let tray: Tray | null = null;
+   try {
+-    const iconPath = app.isPackaged
+-      ? path.join(process.resourcesPath, 'icon.png')
+-      : path.join(__dirname, '../../resources/icon.png');
++    const iconPath = runtimeDesktopIcon(true);
+     const icon = nativeImage.createFromPath(iconPath);
+     if (icon.isEmpty()) throw new Error(`tray icon is empty: ${iconPath}`);
+     tray = new Tray(icon.resize({ width: 16, height: 16 }));
+@@ -4091,9 +4098,7 @@ const createWindow = () => {
+     minWidth: 800,
+     minHeight: 600,
+     title: BRAND_NAME,
+-    icon: app.isPackaged
+-      ? path.join(process.resourcesPath, 'icon.png')
+-      : path.join(__dirname, '../../resources/icon.png'),
++    icon: runtimeDesktopIcon(),
+     autoHideMenuBar: true,
+     show: false,
+     backgroundColor: bgColor,
+@@ -4128,6 +4133,9 @@ const createWindow = () => {
+     },
+   });
+   markAppContentWindow(mainWindow);
++  if (isVibeLinkMode() && process.platform === 'win32') {
++    mainWindow.setAppDetails({ appId:VIBELINK_AUMID, appIconPath:runtimeDesktopIcon(), appIconIndex:0 });
++  }
+   installSelectionContextMenu(mainWindow);
+   installWindowResponsivenessDiagnostics(mainWindow, { label: 'main' });
+   mainWindowRef = mainWindow;
+@@ -4564,7 +4572,41 @@ function parseOptionalDeviceLinkDeviceId(value: unknown): string | null | undefi
    return trimmed;
  }
  
@@ -223,7 +290,7 @@ index b842bf8d..f8f3018c 100644
    ipcMain.handle('database-size-warning:get-settings', (event) => {
      assertTrustedAppRendererEvent(event);
      const state = readDatabaseSizeWarningSettingsState();
-@@ -4868,7 +4909,7 @@ const registerIpcHandlers = () => {
+@@ -4868,7 +4910,7 @@ const registerIpcHandlers = () => {
    });
  
    ipcMain.on('get-app-display-version-info', (event) => {
@@ -232,7 +299,7 @@ index b842bf8d..f8f3018c 100644
    });
  
    // 开屏卡住诊断:renderer 的 r: 日志不进上传,这条快照由 main 校验后写进 renderer-guard。
-@@ -6186,7 +6227,14 @@ const registerIpcHandlers = () => {
+@@ -6186,7 +6228,14 @@ const registerIpcHandlers = () => {
  
    // ── Auth IPC handlers (delegated to authManager) ──
  
@@ -248,7 +315,7 @@ index b842bf8d..f8f3018c 100644
      try {
        let pendingCompletion: Promise<authManager.AuthState> | null = null;
        const state = await authManager
-@@ -6236,10 +6284,14 @@ const registerIpcHandlers = () => {
+@@ -6236,10 +6285,14 @@ const registerIpcHandlers = () => {
      }
    });
  
@@ -264,7 +331,7 @@ index b842bf8d..f8f3018c 100644
      // Login can be the first real credential operation to observe an unavailable
      // backend. Reuse the bounded, idle-only recovery after the action settles.
      return authManager.dispatchLoginAction(action).finally(() => authCredentialRecovery.request());
-@@ -6252,17 +6304,21 @@ const registerIpcHandlers = () => {
+@@ -6252,17 +6305,21 @@ const registerIpcHandlers = () => {
      return authManager.getLoginCaptchaChallengeUrl();
    });
  
@@ -287,7 +354,7 @@ index b842bf8d..f8f3018c 100644
      try {
        return await authManager.syncSavedAccounts();
      } catch (error) {
-@@ -6272,6 +6328,7 @@ const registerIpcHandlers = () => {
+@@ -6272,6 +6329,7 @@ const registerIpcHandlers = () => {
  
    ipcMain.handle('auth:accounts:switch', async (event, accountKey: unknown) => {
      assertTrustedAppRendererEvent(event);
@@ -295,7 +362,7 @@ index b842bf8d..f8f3018c 100644
      try {
        await authManager.switchSavedAccount(accountKey);
      } catch (error) {
-@@ -6281,6 +6338,7 @@ const registerIpcHandlers = () => {
+@@ -6281,6 +6339,7 @@ const registerIpcHandlers = () => {
  
    ipcMain.handle('auth:accounts:begin-add', async (event) => {
      assertTrustedAppRendererEvent(event);
@@ -303,7 +370,7 @@ index b842bf8d..f8f3018c 100644
      try {
        return await authManager.beginAddAccountLogin();
      } catch (error) {
-@@ -6293,7 +6351,9 @@ const registerIpcHandlers = () => {
+@@ -6293,7 +6352,9 @@ const registerIpcHandlers = () => {
      authManager.cancelAddAccountLogin();
    });
  
@@ -314,7 +381,7 @@ index b842bf8d..f8f3018c 100644
      if (getActiveAppSession().mode === 'local') {
        return authManager.getAuthState();
      }
-@@ -6301,7 +6361,9 @@ const registerIpcHandlers = () => {
+@@ -6301,7 +6362,9 @@ const registerIpcHandlers = () => {
      return authManager.enterLocalMode();
    });
  
@@ -325,7 +392,7 @@ index b842bf8d..f8f3018c 100644
      if (getActiveAppSession().mode !== 'local') {
        throwIpcError('PRECONDITION_FAILED', 'Local mode is not active.');
      }
-@@ -6309,6 +6371,7 @@ const registerIpcHandlers = () => {
+@@ -6309,6 +6372,7 @@ const registerIpcHandlers = () => {
    });
  
    ipcMain.handle('auth:refresh', async () => {
@@ -333,7 +400,16 @@ index b842bf8d..f8f3018c 100644
      return authManager.refresh();
    });
  
-@@ -9449,9 +9512,12 @@ app.on('ready', async () => {
+@@ -9389,7 +9453,7 @@ app.on('ready', async () => {
+   // setIcon 会原样显示资源，不会替应用图标自动加圆角。
+   if (!app.isPackaged && process.platform === 'darwin') {
+     try {
+-      app.dock?.setIcon(path.join(__dirname, '../../resources/icon-dock.png'));
++      app.dock?.setIcon(isVibeLinkMode()?runtimeDesktopIcon(true):path.join(__dirname, '../../resources/icon-dock.png'));
+     } catch (err) {
+       // 仅影响 dev Dock 观感,失败不挡启动
+       createLogger('dock-icon').warn('setIcon failed', { error: String(err) });
+@@ -9449,9 +9513,12 @@ app.on('ready', async () => {
    //
    // 必须在创建任何 Notification 之前调用。macOS / Linux 不需要。
    if (process.platform === 'win32') {
@@ -349,7 +425,7 @@ index b842bf8d..f8f3018c 100644
    }
  
    registerImageProtocolHandler();
-@@ -9463,6 +9529,27 @@ app.on('ready', async () => {
+@@ -9463,6 +9530,27 @@ app.on('ready', async () => {
    registerCindyMediaProtocolHandler();
    registerMcpAppProtocol();
  
@@ -377,7 +453,7 @@ index b842bf8d..f8f3018c 100644
    // Inject a Content-Security-Policy response header onto the app's own
    // top-level document (defaultSession mainFrame) before any window loads.
    // Blocks an XSS from escalating to preload privileges via inline / eval
-@@ -10148,6 +10235,9 @@ app.on('ready', async () => {
+@@ -10148,6 +10236,9 @@ app.on('ready', async () => {
    registerProviderShareIpc();
    // 自建中转服务(docs/self-hosted-relay-plan.md):本机中转与加入别的中转。
    registerSelfHostedRelayIpc();
