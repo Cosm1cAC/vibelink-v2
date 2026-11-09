@@ -60,8 +60,8 @@ android {
         applicationId = if (isBetaEdition) "com.wangzan101.vibelink.beta" else "com.wangzan101.vibelink"
         minSdk = 30
         targetSdk = 35
-        versionCode = 96
-        versionName = if (isBetaEdition) "1.6.5-beta" else "1.6.5"
+        versionCode = 97
+        versionName = if (isBetaEdition) "1.6.6-beta" else "1.6.6"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "GIT_HASH", "\"$gitHash\"")
         // 关于页版本号后的 Beta 标记;出正式版时改成 false

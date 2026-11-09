@@ -37,4 +37,18 @@ class DesktopApprovalActionTest {
         assertEquals(DesktopApprovalAction.LoginPhone, next(phone.copy(expiresAt = 1000)))
         assertEquals(DesktopApprovalAction.LoginPhone, next(phone.copy(permissions = listOf("admin"))))
     }
+
+    @Test fun combinedLoginApprovesOnlyTheOriginalScanAfterIdentityWasInstalled() {
+        val link = LoginQrLink("request-a", "fixture-scan-secret", listOf(hub))
+        assertFalse(canCompleteScannedLogin(link, link, null, listOf(hub), scan, 1000))
+        assertTrue(canCompleteScannedLogin(link, link, phone, listOf(hub), scan, 1000))
+        assertFalse(canCompleteScannedLogin(link.copy(id = "request-b"), link, phone, listOf(hub), scan, 1000))
+        assertFalse(canCompleteScannedLogin(null, link, phone, listOf(hub), scan, 1000))
+    }
+    @Test fun combinedLoginNeverApprovesExpiredOrAnotherHubRequest() {
+        val link = LoginQrLink("request-a", "fixture-scan-secret", listOf(hub))
+        assertFalse(canCompleteScannedLogin(link, link, phone, listOf(hub), scan, 9000))
+        assertFalse(canCompleteScannedLogin(link, link, phone.copy(issuer = "hub-other"), listOf(hub), scan, 1000))
+        assertFalse(canCompleteScannedLogin(link, link, phone, listOf("http://192.168.5.99:18995"), scan, 1000))
+    }
 }

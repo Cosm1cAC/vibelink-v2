@@ -28,7 +28,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** One entry point for phone login, beta access, account management and desktop approval. */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LoginScreen(onContinue: () -> Unit, onBack: (() -> Unit)? = null, onDesktopRequest: () -> Unit = {}) {
     val context = LocalContext.current
@@ -36,7 +35,6 @@ fun LoginScreen(onContinue: () -> Unit, onBack: (() -> Unit)? = null, onDesktopR
     val scope = rememberCoroutineScope()
     val state by AuthStore.state.collectAsState()
     val ready = state as? LoginState.Ready
-    var phoneLoginOpen by remember { mutableStateOf(false) }
     var switching by remember { mutableStateOf(false) }
     var code by remember { mutableStateOf("") }
     var hub by remember { mutableStateOf(RemoteStore.hub(context)) }
@@ -53,9 +51,14 @@ fun LoginScreen(onContinue: () -> Unit, onBack: (() -> Unit)? = null, onDesktopR
         when (result) {
             is QRResult.QRSuccess -> {
                 val raw = result.content.rawValue ?: result.content.rawBytes?.let { String(it) }
-                val next = LoginQrLink.parse(raw)
-                if (next != null) LoginQrInbox.pending.value = next
-                else error = "请扫描电脑上的登录授权码；手机连接码请从手机登录入口扫描。"
+                when {
+                    LoginQrLink.parse(raw) != null -> LoginQrInbox.offer(raw)
+                    !BuildConfig.IS_BETA_EDITION && PairLink.parse(raw) != null -> {
+                        desktopLink = null; scan = null; scanJob?.cancel()
+                        LoginQrInbox.offer(raw)
+                    }
+                    else -> error = "请扫描电脑 VibeLink 登录界面显示的统一登录码。"
+                }
             }
             QRResult.QRMissingPermission -> error = "需要相机权限才能扫码，请在系统设置中允许使用相机。"
             is QRResult.QRError -> error = "无法启动扫码，请重试。"
@@ -66,12 +69,21 @@ fun LoginScreen(onContinue: () -> Unit, onBack: (() -> Unit)? = null, onDesktopR
     val app = context.applicationContext as com.wangzan101.vibelink.VibeLinkApp
     val update by app.updates.state.collectAsState()
     LaunchedEffect(Unit) { app.updates.autoCheckInBackground() }
-    LaunchedEffect(incomingPair) { if (incomingPair != null) { switching = true; if (desktopLink != null) phoneLoginOpen = true } }
+    LaunchedEffect(incomingPair) {
+        if (incomingPair != null) {
+            if (BuildConfig.IS_BETA_EDITION && desktopLink != null) {
+                PairInbox.take()
+                error = "内测版请使用当前登录码和内测码完成登录。"
+            } else {
+                switching = true
+                desktopLink = null; scan = null; scanJob?.cancel()
+            }
+        }
+    }
 
     LaunchedEffect(Unit) {
         LoginQrInbox.consume(onAccepted = onDesktopRequest) { link ->
             desktopLink = link
-            phoneLoginOpen = false
             scan = null
             scanError = null
             error = null
@@ -96,7 +108,7 @@ fun LoginScreen(onContinue: () -> Unit, onBack: (() -> Unit)? = null, onDesktopR
         }
     }
 
-    fun finishLogin() { code = ""; token = ""; switching = false; phoneLoginOpen = false; error = null; if (desktopLink == null) onContinue() }
+    fun finishLogin() { code = ""; token = ""; switching = false; error = null; if (desktopLink == null) onContinue() }
 
     val loginMethods: @Composable () -> Unit = {
         if (BuildConfig.IS_BETA_EDITION) {
@@ -178,7 +190,7 @@ fun LoginScreen(onContinue: () -> Unit, onBack: (() -> Unit)? = null, onDesktopR
                             if (ready.offline) Text("当前离线，可查看已缓存内容。", style = VibeLinkType.Caption, color = c.ink3)
                             VibeLinkButton("进入首页", onContinue, Modifier.fillMaxWidth(), enabled = !busy)
                             Row {
-                                TextButton(onClick = { switching = true; if (desktopLink != null) phoneLoginOpen = true }, enabled = !busy) { Text("切换登录") }
+                                TextButton(onClick = { switching = true }, enabled = !busy) { Text("切换登录") }
                                 TextButton(onClick = {
                                     busy = true
                                     scope.launch {
@@ -215,12 +227,38 @@ fun LoginScreen(onContinue: () -> Unit, onBack: (() -> Unit)? = null, onDesktopR
                                     RemoteApi.candidates(RemoteStore.hub(context)), request, System.currentTimeMillis())
                                 val sameHub = action == DesktopApprovalAction.Confirm
                                 when (action) {
-                                    DesktopApprovalAction.LoginPhone -> Text("这台手机尚未登录。先登录手机，再允许电脑使用同一账号。", style = VibeLinkType.Caption, color = c.ink2)
-                                    DesktopApprovalAction.SwitchHub -> Text("手机当前账号不属于这台电脑。请明确切换手机登录后再确认。", style = VibeLinkType.Caption, color = c.ink2)
+                                    DesktopApprovalAction.LoginPhone -> Text(if (BuildConfig.IS_BETA_EDITION) "输入内测码后，可一次完成手机登录和电脑授权。" else "这是旧入口的授权码。请在电脑的「扫码登录」入口生成统一登录码，手机只需扫一次。", style = VibeLinkType.Caption, color = c.ink2)
+                                    DesktopApprovalAction.SwitchHub -> Text(if (BuildConfig.IS_BETA_EDITION) "输入对应内测码，明确切换手机账号并允许这台电脑。" else "当前账号与此旧授权码不同，请在电脑生成统一登录码后扫描。", style = VibeLinkType.Caption, color = c.ink2)
                                     DesktopApprovalAction.RenewQr -> Text("请求已过期或已处理，请在电脑上刷新二维码后重扫。", style = VibeLinkType.Caption, color = c.ink2)
                                     else -> Unit
                                 }
-                                if (sameHub) VibeLinkButton(if (busy) "处理中…" else "允许这台电脑登录", onClick = {
+                                val betaLogin = BuildConfig.IS_BETA_EDITION && action in setOf(DesktopApprovalAction.LoginPhone, DesktopApprovalAction.SwitchHub)
+                                if (betaLogin) {
+                                    OutlinedTextField(code, { code = it; error = null }, label = { Text("内测码") }, singleLine = true,
+                                        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                                        enabled = !busy, modifier = Modifier.fillMaxWidth())
+                                    VibeLinkButton(if (busy) "登录并确认中…" else "登录手机并允许这台电脑", onClick = {
+                                        val submitted = code.trim()
+                                        code = ""; busy = true; error = null
+                                        scope.launch {
+                                            try {
+                                                AuthStore.loginBeta(context, submitted)
+                                                val signedIn = (AuthStore.state.value as? LoginState.Ready)?.session
+                                                if (canCompleteScannedLogin(desktopLink, link, signedIn,
+                                                        RemoteApi.candidates(RemoteStore.hub(context)), request, System.currentTimeMillis())) {
+                                                    AuthStore.confirmDesktop(context, link, request, "approve")
+                                                    if (desktopLink == link) { desktopLink = null; scan = null; desktopNotice = "手机与电脑登录已完成" }
+                                                } else if (desktopLink == link) {
+                                                    error = "手机已登录，但原电脑请求已过期或身份不匹配，请重新生成登录码。"
+                                                }
+                                            } catch (e: CancellationException) {
+                                                throw e
+                                            } catch (e: Exception) {
+                                                if (desktopLink == link) error = e.message ?: "登录或确认失败，请重试"
+                                            } finally { busy = false }
+                                        }
+                                    }, modifier = Modifier.fillMaxWidth(), enabled = !busy && code.isNotBlank())
+                                } else if (sameHub) VibeLinkButton(if (busy) "处理中…" else "允许这台电脑登录", onClick = {
                                     busy = true; error = null
                                     scope.launch {
                                         runCatching { AuthStore.confirmDesktop(context, link, request, "approve") }
@@ -232,18 +270,12 @@ fun LoginScreen(onContinue: () -> Unit, onBack: (() -> Unit)? = null, onDesktopR
                                     }
                                 }, modifier = Modifier.fillMaxWidth(), enabled = !busy)
                                 else VibeLinkButton(when (action) {
-                                    DesktopApprovalAction.LoginPhone -> "先登录这台手机"
-                                    DesktopApprovalAction.SwitchHub -> "切换手机登录"
+                                    DesktopApprovalAction.LoginPhone -> "扫描统一登录码"
+                                    DesktopApprovalAction.SwitchHub -> "扫描统一登录码"
                                     DesktopApprovalAction.RenewQr -> "重新扫码"
                                     else -> "正在验证手机登录…"
                                 }, onClick = {
-                                    if (action == DesktopApprovalAction.RenewQr) {
-                                        desktopScanner.launch(null)
-                                    } else {
-                                        hub = request.hub
-                                        switching = true
-                                        phoneLoginOpen = true
-                                    }
+                                    desktopScanner.launch(null)
                                 }, modifier = Modifier.fillMaxWidth(), enabled = !busy && action != DesktopApprovalAction.Checking)
                                 TextButton(onClick = {
                                     if (sameHub) scope.launch { runCatching { AuthStore.confirmDesktop(context, link, request, "deny") } }
@@ -264,22 +296,4 @@ fun LoginScreen(onContinue: () -> Unit, onBack: (() -> Unit)? = null, onDesktopR
             }
         }
     }
-    if (phoneLoginOpen) {
-        ModalBottomSheet(onDismissRequest = { if (!busy) phoneLoginOpen = false }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
-            Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("登录这台手机", style = VibeLinkType.Title, color = c.ink)
-                if (BuildConfig.IS_BETA_EDITION) {
-                    Text("用内测码登录手机后，返回核对确认码并允许电脑登录。", style = VibeLinkType.Body, color = c.ink2)
-                } else {
-                    Text("首次使用：在电脑登录页点「首次连接手机」，再用下方扫一扫扫描电脑显示的「手机连接码」。", style = VibeLinkType.Body, color = c.ink2)
-                    Text("手机连接码用于登录手机；刚才的电脑授权码会保留，手机登录后再确认。只连接你自己的电脑。", style = VibeLinkType.Caption, color = c.ink3)
-                }
-                error?.let { Text(it, style = VibeLinkType.Caption, color = c.bad) }
-                loginMethods()
-                TextButton(onClick = { phoneLoginOpen = false }, enabled = !busy) { Text("返回电脑确认") }
-                Spacer(Modifier.height(24.dp))
-            }
-        }
-    }
-
 }

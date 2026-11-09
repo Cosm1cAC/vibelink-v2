@@ -107,7 +107,7 @@ internal fun PairSetup(
     fun handleRaw(raw: String?) {
         if (LoginQrLink.parse(raw) != null) { cancelAttempt(); LoginQrInbox.offer(raw); return }
         val l = PairLink.parse(raw)
-        if (l == null) error = "这不是 VibeLink 配对码：请扫电脑上「远程控制」弹窗（或 VibeLink 控制台「📱 连接手机」）里的二维码" else checkIn(l)
+        if (l == null) error = "请扫描电脑 VibeLink 登录界面显示的二维码。" else checkIn(l)
     }
 
     val scanner = rememberLauncherForActivityResult(ScanQRCode()) { r ->
@@ -197,12 +197,12 @@ internal fun PairSetup(
                 ) {
                     Text("📷", fontSize = 40.sp)
                     Text(
-                        "手机扫码登录",
+                        "扫码登录",
                         Modifier.padding(top = 10.dp),
                         fontSize = 19.sp, fontWeight = FontWeight.SemiBold, color = c.ink,
                     )
                     Text(
-                        "扫描电脑 VibeLink 的手机连接码登录这台手机；扫描桌面登录码则进入授权确认。",
+                        "扫描电脑 VibeLink 登录界面显示的二维码，在手机确认即可连接。",
                         Modifier.padding(top = 8.dp),
                         style = VibeLinkType.Caption, color = c.ink3, textAlign = TextAlign.Center,
                     )

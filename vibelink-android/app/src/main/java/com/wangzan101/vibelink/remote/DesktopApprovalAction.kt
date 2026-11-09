@@ -10,3 +10,8 @@ internal fun desktopApprovalAction(session: ClientSession?, checking: Boolean, k
     return if (LoginPolicy.mayApproveDesktop(knownHubs, scan.hub, session.issuer, scan.issuer, session.edition, scan.edition))
         DesktopApprovalAction.Confirm else DesktopApprovalAction.SwitchHub
 }
+
+/** A combined sign-in may approve only the exact scan the user agreed to. */
+internal fun canCompleteScannedLogin(active: LoginQrLink?, expected: LoginQrLink, session: ClientSession?,
+    knownHubs: List<String>, scan: DesktopScan, now: Long): Boolean =
+    active == expected && desktopApprovalAction(session, false, knownHubs, scan, now) == DesktopApprovalAction.Confirm
