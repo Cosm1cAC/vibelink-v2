@@ -308,7 +308,7 @@ async fn legacy_app_update_channel_and_explicit_channel_select_matching_apks() {
         fs::write(path.join("meta.json"), json!({"version":version,"file":file,"version_code":86}).to_string()).unwrap();
     }
     for (ua, query, expected) in [
-        ("VibeLink/1.5.1", "", "dev"),
+        ("VibeLink/1.5.1", "", "blocked"),
         ("VibeLink/1.5.1-beta", "", "beta"),
         ("VibeLink/1.5.1", "?edition=beta", "beta"),
         ("browser", "", "beta"),
@@ -317,6 +317,7 @@ async fn legacy_app_update_channel_and_explicit_channel_select_matching_apks() {
         let response = router.oneshot(HttpRequest::builder().uri(format!("/api/apk/latest{query}"))
             .header("user-agent", ua).header("host", "hub.vibelink.cloud").header("x-forwarded-proto", "https")
             .body(Body::empty()).unwrap()).await.unwrap();
+        if expected == "blocked" {assert_eq!(response.status(), StatusCode::NOT_FOUND);continue;}
         assert_eq!(response.status(), StatusCode::OK);
         let bytes = axum::body::to_bytes(response.into_body(), 10000).await.unwrap();
         let manifest: Value = serde_json::from_slice(&bytes).unwrap();
@@ -367,4 +368,28 @@ async fn shared_gpt_scope_listing_keeps_each_sessions_actual_model(){
  let(status,response)=request(app.clone(),&admin,Method::GET,"/api/sessions/all?device=pc",Value::Null).await;assert_eq!(status,StatusCode::OK);worker.await.unwrap();let sessions=response["agents"].as_array().unwrap().iter().find(|a|a["id"]=="codex").unwrap()["sessions"].as_array().unwrap();
  for (id,model) in [("default-gpt",""),("explicit-gpt","gpt-6.1-sol"),("unbound-native","gpt-5.2")] {assert_eq!(sessions.iter().find(|s|s["id"]==id).unwrap()["model"],model);}
  fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn beta_apk_routes_never_read_private_sibling_packages_or_manifests() {
+ let(root,mut app,_)=fixture();Arc::get_mut(&mut app).unwrap().data=root.join("beta");Arc::get_mut(&mut app).unwrap().beta_mode=true;
+ let private=b"PRIVATE_DEVELOPER_CLASH_SEED_MARKER";let public=b"PUBLIC_BETA_PACKAGE";
+ for (edition,file,bytes,version) in [("dev","vibelink-1.6.2-dev.apk",private.as_slice(),"1.6.2"),("beta","vibelink-1.6.8-beta.apk",public.as_slice(),"1.6.8-beta")] {
+  let dir=root.join(edition).join("apk");fs::create_dir_all(&dir).unwrap();fs::write(dir.join(file),bytes).unwrap();fs::write(dir.join("meta.json"),json!({"version":version,"version_code":99,"file":file}).to_string()).unwrap();
+ }
+ let call=|app:Shared,path:String,ua:&str|{let router=api_router(app.clone()).layer(middleware::from_fn_with_state(app,auth_mw));router.oneshot(HttpRequest::builder().uri(path).header("user-agent",ua).body(Body::empty()).unwrap())};
+ for path in ["/api/apk/latest","/apk","/apk/latest","/apk/latest.apk","/apk/vibelink-1.6.2-dev.apk"] {
+  for query in ["?edition=dev","?edition=%64ev","?edition=unknown"] {
+   let response=call(app.clone(),format!("{path}{query}"),"browser").await.unwrap();assert_eq!(response.status(),StatusCode::NOT_FOUND,"{path}{query}");let bytes=axum::body::to_bytes(response.into_body(),10000).await.unwrap();assert!(!bytes.windows(private.len()).any(|b|b==private));
+  }
+  let response=call(app.clone(),path.into(),"VibeLink/1.6.2").await.unwrap();assert_eq!(response.status(),StatusCode::NOT_FOUND,"legacy UA {path}");
+ }
+ for path in ["/apk/latest","/apk/latest.apk","/apk/vibelink-1.6.8-beta.apk"] {
+  for query in ["","?edition=beta"] {let response=call(app.clone(),format!("{path}{query}"),"browser").await.unwrap();assert_eq!(response.status(),StatusCode::OK);assert_eq!(axum::body::to_bytes(response.into_body(),10000).await.unwrap().as_ref(),public);}
+ }
+ let response=call(app.clone(),"/apk?edition=beta".into(),"browser").await.unwrap();assert_eq!(response.status(),StatusCode::FOUND);assert!(response.headers()["location"].to_str().unwrap().contains("edition=beta"));
+ let response=call(app.clone(),"/api/apk/latest".into(),"browser").await.unwrap();assert_eq!(response.status(),StatusCode::OK);let manifest:Value=serde_json::from_slice(&axum::body::to_bytes(response.into_body(),10000).await.unwrap()).unwrap();assert_eq!(manifest["edition"],"beta");
+ {let settings=Arc::get_mut(&mut app).unwrap();settings.beta_mode=false;settings.data=root.join("dev");}
+ let router=api_router(app.clone()).layer(middleware::from_fn_with_state(app,auth_mw));let response=router.oneshot(HttpRequest::builder().uri("/apk/latest.apk?edition=dev").body(Body::empty()).unwrap()).await.unwrap();assert_eq!(response.status(),StatusCode::OK);assert_eq!(axum::body::to_bytes(response.into_body(),10000).await.unwrap().as_ref(),private);
+ fs::remove_dir_all(root).unwrap();
 }

@@ -36,7 +36,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-const VERSION: &str = "0.6.0";
+const VERSION: &str = "0.6.1";
 const OFFLINE_AFTER_MS: u64 = 20_000;
 const EVENT_CAP: usize = 500;
 
@@ -2157,24 +2157,28 @@ async fn agent_file(State(app): State<Shared>, Path(name): Path<String>) -> Resp
     }
 }
 
-fn apk_dir(app: &App, query: &HashMap<String, String>) -> PathBuf {
-    match query.get("edition").map(String::as_str) {
-        Some("beta") => app.data.parent().unwrap_or(&app.data).join("beta/apk"),
-        Some("dev") => app.data.parent().unwrap_or(&app.data).join("dev/apk"),
-        _ => app.data.join("apk"),
-    }
-}
-
-async fn apk_latest(State(app): State<Shared>, Query(mut q): Query<HashMap<String, String>>, headers: axum::http::HeaderMap) -> Response {
-    // Existing developer APKs omit edition even when checking the public beta Hub.
-    // Keep explicit selection authoritative; use the app UA only for legacy clients.
-    if !q.contains_key("edition") {
+fn apk_query(mut query: HashMap<String,String>, headers: &axum::http::HeaderMap) -> HashMap<String,String> {
+    if !query.contains_key("edition") {
         if let Some(version) = headers.get("user-agent").and_then(|h| h.to_str().ok())
             .and_then(|ua| ua.strip_prefix("VibeLink/")) {
-            q.insert("edition".into(), if version.trim().ends_with("-beta") {"beta"} else {"dev"}.into());
+            query.insert("edition".into(),if version.trim().ends_with("-beta") {"beta"} else {"dev"}.into());
         }
     }
-    let dir = apk_dir(&app, &q);
+    query
+}
+fn apk_dir(app: &App, query: &HashMap<String, String>) -> Option<PathBuf> {
+    match query.get("edition").map(String::as_str) {
+        Some("dev") if app.beta_mode => None,
+        Some("dev") => Some(app.data.parent().unwrap_or(&app.data).join("dev/apk")),
+        Some("beta") if app.beta_mode => Some(app.data.join("apk")),
+        Some("beta") => Some(app.data.parent().unwrap_or(&app.data).join("beta/apk")),
+        None => Some(app.data.join("apk")),
+        _ => None,
+    }
+}
+async fn apk_latest(State(app): State<Shared>, Query(q): Query<HashMap<String, String>>, headers: axum::http::HeaderMap) -> Response {
+    let q = apk_query(q, &headers);
+    let Some(dir) = apk_dir(&app, &q) else {return (StatusCode::NOT_FOUND,"no such apk edition").into_response();};
     let Ok(raw) = fs::read_to_string(dir.join("meta.json")) else {
         return (StatusCode::NOT_FOUND, Json(json!({"error": "no apk published"}))).into_response();
     };
@@ -2234,14 +2238,17 @@ async fn apk_latest(State(app): State<Shared>, Query(mut q): Query<HashMap<Strin
 }
 
 /// `GET /apk` → 302 到最新的 APK（带版本号文件名 + 时间戳防缓存 + token）。给手机上手输用。
-async fn apk_short(State(app): State<Shared>) -> Response {
-    let raw = fs::read_to_string(app.data.join("apk").join("meta.json")).unwrap_or_default();
+async fn apk_short(State(app): State<Shared>, Query(q): Query<HashMap<String,String>>, headers: axum::http::HeaderMap) -> Response {
+    let q = apk_query(q, &headers);
+    let Some(dir) = apk_dir(&app, &q) else {return (StatusCode::NOT_FOUND,"no such apk edition").into_response();};
+    let raw = fs::read_to_string(dir.join("meta.json")).unwrap_or_default();
     let file = serde_json::from_str::<Value>(&raw)
         .ok()
         .and_then(|v| v.get("file").and_then(|x| x.as_str()).map(|s| s.to_string()))
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "latest.apk".to_string());
-    let location = format!("/apk/{file}?ts={}", now_ms());
+    let edition = q.get("edition").map(String::as_str).unwrap_or(if app.beta_mode {"beta"} else {"dev"});
+    let location = format!("/apk/{file}?edition={edition}&ts={}", now_ms());
     (
         StatusCode::FOUND,
         [
@@ -2251,8 +2258,9 @@ async fn apk_short(State(app): State<Shared>) -> Response {
     )
         .into_response()
 }
-async fn apk_file(State(app): State<Shared>, Path(name): Path<String>, Query(q): Query<HashMap<String, String>>) -> Response {
-    let dir = apk_dir(&app, &q);
+async fn apk_file(State(app): State<Shared>, Path(name): Path<String>, Query(q): Query<HashMap<String, String>>, headers: axum::http::HeaderMap) -> Response {
+    let q = apk_query(q, &headers);
+    let Some(dir) = apk_dir(&app, &q) else {return (StatusCode::NOT_FOUND,"no such apk edition").into_response();};
     if !name.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c)) {
         return (StatusCode::BAD_REQUEST, "bad name").into_response();
     }

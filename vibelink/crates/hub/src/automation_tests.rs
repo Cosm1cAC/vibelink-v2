@@ -470,7 +470,7 @@ async fn authenticated_api_cannot_override_identity_or_dispatch_work() {
     let health = request(app.clone(), "", Method::GET, "/api/health", Value::Null)
         .await
         .1;
-    assert_eq!(health["version"], "0.6.0");
+    assert_eq!(health["version"], "0.6.1");
     assert_eq!(health["automation"]["dispatch"], false);
     fs::remove_dir_all(dir).unwrap();
 }
