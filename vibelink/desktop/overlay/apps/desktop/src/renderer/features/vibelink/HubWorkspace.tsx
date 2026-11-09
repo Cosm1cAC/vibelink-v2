@@ -8,6 +8,7 @@ import { VibeLinkAccountInfo } from './AccountInfo';
 import { HubWorkPanel } from './HubWorkPanel';
 import { useHubAuth } from './useHubAuth';
 import {HubAdminEntry} from './HubAdminEntry';
+import {HubAutomationPanel} from './HubAutomationPanel';
 import { NotificationPanel } from './NotificationPanel';
 
 /** All work is mirrored from the authenticated Hub. Native history remains a dev capability. */
@@ -45,6 +46,7 @@ export function HubWorkspace() {
             }
             bridge={window.electronAPI?.vibelink}
           />
+          <HubAutomationPanel session={session} bridge={window.electronAPI?.vibelink}/>
           <HubWorkPanel
             key={session?.sessionId || 'signed-out'}
             session={session}

@@ -170,10 +170,11 @@ index 8ed676ef..b3b92610 100644
    mode: Extract<AppSessionMode, 'signed-out' | 'local'>,
    reason: string,
 diff --git a/apps/desktop/src/main/bootstrap-electron.ts b/apps/desktop/src/main/bootstrap-electron.ts
-index b842bf8d..e0083e73 100644
+index b842bf8d..d5649b29 100644
 --- a/apps/desktop/src/main/bootstrap-electron.ts
 +++ b/apps/desktop/src/main/bootstrap-electron.ts
-@@ -1,4 +1,11 @@
+@@ -1,4 +1,12 @@
++import { invokeHubAutomation } from './vibelink/automationRuntime.js';
 +import { invokeHubAdmin } from './vibelink/adminRuntime.js';
  import { deliverRoutineResult, listRoutineDeliveryTargets } from './routines/delivery.js';
 +import { currentHubCredential, currentHubControlSettings, initializeHubAppAuth, invokeHubAuth, isVibeLinkMode } from './vibelink/authRuntime.js';
@@ -185,7 +186,7 @@ index b842bf8d..e0083e73 100644
  import { flushPluginUsageLifecycle } from './plugin-usage/current.js';
  import { registerAccessibilitySupportIpc } from './accessibility-support-ipc.js';
  import { mcpAppSchemePrivilege, registerMcpAppProtocol } from './mcp-apps/sandboxProtocol.js';
-@@ -97,6 +104,7 @@ import {
+@@ -97,6 +105,7 @@ import {
    WINDOW_BACKDROP_MATERIAL_CHANGED_CHANNEL,
  } from '../shared/windowBackdrop.js';
  import { isAllowedBillingMailtoRequest } from '../shared/billing.js';
@@ -193,7 +194,7 @@ index b842bf8d..e0083e73 100644
  import path from 'node:path';
  import fs from 'node:fs';
  import { textFilePreviewResult, TEXT_PREVIEW_LIMIT_MB } from './text-file-preview';
-@@ -631,6 +639,7 @@ import {
+@@ -631,6 +640,7 @@ import {
    handleDeviceLinkSystemResume,
    getControllerName,
    revokeController,
@@ -201,7 +202,7 @@ index b842bf8d..e0083e73 100644
  } from './device-link';
  import { closeSharedTasksBeforeLogout } from './device-link/sharedTaskRuntime.js';
  import { closeSharedTasksBeforeAccountHandover } from './device-link/sharedTaskAccountBoundary.js';
-@@ -3467,11 +3476,12 @@ function destroyWindowsTray(): void {
+@@ -3467,11 +3477,12 @@ function destroyWindowsTray(): void {
  }
  
  const linuxTrayLog = createLogger('linux-tray');
@@ -217,7 +218,7 @@ index b842bf8d..e0083e73 100644
      const icon = nativeImage.createFromPath(iconPath);
      if (icon.isEmpty()) throw new Error(`tray icon is empty: ${iconPath}`);
      // Keep the source resolution: Linux panels choose their own icon size/scale.
-@@ -3491,9 +3501,7 @@ function ensureWindowsTray(): boolean {
+@@ -3491,9 +3502,7 @@ function ensureWindowsTray(): boolean {
  
    let tray: Tray | null = null;
    try {
@@ -228,7 +229,7 @@ index b842bf8d..e0083e73 100644
      const icon = nativeImage.createFromPath(iconPath);
      if (icon.isEmpty()) throw new Error(`tray icon is empty: ${iconPath}`);
      tray = new Tray(icon.resize({ width: 16, height: 16 }));
-@@ -4091,9 +4099,7 @@ const createWindow = () => {
+@@ -4091,9 +4100,7 @@ const createWindow = () => {
      minWidth: 800,
      minHeight: 600,
      title: BRAND_NAME,
@@ -239,7 +240,7 @@ index b842bf8d..e0083e73 100644
      autoHideMenuBar: true,
      show: false,
      backgroundColor: bgColor,
-@@ -4128,6 +4134,9 @@ const createWindow = () => {
+@@ -4128,6 +4135,9 @@ const createWindow = () => {
      },
    });
    markAppContentWindow(mainWindow);
@@ -249,13 +250,17 @@ index b842bf8d..e0083e73 100644
    installSelectionContextMenu(mainWindow);
    installWindowResponsivenessDiagnostics(mainWindow, { label: 'main' });
    mainWindowRef = mainWindow;
-@@ -4564,7 +4573,45 @@ function parseOptionalDeviceLinkDeviceId(value: unknown): string | null | undefi
+@@ -4564,7 +4574,49 @@ function parseOptionalDeviceLinkDeviceId(value: unknown): string | null | undefi
    return trimmed;
  }
  
 +const vibelinkEmbeddedSecret = vibelinkRandomUUID();
  const registerIpcHandlers = () => {
 +  startHubNotifications();
++  ipcMain.handle('vibelink:automation', async (event, input: unknown) => {
++    assertTrustedAppRendererEvent(event);
++    return invokeHubAutomation(input);
++  });
 +  ipcMain.handle('vibelink:admin', async (event, input: unknown) => {
 +    assertTrustedAppRendererEvent(event);
 +    return invokeHubAdmin(input);
@@ -295,7 +300,7 @@ index b842bf8d..e0083e73 100644
    ipcMain.handle('database-size-warning:get-settings', (event) => {
      assertTrustedAppRendererEvent(event);
      const state = readDatabaseSizeWarningSettingsState();
-@@ -4868,7 +4915,7 @@ const registerIpcHandlers = () => {
+@@ -4868,7 +4920,7 @@ const registerIpcHandlers = () => {
    });
  
    ipcMain.on('get-app-display-version-info', (event) => {
@@ -304,7 +309,7 @@ index b842bf8d..e0083e73 100644
    });
  
    // 开屏卡住诊断:renderer 的 r: 日志不进上传,这条快照由 main 校验后写进 renderer-guard。
-@@ -6186,7 +6233,14 @@ const registerIpcHandlers = () => {
+@@ -6186,7 +6238,14 @@ const registerIpcHandlers = () => {
  
    // ── Auth IPC handlers (delegated to authManager) ──
  
@@ -320,7 +325,7 @@ index b842bf8d..e0083e73 100644
      try {
        let pendingCompletion: Promise<authManager.AuthState> | null = null;
        const state = await authManager
-@@ -6236,10 +6290,14 @@ const registerIpcHandlers = () => {
+@@ -6236,10 +6295,14 @@ const registerIpcHandlers = () => {
      }
    });
  
@@ -336,7 +341,7 @@ index b842bf8d..e0083e73 100644
      // Login can be the first real credential operation to observe an unavailable
      // backend. Reuse the bounded, idle-only recovery after the action settles.
      return authManager.dispatchLoginAction(action).finally(() => authCredentialRecovery.request());
-@@ -6252,17 +6310,21 @@ const registerIpcHandlers = () => {
+@@ -6252,17 +6315,21 @@ const registerIpcHandlers = () => {
      return authManager.getLoginCaptchaChallengeUrl();
    });
  
@@ -359,7 +364,7 @@ index b842bf8d..e0083e73 100644
      try {
        return await authManager.syncSavedAccounts();
      } catch (error) {
-@@ -6272,6 +6334,7 @@ const registerIpcHandlers = () => {
+@@ -6272,6 +6339,7 @@ const registerIpcHandlers = () => {
  
    ipcMain.handle('auth:accounts:switch', async (event, accountKey: unknown) => {
      assertTrustedAppRendererEvent(event);
@@ -367,7 +372,7 @@ index b842bf8d..e0083e73 100644
      try {
        await authManager.switchSavedAccount(accountKey);
      } catch (error) {
-@@ -6281,6 +6344,7 @@ const registerIpcHandlers = () => {
+@@ -6281,6 +6349,7 @@ const registerIpcHandlers = () => {
  
    ipcMain.handle('auth:accounts:begin-add', async (event) => {
      assertTrustedAppRendererEvent(event);
@@ -375,7 +380,7 @@ index b842bf8d..e0083e73 100644
      try {
        return await authManager.beginAddAccountLogin();
      } catch (error) {
-@@ -6293,7 +6357,9 @@ const registerIpcHandlers = () => {
+@@ -6293,7 +6362,9 @@ const registerIpcHandlers = () => {
      authManager.cancelAddAccountLogin();
    });
  
@@ -386,7 +391,7 @@ index b842bf8d..e0083e73 100644
      if (getActiveAppSession().mode === 'local') {
        return authManager.getAuthState();
      }
-@@ -6301,7 +6367,9 @@ const registerIpcHandlers = () => {
+@@ -6301,7 +6372,9 @@ const registerIpcHandlers = () => {
      return authManager.enterLocalMode();
    });
  
@@ -397,7 +402,7 @@ index b842bf8d..e0083e73 100644
      if (getActiveAppSession().mode !== 'local') {
        throwIpcError('PRECONDITION_FAILED', 'Local mode is not active.');
      }
-@@ -6309,6 +6377,7 @@ const registerIpcHandlers = () => {
+@@ -6309,6 +6382,7 @@ const registerIpcHandlers = () => {
    });
  
    ipcMain.handle('auth:refresh', async () => {
@@ -405,7 +410,7 @@ index b842bf8d..e0083e73 100644
      return authManager.refresh();
    });
  
-@@ -9389,7 +9458,7 @@ app.on('ready', async () => {
+@@ -9389,7 +9463,7 @@ app.on('ready', async () => {
    // setIcon 会原样显示资源，不会替应用图标自动加圆角。
    if (!app.isPackaged && process.platform === 'darwin') {
      try {
@@ -414,7 +419,7 @@ index b842bf8d..e0083e73 100644
      } catch (err) {
        // 仅影响 dev Dock 观感,失败不挡启动
        createLogger('dock-icon').warn('setIcon failed', { error: String(err) });
-@@ -9449,9 +9518,12 @@ app.on('ready', async () => {
+@@ -9449,9 +9523,12 @@ app.on('ready', async () => {
    //
    // 必须在创建任何 Notification 之前调用。macOS / Linux 不需要。
    if (process.platform === 'win32') {
@@ -430,7 +435,7 @@ index b842bf8d..e0083e73 100644
    }
  
    registerImageProtocolHandler();
-@@ -9463,6 +9535,27 @@ app.on('ready', async () => {
+@@ -9463,6 +9540,27 @@ app.on('ready', async () => {
    registerCindyMediaProtocolHandler();
    registerMcpAppProtocol();
  
@@ -458,7 +463,7 @@ index b842bf8d..e0083e73 100644
    // Inject a Content-Security-Policy response header onto the app's own
    // top-level document (defaultSession mainFrame) before any window loads.
    // Blocks an XSS from escalating to preload privileges via inline / eval
-@@ -10148,6 +10241,9 @@ app.on('ready', async () => {
+@@ -10148,6 +10246,9 @@ app.on('ready', async () => {
    registerProviderShareIpc();
    // 自建中转服务(docs/self-hosted-relay-plan.md):本机中转与加入别的中转。
    registerSelfHostedRelayIpc();
@@ -691,7 +696,7 @@ index 41f002f0..5ca13c3e 100644
  
    it('accumulates output_text deltas, parses JSON, and reports usage', async () => {
 diff --git a/apps/desktop/src/preload/preload.ts b/apps/desktop/src/preload/preload.ts
-index 3e3b5507..42896167 100644
+index 3e3b5507..3c8e375f 100644
 --- a/apps/desktop/src/preload/preload.ts
 +++ b/apps/desktop/src/preload/preload.ts
 @@ -1093,6 +1093,7 @@ interface ComputerDriverUpdateCheck {
@@ -702,13 +707,14 @@ index 3e3b5507..42896167 100644
  };
  
  // 运行期端点清单(main 在 createWindow 前解析完成;首帧同步可用)。
-@@ -1114,6 +1115,25 @@ const readMicrophonePermissionSnapshot = createMicrophonePermissionSnapshot();
+@@ -1114,6 +1115,26 @@ const readMicrophonePermissionSnapshot = createMicrophonePermissionSnapshot();
  const voiceInputDataSnapshot = createVoiceInputDataSnapshot();
  
  contextBridge.exposeInMainWorld('electronAPI', {
 +  vibelink: {
 +    enabled: appDisplayVersionInfo.vibelinkEnabled === true,
 +    auth: (input: import('../shared/vibelinkAuth').HubAuthInput) => ipcRenderer.invoke('vibelink:auth', input),
++    automation: (input: import('../shared/vibelinkAutomation').AutomationInput) => ipcRenderer.invoke('vibelink:automation', input),
 +    admin: (input: import('../shared/vibelinkAdmin').AdminInput) => ipcRenderer.invoke('vibelink:admin', input),
 +    work: (input: import('../shared/vibelinkWork').HubWorkInput) => ipcRenderer.invoke('vibelink:work', input),
 +    notifications: (input: import('../shared/vibelinkNotifications').NotificationInput) => ipcRenderer.invoke('vibelink:notifications', input),
@@ -728,7 +734,7 @@ index 3e3b5507..42896167 100644
    localAgent: {
      onConfirmation: (listener: (request: import('../shared/localAgent').LocalAgentConfirmation) => void): (() => void) => {
        const receive = (_event: Electron.IpcRendererEvent, request: import('../shared/localAgent').LocalAgentConfirmation) => listener(request);
-@@ -2326,7 +2346,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
+@@ -2326,7 +2347,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
      ipcRenderer.sendSync('auth:has-persisted-session-hint-sync') === true,
    authInitialize: (): Promise<{
      user: unknown;
@@ -1141,10 +1147,10 @@ index 8f777768..c3e32412 100644
        try {
          await exitLocalMode();
 diff --git a/apps/desktop/src/renderer/i18n/locales/de/common.json b/apps/desktop/src/renderer/i18n/locales/de/common.json
-index c258b6d1..0254b3b2 100644
+index c258b6d1..7d26c4c2 100644
 --- a/apps/desktop/src/renderer/i18n/locales/de/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/de/common.json
-@@ -18951,5 +18951,191 @@
+@@ -18951,5 +18951,249 @@
      "rendered": "Dokument anzeigen",
      "wrap": "Zeilenumbruch",
      "lineNumbers": "Zeilennummern"
@@ -1334,13 +1340,71 @@ index c258b6d1..0254b3b2 100644
 +    "back": "Back to Hub workspace",
 +    "charged": "Charged tokens",
 +    "inputBytes": "Input bytes"
++  },
++  "vibelinkAutomation": {
++    "title": "Proactive operation · observe only",
++    "denied": "Sign in with a valid Hub account to view your rules.",
++    "unavailable": "Unable to read or save. Check the connection and refresh.",
++    "description": "Record suggestions only, with zero automatic execution. No tasks or notifications are submitted. Rules follow this account and observe only work owned by it, including in shared groups.",
++    "group": "Group for these rules",
++    "selectGroup": "Select a group",
++    "refresh": "Refresh",
++    "mode": "Operation mode",
++    "unloaded": "Read server settings first",
++    "observe": "Observe · suggestions only",
++    "off": "Off",
++    "saveMode": "Save mode",
++    "policyVersion": "Policy version",
++    "snapshotNote": "Suggestions are based on work-state snapshots, not a complete event stream. New rules and first enablement establish a baseline without replaying historical suggestions.",
++    "baseline": "Baseline · UTC+8",
++    "lastScan": "Last processed · UTC+8",
++    "capacityPaused": "Observation recording paused: the audit capacity is full and needs attention before further suggestions can be recorded.",
++    "persistencePaused": "Observation recording paused: audit storage needs attention before further suggestions can be recorded.",
++    "rules": "Versioned rules",
++    "newRule": "New rule",
++    "emptyRules": "No rules yet. Nothing is created automatically.",
++    "active": "Current",
++    "revoked": "Revoked",
++    "superseded": "Superseded",
++    "editRule": "Edit as new version",
++    "revoke": "Revoke rule",
++    "ruleForm": "Rule settings",
++    "newVersionNote": "Saving creates a new version. Previous decisions stay unchanged; no historical suggestions are replayed.",
++    "ruleLabel": "Rule name",
++    "statuses": "Work states to observe",
++    "saveRule": "Save rule version",
++    "cancel": "Cancel",
++    "decisions": "Recent decisions",
++    "decisionsNote": "The latest 200 decisions only. Suggestions and suppressions are not task execution or notification receipts.",
++    "at": "Recorded · UTC+8",
++    "work": "Work / observation revision",
++    "ruleVersion": "Rule / version",
++    "status": "Work state",
++    "outcome": "Decision",
++    "reason": "Reason",
++    "emptyDecisions": "No recorded decisions yet.",
++    "loading": "Reading server view…",
++    "saved": "Saved.",
++    "invalidRule": "Enter a rule name and select at least one work state.",
++    "conflict": "Rules changed elsewhere. Refresh and reopen the form before saving.",
++    "unknown": "Save outcome is unconfirmed. Refresh before editing again; it will not be retried automatically.",
++    "completed": "Completed",
++    "failed": "Failed",
++    "needs_input": "Needs input",
++    "suggested": "Suggestion recorded",
++    "suppressed": "Suppressed",
++    "matched": "Matched the rule",
++    "emptyGroups": "Create a group in the workspace, then refresh.",
++    "reason_off": "Operation is off",
++    "reason_revoked": "Rule was revoked",
++    "reason_matched": "Matched the rule"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/en/common.json b/apps/desktop/src/renderer/i18n/locales/en/common.json
-index bc45dcdd..e42d06b8 100644
+index bc45dcdd..29a46b96 100644
 --- a/apps/desktop/src/renderer/i18n/locales/en/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/en/common.json
-@@ -18951,5 +18951,191 @@
+@@ -18951,5 +18951,249 @@
      "rendered": "View document",
      "wrap": "Wrap lines",
      "lineNumbers": "Line numbers"
@@ -1530,13 +1594,71 @@ index bc45dcdd..e42d06b8 100644
 +    "back": "Back to Hub workspace",
 +    "charged": "Charged tokens",
 +    "inputBytes": "Input bytes"
++  },
++  "vibelinkAutomation": {
++    "title": "Proactive operation · observe only",
++    "denied": "Sign in with a valid Hub account to view your rules.",
++    "unavailable": "Unable to read or save. Check the connection and refresh.",
++    "description": "Record suggestions only, with zero automatic execution. No tasks or notifications are submitted. Rules follow this account and observe only work owned by it, including in shared groups.",
++    "group": "Group for these rules",
++    "selectGroup": "Select a group",
++    "refresh": "Refresh",
++    "mode": "Operation mode",
++    "unloaded": "Read server settings first",
++    "observe": "Observe · suggestions only",
++    "off": "Off",
++    "saveMode": "Save mode",
++    "policyVersion": "Policy version",
++    "snapshotNote": "Suggestions are based on work-state snapshots, not a complete event stream. New rules and first enablement establish a baseline without replaying historical suggestions.",
++    "baseline": "Baseline · UTC+8",
++    "lastScan": "Last processed · UTC+8",
++    "capacityPaused": "Observation recording paused: the audit capacity is full and needs attention before further suggestions can be recorded.",
++    "persistencePaused": "Observation recording paused: audit storage needs attention before further suggestions can be recorded.",
++    "rules": "Versioned rules",
++    "newRule": "New rule",
++    "emptyRules": "No rules yet. Nothing is created automatically.",
++    "active": "Current",
++    "revoked": "Revoked",
++    "superseded": "Superseded",
++    "editRule": "Edit as new version",
++    "revoke": "Revoke rule",
++    "ruleForm": "Rule settings",
++    "newVersionNote": "Saving creates a new version. Previous decisions stay unchanged; no historical suggestions are replayed.",
++    "ruleLabel": "Rule name",
++    "statuses": "Work states to observe",
++    "saveRule": "Save rule version",
++    "cancel": "Cancel",
++    "decisions": "Recent decisions",
++    "decisionsNote": "The latest 200 decisions only. Suggestions and suppressions are not task execution or notification receipts.",
++    "at": "Recorded · UTC+8",
++    "work": "Work / observation revision",
++    "ruleVersion": "Rule / version",
++    "status": "Work state",
++    "outcome": "Decision",
++    "reason": "Reason",
++    "emptyDecisions": "No recorded decisions yet.",
++    "loading": "Reading server view…",
++    "saved": "Saved.",
++    "invalidRule": "Enter a rule name and select at least one work state.",
++    "conflict": "Rules changed elsewhere. Refresh and reopen the form before saving.",
++    "unknown": "Save outcome is unconfirmed. Refresh before editing again; it will not be retried automatically.",
++    "completed": "Completed",
++    "failed": "Failed",
++    "needs_input": "Needs input",
++    "suggested": "Suggestion recorded",
++    "suppressed": "Suppressed",
++    "matched": "Matched the rule",
++    "emptyGroups": "Create a group in the workspace, then refresh.",
++    "reason_off": "Operation is off",
++    "reason_revoked": "Rule was revoked",
++    "reason_matched": "Matched the rule"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/es/common.json b/apps/desktop/src/renderer/i18n/locales/es/common.json
-index d4d5c25a..790631a4 100644
+index d4d5c25a..66030617 100644
 --- a/apps/desktop/src/renderer/i18n/locales/es/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/es/common.json
-@@ -19122,5 +19122,191 @@
+@@ -19122,5 +19122,249 @@
      "rendered": "Ver documento",
      "wrap": "Ajustar líneas",
      "lineNumbers": "Números de línea"
@@ -1726,13 +1848,71 @@ index d4d5c25a..790631a4 100644
 +    "back": "Back to Hub workspace",
 +    "charged": "Charged tokens",
 +    "inputBytes": "Input bytes"
++  },
++  "vibelinkAutomation": {
++    "title": "Proactive operation · observe only",
++    "denied": "Sign in with a valid Hub account to view your rules.",
++    "unavailable": "Unable to read or save. Check the connection and refresh.",
++    "description": "Record suggestions only, with zero automatic execution. No tasks or notifications are submitted. Rules follow this account and observe only work owned by it, including in shared groups.",
++    "group": "Group for these rules",
++    "selectGroup": "Select a group",
++    "refresh": "Refresh",
++    "mode": "Operation mode",
++    "unloaded": "Read server settings first",
++    "observe": "Observe · suggestions only",
++    "off": "Off",
++    "saveMode": "Save mode",
++    "policyVersion": "Policy version",
++    "snapshotNote": "Suggestions are based on work-state snapshots, not a complete event stream. New rules and first enablement establish a baseline without replaying historical suggestions.",
++    "baseline": "Baseline · UTC+8",
++    "lastScan": "Last processed · UTC+8",
++    "capacityPaused": "Observation recording paused: the audit capacity is full and needs attention before further suggestions can be recorded.",
++    "persistencePaused": "Observation recording paused: audit storage needs attention before further suggestions can be recorded.",
++    "rules": "Versioned rules",
++    "newRule": "New rule",
++    "emptyRules": "No rules yet. Nothing is created automatically.",
++    "active": "Current",
++    "revoked": "Revoked",
++    "superseded": "Superseded",
++    "editRule": "Edit as new version",
++    "revoke": "Revoke rule",
++    "ruleForm": "Rule settings",
++    "newVersionNote": "Saving creates a new version. Previous decisions stay unchanged; no historical suggestions are replayed.",
++    "ruleLabel": "Rule name",
++    "statuses": "Work states to observe",
++    "saveRule": "Save rule version",
++    "cancel": "Cancel",
++    "decisions": "Recent decisions",
++    "decisionsNote": "The latest 200 decisions only. Suggestions and suppressions are not task execution or notification receipts.",
++    "at": "Recorded · UTC+8",
++    "work": "Work / observation revision",
++    "ruleVersion": "Rule / version",
++    "status": "Work state",
++    "outcome": "Decision",
++    "reason": "Reason",
++    "emptyDecisions": "No recorded decisions yet.",
++    "loading": "Reading server view…",
++    "saved": "Saved.",
++    "invalidRule": "Enter a rule name and select at least one work state.",
++    "conflict": "Rules changed elsewhere. Refresh and reopen the form before saving.",
++    "unknown": "Save outcome is unconfirmed. Refresh before editing again; it will not be retried automatically.",
++    "completed": "Completed",
++    "failed": "Failed",
++    "needs_input": "Needs input",
++    "suggested": "Suggestion recorded",
++    "suppressed": "Suppressed",
++    "matched": "Matched the rule",
++    "emptyGroups": "Create a group in the workspace, then refresh.",
++    "reason_off": "Operation is off",
++    "reason_revoked": "Rule was revoked",
++    "reason_matched": "Matched the rule"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/fr/common.json b/apps/desktop/src/renderer/i18n/locales/fr/common.json
-index 67f0538c..3f248b8d 100644
+index 67f0538c..a0fa488d 100644
 --- a/apps/desktop/src/renderer/i18n/locales/fr/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/fr/common.json
-@@ -19122,5 +19122,191 @@
+@@ -19122,5 +19122,249 @@
      "rendered": "Afficher le document",
      "wrap": "Retour à la ligne",
      "lineNumbers": "Numéros de ligne"
@@ -1922,13 +2102,71 @@ index 67f0538c..3f248b8d 100644
 +    "back": "Back to Hub workspace",
 +    "charged": "Charged tokens",
 +    "inputBytes": "Input bytes"
++  },
++  "vibelinkAutomation": {
++    "title": "Proactive operation · observe only",
++    "denied": "Sign in with a valid Hub account to view your rules.",
++    "unavailable": "Unable to read or save. Check the connection and refresh.",
++    "description": "Record suggestions only, with zero automatic execution. No tasks or notifications are submitted. Rules follow this account and observe only work owned by it, including in shared groups.",
++    "group": "Group for these rules",
++    "selectGroup": "Select a group",
++    "refresh": "Refresh",
++    "mode": "Operation mode",
++    "unloaded": "Read server settings first",
++    "observe": "Observe · suggestions only",
++    "off": "Off",
++    "saveMode": "Save mode",
++    "policyVersion": "Policy version",
++    "snapshotNote": "Suggestions are based on work-state snapshots, not a complete event stream. New rules and first enablement establish a baseline without replaying historical suggestions.",
++    "baseline": "Baseline · UTC+8",
++    "lastScan": "Last processed · UTC+8",
++    "capacityPaused": "Observation recording paused: the audit capacity is full and needs attention before further suggestions can be recorded.",
++    "persistencePaused": "Observation recording paused: audit storage needs attention before further suggestions can be recorded.",
++    "rules": "Versioned rules",
++    "newRule": "New rule",
++    "emptyRules": "No rules yet. Nothing is created automatically.",
++    "active": "Current",
++    "revoked": "Revoked",
++    "superseded": "Superseded",
++    "editRule": "Edit as new version",
++    "revoke": "Revoke rule",
++    "ruleForm": "Rule settings",
++    "newVersionNote": "Saving creates a new version. Previous decisions stay unchanged; no historical suggestions are replayed.",
++    "ruleLabel": "Rule name",
++    "statuses": "Work states to observe",
++    "saveRule": "Save rule version",
++    "cancel": "Cancel",
++    "decisions": "Recent decisions",
++    "decisionsNote": "The latest 200 decisions only. Suggestions and suppressions are not task execution or notification receipts.",
++    "at": "Recorded · UTC+8",
++    "work": "Work / observation revision",
++    "ruleVersion": "Rule / version",
++    "status": "Work state",
++    "outcome": "Decision",
++    "reason": "Reason",
++    "emptyDecisions": "No recorded decisions yet.",
++    "loading": "Reading server view…",
++    "saved": "Saved.",
++    "invalidRule": "Enter a rule name and select at least one work state.",
++    "conflict": "Rules changed elsewhere. Refresh and reopen the form before saving.",
++    "unknown": "Save outcome is unconfirmed. Refresh before editing again; it will not be retried automatically.",
++    "completed": "Completed",
++    "failed": "Failed",
++    "needs_input": "Needs input",
++    "suggested": "Suggestion recorded",
++    "suppressed": "Suppressed",
++    "matched": "Matched the rule",
++    "emptyGroups": "Create a group in the workspace, then refresh.",
++    "reason_off": "Operation is off",
++    "reason_revoked": "Rule was revoked",
++    "reason_matched": "Matched the rule"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/ja/common.json b/apps/desktop/src/renderer/i18n/locales/ja/common.json
-index e3383953..1d3d5813 100644
+index e3383953..c0859195 100644
 --- a/apps/desktop/src/renderer/i18n/locales/ja/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/ja/common.json
-@@ -18879,5 +18879,191 @@
+@@ -18879,5 +18879,249 @@
      "rendered": "文書を表示",
      "wrap": "行の折り返し",
      "lineNumbers": "行番号"
@@ -2118,13 +2356,71 @@ index e3383953..1d3d5813 100644
 +    "back": "Back to Hub workspace",
 +    "charged": "Charged tokens",
 +    "inputBytes": "Input bytes"
++  },
++  "vibelinkAutomation": {
++    "title": "Proactive operation · observe only",
++    "denied": "Sign in with a valid Hub account to view your rules.",
++    "unavailable": "Unable to read or save. Check the connection and refresh.",
++    "description": "Record suggestions only, with zero automatic execution. No tasks or notifications are submitted. Rules follow this account and observe only work owned by it, including in shared groups.",
++    "group": "Group for these rules",
++    "selectGroup": "Select a group",
++    "refresh": "Refresh",
++    "mode": "Operation mode",
++    "unloaded": "Read server settings first",
++    "observe": "Observe · suggestions only",
++    "off": "Off",
++    "saveMode": "Save mode",
++    "policyVersion": "Policy version",
++    "snapshotNote": "Suggestions are based on work-state snapshots, not a complete event stream. New rules and first enablement establish a baseline without replaying historical suggestions.",
++    "baseline": "Baseline · UTC+8",
++    "lastScan": "Last processed · UTC+8",
++    "capacityPaused": "Observation recording paused: the audit capacity is full and needs attention before further suggestions can be recorded.",
++    "persistencePaused": "Observation recording paused: audit storage needs attention before further suggestions can be recorded.",
++    "rules": "Versioned rules",
++    "newRule": "New rule",
++    "emptyRules": "No rules yet. Nothing is created automatically.",
++    "active": "Current",
++    "revoked": "Revoked",
++    "superseded": "Superseded",
++    "editRule": "Edit as new version",
++    "revoke": "Revoke rule",
++    "ruleForm": "Rule settings",
++    "newVersionNote": "Saving creates a new version. Previous decisions stay unchanged; no historical suggestions are replayed.",
++    "ruleLabel": "Rule name",
++    "statuses": "Work states to observe",
++    "saveRule": "Save rule version",
++    "cancel": "Cancel",
++    "decisions": "Recent decisions",
++    "decisionsNote": "The latest 200 decisions only. Suggestions and suppressions are not task execution or notification receipts.",
++    "at": "Recorded · UTC+8",
++    "work": "Work / observation revision",
++    "ruleVersion": "Rule / version",
++    "status": "Work state",
++    "outcome": "Decision",
++    "reason": "Reason",
++    "emptyDecisions": "No recorded decisions yet.",
++    "loading": "Reading server view…",
++    "saved": "Saved.",
++    "invalidRule": "Enter a rule name and select at least one work state.",
++    "conflict": "Rules changed elsewhere. Refresh and reopen the form before saving.",
++    "unknown": "Save outcome is unconfirmed. Refresh before editing again; it will not be retried automatically.",
++    "completed": "Completed",
++    "failed": "Failed",
++    "needs_input": "Needs input",
++    "suggested": "Suggestion recorded",
++    "suppressed": "Suppressed",
++    "matched": "Matched the rule",
++    "emptyGroups": "Create a group in the workspace, then refresh.",
++    "reason_off": "Operation is off",
++    "reason_revoked": "Rule was revoked",
++    "reason_matched": "Matched the rule"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/ko/common.json b/apps/desktop/src/renderer/i18n/locales/ko/common.json
-index 30577f6d..adb77ed7 100644
+index 30577f6d..ec57379c 100644
 --- a/apps/desktop/src/renderer/i18n/locales/ko/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/ko/common.json
-@@ -18879,5 +18879,191 @@
+@@ -18879,5 +18879,249 @@
      "rendered": "문서 보기",
      "wrap": "자동 줄 바꿈",
      "lineNumbers": "줄 번호"
@@ -2314,13 +2610,71 @@ index 30577f6d..adb77ed7 100644
 +    "back": "Back to Hub workspace",
 +    "charged": "Charged tokens",
 +    "inputBytes": "Input bytes"
++  },
++  "vibelinkAutomation": {
++    "title": "Proactive operation · observe only",
++    "denied": "Sign in with a valid Hub account to view your rules.",
++    "unavailable": "Unable to read or save. Check the connection and refresh.",
++    "description": "Record suggestions only, with zero automatic execution. No tasks or notifications are submitted. Rules follow this account and observe only work owned by it, including in shared groups.",
++    "group": "Group for these rules",
++    "selectGroup": "Select a group",
++    "refresh": "Refresh",
++    "mode": "Operation mode",
++    "unloaded": "Read server settings first",
++    "observe": "Observe · suggestions only",
++    "off": "Off",
++    "saveMode": "Save mode",
++    "policyVersion": "Policy version",
++    "snapshotNote": "Suggestions are based on work-state snapshots, not a complete event stream. New rules and first enablement establish a baseline without replaying historical suggestions.",
++    "baseline": "Baseline · UTC+8",
++    "lastScan": "Last processed · UTC+8",
++    "capacityPaused": "Observation recording paused: the audit capacity is full and needs attention before further suggestions can be recorded.",
++    "persistencePaused": "Observation recording paused: audit storage needs attention before further suggestions can be recorded.",
++    "rules": "Versioned rules",
++    "newRule": "New rule",
++    "emptyRules": "No rules yet. Nothing is created automatically.",
++    "active": "Current",
++    "revoked": "Revoked",
++    "superseded": "Superseded",
++    "editRule": "Edit as new version",
++    "revoke": "Revoke rule",
++    "ruleForm": "Rule settings",
++    "newVersionNote": "Saving creates a new version. Previous decisions stay unchanged; no historical suggestions are replayed.",
++    "ruleLabel": "Rule name",
++    "statuses": "Work states to observe",
++    "saveRule": "Save rule version",
++    "cancel": "Cancel",
++    "decisions": "Recent decisions",
++    "decisionsNote": "The latest 200 decisions only. Suggestions and suppressions are not task execution or notification receipts.",
++    "at": "Recorded · UTC+8",
++    "work": "Work / observation revision",
++    "ruleVersion": "Rule / version",
++    "status": "Work state",
++    "outcome": "Decision",
++    "reason": "Reason",
++    "emptyDecisions": "No recorded decisions yet.",
++    "loading": "Reading server view…",
++    "saved": "Saved.",
++    "invalidRule": "Enter a rule name and select at least one work state.",
++    "conflict": "Rules changed elsewhere. Refresh and reopen the form before saving.",
++    "unknown": "Save outcome is unconfirmed. Refresh before editing again; it will not be retried automatically.",
++    "completed": "Completed",
++    "failed": "Failed",
++    "needs_input": "Needs input",
++    "suggested": "Suggestion recorded",
++    "suppressed": "Suppressed",
++    "matched": "Matched the rule",
++    "emptyGroups": "Create a group in the workspace, then refresh.",
++    "reason_off": "Operation is off",
++    "reason_revoked": "Rule was revoked",
++    "reason_matched": "Matched the rule"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/pt-BR/common.json b/apps/desktop/src/renderer/i18n/locales/pt-BR/common.json
-index 7b546ee2..d2057875 100644
+index 7b546ee2..6e635b88 100644
 --- a/apps/desktop/src/renderer/i18n/locales/pt-BR/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/pt-BR/common.json
-@@ -19122,5 +19122,191 @@
+@@ -19122,5 +19122,249 @@
      "rendered": "Ver documento",
      "wrap": "Quebra de linha",
      "lineNumbers": "Números de linha"
@@ -2510,13 +2864,71 @@ index 7b546ee2..d2057875 100644
 +    "back": "Back to Hub workspace",
 +    "charged": "Charged tokens",
 +    "inputBytes": "Input bytes"
++  },
++  "vibelinkAutomation": {
++    "title": "Proactive operation · observe only",
++    "denied": "Sign in with a valid Hub account to view your rules.",
++    "unavailable": "Unable to read or save. Check the connection and refresh.",
++    "description": "Record suggestions only, with zero automatic execution. No tasks or notifications are submitted. Rules follow this account and observe only work owned by it, including in shared groups.",
++    "group": "Group for these rules",
++    "selectGroup": "Select a group",
++    "refresh": "Refresh",
++    "mode": "Operation mode",
++    "unloaded": "Read server settings first",
++    "observe": "Observe · suggestions only",
++    "off": "Off",
++    "saveMode": "Save mode",
++    "policyVersion": "Policy version",
++    "snapshotNote": "Suggestions are based on work-state snapshots, not a complete event stream. New rules and first enablement establish a baseline without replaying historical suggestions.",
++    "baseline": "Baseline · UTC+8",
++    "lastScan": "Last processed · UTC+8",
++    "capacityPaused": "Observation recording paused: the audit capacity is full and needs attention before further suggestions can be recorded.",
++    "persistencePaused": "Observation recording paused: audit storage needs attention before further suggestions can be recorded.",
++    "rules": "Versioned rules",
++    "newRule": "New rule",
++    "emptyRules": "No rules yet. Nothing is created automatically.",
++    "active": "Current",
++    "revoked": "Revoked",
++    "superseded": "Superseded",
++    "editRule": "Edit as new version",
++    "revoke": "Revoke rule",
++    "ruleForm": "Rule settings",
++    "newVersionNote": "Saving creates a new version. Previous decisions stay unchanged; no historical suggestions are replayed.",
++    "ruleLabel": "Rule name",
++    "statuses": "Work states to observe",
++    "saveRule": "Save rule version",
++    "cancel": "Cancel",
++    "decisions": "Recent decisions",
++    "decisionsNote": "The latest 200 decisions only. Suggestions and suppressions are not task execution or notification receipts.",
++    "at": "Recorded · UTC+8",
++    "work": "Work / observation revision",
++    "ruleVersion": "Rule / version",
++    "status": "Work state",
++    "outcome": "Decision",
++    "reason": "Reason",
++    "emptyDecisions": "No recorded decisions yet.",
++    "loading": "Reading server view…",
++    "saved": "Saved.",
++    "invalidRule": "Enter a rule name and select at least one work state.",
++    "conflict": "Rules changed elsewhere. Refresh and reopen the form before saving.",
++    "unknown": "Save outcome is unconfirmed. Refresh before editing again; it will not be retried automatically.",
++    "completed": "Completed",
++    "failed": "Failed",
++    "needs_input": "Needs input",
++    "suggested": "Suggestion recorded",
++    "suppressed": "Suppressed",
++    "matched": "Matched the rule",
++    "emptyGroups": "Create a group in the workspace, then refresh.",
++    "reason_off": "Operation is off",
++    "reason_revoked": "Rule was revoked",
++    "reason_matched": "Matched the rule"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/pt-PT/common.json b/apps/desktop/src/renderer/i18n/locales/pt-PT/common.json
-index bae75933..32d2566d 100644
+index bae75933..08d7f0a5 100644
 --- a/apps/desktop/src/renderer/i18n/locales/pt-PT/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/pt-PT/common.json
-@@ -19122,5 +19122,191 @@
+@@ -19122,5 +19122,249 @@
      "rendered": "Ver documento",
      "wrap": "Moldar linhas",
      "lineNumbers": "Números de linha"
@@ -2706,13 +3118,71 @@ index bae75933..32d2566d 100644
 +    "back": "Back to Hub workspace",
 +    "charged": "Charged tokens",
 +    "inputBytes": "Input bytes"
++  },
++  "vibelinkAutomation": {
++    "title": "Proactive operation · observe only",
++    "denied": "Sign in with a valid Hub account to view your rules.",
++    "unavailable": "Unable to read or save. Check the connection and refresh.",
++    "description": "Record suggestions only, with zero automatic execution. No tasks or notifications are submitted. Rules follow this account and observe only work owned by it, including in shared groups.",
++    "group": "Group for these rules",
++    "selectGroup": "Select a group",
++    "refresh": "Refresh",
++    "mode": "Operation mode",
++    "unloaded": "Read server settings first",
++    "observe": "Observe · suggestions only",
++    "off": "Off",
++    "saveMode": "Save mode",
++    "policyVersion": "Policy version",
++    "snapshotNote": "Suggestions are based on work-state snapshots, not a complete event stream. New rules and first enablement establish a baseline without replaying historical suggestions.",
++    "baseline": "Baseline · UTC+8",
++    "lastScan": "Last processed · UTC+8",
++    "capacityPaused": "Observation recording paused: the audit capacity is full and needs attention before further suggestions can be recorded.",
++    "persistencePaused": "Observation recording paused: audit storage needs attention before further suggestions can be recorded.",
++    "rules": "Versioned rules",
++    "newRule": "New rule",
++    "emptyRules": "No rules yet. Nothing is created automatically.",
++    "active": "Current",
++    "revoked": "Revoked",
++    "superseded": "Superseded",
++    "editRule": "Edit as new version",
++    "revoke": "Revoke rule",
++    "ruleForm": "Rule settings",
++    "newVersionNote": "Saving creates a new version. Previous decisions stay unchanged; no historical suggestions are replayed.",
++    "ruleLabel": "Rule name",
++    "statuses": "Work states to observe",
++    "saveRule": "Save rule version",
++    "cancel": "Cancel",
++    "decisions": "Recent decisions",
++    "decisionsNote": "The latest 200 decisions only. Suggestions and suppressions are not task execution or notification receipts.",
++    "at": "Recorded · UTC+8",
++    "work": "Work / observation revision",
++    "ruleVersion": "Rule / version",
++    "status": "Work state",
++    "outcome": "Decision",
++    "reason": "Reason",
++    "emptyDecisions": "No recorded decisions yet.",
++    "loading": "Reading server view…",
++    "saved": "Saved.",
++    "invalidRule": "Enter a rule name and select at least one work state.",
++    "conflict": "Rules changed elsewhere. Refresh and reopen the form before saving.",
++    "unknown": "Save outcome is unconfirmed. Refresh before editing again; it will not be retried automatically.",
++    "completed": "Completed",
++    "failed": "Failed",
++    "needs_input": "Needs input",
++    "suggested": "Suggestion recorded",
++    "suppressed": "Suppressed",
++    "matched": "Matched the rule",
++    "emptyGroups": "Create a group in the workspace, then refresh.",
++    "reason_off": "Operation is off",
++    "reason_revoked": "Rule was revoked",
++    "reason_matched": "Matched the rule"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/zh-CN/common.json b/apps/desktop/src/renderer/i18n/locales/zh-CN/common.json
-index dcd22815..7d5f6ec1 100644
+index dcd22815..6bb999b7 100644
 --- a/apps/desktop/src/renderer/i18n/locales/zh-CN/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/zh-CN/common.json
-@@ -18879,5 +18879,191 @@
+@@ -18879,5 +18879,249 @@
      "rendered": "查看文稿",
      "wrap": "自动换行",
      "lineNumbers": "行号"
@@ -2902,13 +3372,71 @@ index dcd22815..7d5f6ec1 100644
 +    "back": "返回 Hub 工作区",
 +    "charged": "计费 Token",
 +    "inputBytes": "输入字节"
++  },
++  "vibelinkAutomation": {
++    "title": "主动运行 · 仅观察",
++    "denied": "请使用有效 Hub 账号查看自己的规则。",
++    "unavailable": "暂时无法读取或保存，请检查连接后刷新。",
++    "description": "只记录建议，零自动执行；不会代你提交任务或发送通知。规则跟随当前账号，只观察本账号拥有的工作，不影响同群其他账号。",
++    "group": "本组规则所属群",
++    "selectGroup": "请选择群",
++    "refresh": "刷新",
++    "mode": "运行模式",
++    "unloaded": "读取服务端设置后显示",
++    "observe": "观察 · 仅记录建议",
++    "off": "关闭",
++    "saveMode": "保存运行模式",
++    "policyVersion": "策略版本",
++    "snapshotNote": "按工作状态快照记录建议，不构成完整事件流水。新规则和首次启用只建立当前状态基线，不补发历史建议。",
++    "baseline": "观察基线 · UTC+8",
++    "lastScan": "最近处理时间 · UTC+8",
++    "capacityPaused": "观察记录暂停：审计容量已满，需处理容量后再记录建议。",
++    "persistencePaused": "观察记录暂停：审计无法持久化，需处理存储后再记录建议。",
++    "rules": "规则与版本",
++    "newRule": "新建规则",
++    "emptyRules": "尚未创建规则，系统不会自动预置。",
++    "active": "当前有效",
++    "revoked": "已撤销",
++    "superseded": "已被新版本替代",
++    "editRule": "编辑为新版本",
++    "revoke": "撤销规则",
++    "ruleForm": "规则设置",
++    "newVersionNote": "保存后生成新版本，不改动已记录的判断，也不会补发历史建议。",
++    "ruleLabel": "规则名称",
++    "statuses": "观察的工作状态",
++    "saveRule": "保存规则版本",
++    "cancel": "取消",
++    "decisions": "最近判断",
++    "decisionsNote": "仅展示最近 200 条判断；建议与抑制记录都不是任务执行或通知投递回执。",
++    "at": "记录时间 · UTC+8",
++    "work": "工作 / 观察修订号",
++    "ruleVersion": "规则 / 版本",
++    "status": "工作状态",
++    "outcome": "判断结果",
++    "reason": "原因",
++    "emptyDecisions": "暂无判断记录。",
++    "loading": "正在读取服务端视图…",
++    "saved": "已保存。",
++    "invalidRule": "请填写规则名称，并至少选择一种工作状态。",
++    "conflict": "规则已被其他操作修改，请刷新后重新打开表单保存。",
++    "unknown": "保存结果未确认，请刷新后再更改；不会自动重试。",
++    "completed": "已完成",
++    "failed": "失败",
++    "needs_input": "待补充",
++    "suggested": "已记录建议",
++    "suppressed": "已抑制",
++    "matched": "命中规则",
++    "emptyGroups": "请先在工作区创建群，再刷新。",
++    "reason_off": "运行已关闭",
++    "reason_revoked": "规则已撤销",
++    "reason_matched": "命中规则"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/zh-Hans-x-lzh/common.json b/apps/desktop/src/renderer/i18n/locales/zh-Hans-x-lzh/common.json
-index 56395a07..06c506a1 100644
+index 56395a07..39d5afae 100644
 --- a/apps/desktop/src/renderer/i18n/locales/zh-Hans-x-lzh/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/zh-Hans-x-lzh/common.json
-@@ -18879,5 +18879,191 @@
+@@ -18879,5 +18879,249 @@
      "rendered": "观文",
      "wrap": "折行",
      "lineNumbers": "行数"
@@ -3098,13 +3626,71 @@ index 56395a07..06c506a1 100644
 +    "back": "返回 Hub 工作区",
 +    "charged": "计费 Token",
 +    "inputBytes": "输入字节"
++  },
++  "vibelinkAutomation": {
++    "title": "主动运行 · 仅观察",
++    "denied": "请使用有效 Hub 账号查看自己的规则。",
++    "unavailable": "暂时无法读取或保存，请检查连接后刷新。",
++    "description": "只记录建议，零自动执行；不会代你提交任务或发送通知。规则跟随当前账号，只观察本账号拥有的工作，不影响同群其他账号。",
++    "group": "本组规则所属群",
++    "selectGroup": "请选择群",
++    "refresh": "刷新",
++    "mode": "运行模式",
++    "unloaded": "读取服务端设置后显示",
++    "observe": "观察 · 仅记录建议",
++    "off": "关闭",
++    "saveMode": "保存运行模式",
++    "policyVersion": "策略版本",
++    "snapshotNote": "按工作状态快照记录建议，不构成完整事件流水。新规则和首次启用只建立当前状态基线，不补发历史建议。",
++    "baseline": "观察基线 · UTC+8",
++    "lastScan": "最近处理时间 · UTC+8",
++    "capacityPaused": "观察记录暂停：审计容量已满，需处理容量后再记录建议。",
++    "persistencePaused": "观察记录暂停：审计无法持久化，需处理存储后再记录建议。",
++    "rules": "规则与版本",
++    "newRule": "新建规则",
++    "emptyRules": "尚未创建规则，系统不会自动预置。",
++    "active": "当前有效",
++    "revoked": "已撤销",
++    "superseded": "已被新版本替代",
++    "editRule": "编辑为新版本",
++    "revoke": "撤销规则",
++    "ruleForm": "规则设置",
++    "newVersionNote": "保存后生成新版本，不改动已记录的判断，也不会补发历史建议。",
++    "ruleLabel": "规则名称",
++    "statuses": "观察的工作状态",
++    "saveRule": "保存规则版本",
++    "cancel": "取消",
++    "decisions": "最近判断",
++    "decisionsNote": "仅展示最近 200 条判断；建议与抑制记录都不是任务执行或通知投递回执。",
++    "at": "记录时间 · UTC+8",
++    "work": "工作 / 观察修订号",
++    "ruleVersion": "规则 / 版本",
++    "status": "工作状态",
++    "outcome": "判断结果",
++    "reason": "原因",
++    "emptyDecisions": "暂无判断记录。",
++    "loading": "正在读取服务端视图…",
++    "saved": "已保存。",
++    "invalidRule": "请填写规则名称，并至少选择一种工作状态。",
++    "conflict": "规则已被其他操作修改，请刷新后重新打开表单保存。",
++    "unknown": "保存结果未确认，请刷新后再更改；不会自动重试。",
++    "completed": "已完成",
++    "failed": "失败",
++    "needs_input": "待补充",
++    "suggested": "已记录建议",
++    "suppressed": "已抑制",
++    "matched": "命中规则",
++    "emptyGroups": "请先在工作区创建群，再刷新。",
++    "reason_off": "运行已关闭",
++    "reason_revoked": "规则已撤销",
++    "reason_matched": "命中规则"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/zh-Hant-x-lzh/common.json b/apps/desktop/src/renderer/i18n/locales/zh-Hant-x-lzh/common.json
-index f35e1826..6efd9c89 100644
+index f35e1826..43e5498f 100644
 --- a/apps/desktop/src/renderer/i18n/locales/zh-Hant-x-lzh/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/zh-Hant-x-lzh/common.json
-@@ -18879,5 +18879,191 @@
+@@ -18879,5 +18879,249 @@
      "rendered": "觀文",
      "wrap": "折行",
      "lineNumbers": "行數"
@@ -3294,13 +3880,71 @@ index f35e1826..6efd9c89 100644
 +    "back": "返回 Hub 工作区",
 +    "charged": "计费 Token",
 +    "inputBytes": "输入字节"
++  },
++  "vibelinkAutomation": {
++    "title": "主动运行 · 仅观察",
++    "denied": "请使用有效 Hub 账号查看自己的规则。",
++    "unavailable": "暂时无法读取或保存，请检查连接后刷新。",
++    "description": "只记录建议，零自动执行；不会代你提交任务或发送通知。规则跟随当前账号，只观察本账号拥有的工作，不影响同群其他账号。",
++    "group": "本组规则所属群",
++    "selectGroup": "请选择群",
++    "refresh": "刷新",
++    "mode": "运行模式",
++    "unloaded": "读取服务端设置后显示",
++    "observe": "观察 · 仅记录建议",
++    "off": "关闭",
++    "saveMode": "保存运行模式",
++    "policyVersion": "策略版本",
++    "snapshotNote": "按工作状态快照记录建议，不构成完整事件流水。新规则和首次启用只建立当前状态基线，不补发历史建议。",
++    "baseline": "观察基线 · UTC+8",
++    "lastScan": "最近处理时间 · UTC+8",
++    "capacityPaused": "观察记录暂停：审计容量已满，需处理容量后再记录建议。",
++    "persistencePaused": "观察记录暂停：审计无法持久化，需处理存储后再记录建议。",
++    "rules": "规则与版本",
++    "newRule": "新建规则",
++    "emptyRules": "尚未创建规则，系统不会自动预置。",
++    "active": "当前有效",
++    "revoked": "已撤销",
++    "superseded": "已被新版本替代",
++    "editRule": "编辑为新版本",
++    "revoke": "撤销规则",
++    "ruleForm": "规则设置",
++    "newVersionNote": "保存后生成新版本，不改动已记录的判断，也不会补发历史建议。",
++    "ruleLabel": "规则名称",
++    "statuses": "观察的工作状态",
++    "saveRule": "保存规则版本",
++    "cancel": "取消",
++    "decisions": "最近判断",
++    "decisionsNote": "仅展示最近 200 条判断；建议与抑制记录都不是任务执行或通知投递回执。",
++    "at": "记录时间 · UTC+8",
++    "work": "工作 / 观察修订号",
++    "ruleVersion": "规则 / 版本",
++    "status": "工作状态",
++    "outcome": "判断结果",
++    "reason": "原因",
++    "emptyDecisions": "暂无判断记录。",
++    "loading": "正在读取服务端视图…",
++    "saved": "已保存。",
++    "invalidRule": "请填写规则名称，并至少选择一种工作状态。",
++    "conflict": "规则已被其他操作修改，请刷新后重新打开表单保存。",
++    "unknown": "保存结果未确认，请刷新后再更改；不会自动重试。",
++    "completed": "已完成",
++    "failed": "失败",
++    "needs_input": "待补充",
++    "suggested": "已记录建议",
++    "suppressed": "已抑制",
++    "matched": "命中规则",
++    "emptyGroups": "请先在工作区创建群，再刷新。",
++    "reason_off": "运行已关闭",
++    "reason_revoked": "规则已撤销",
++    "reason_matched": "命中规则"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/zh-TW/common.json b/apps/desktop/src/renderer/i18n/locales/zh-TW/common.json
-index 7075672e..08e24c9d 100644
+index 7075672e..c63c6698 100644
 --- a/apps/desktop/src/renderer/i18n/locales/zh-TW/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/zh-TW/common.json
-@@ -18879,5 +18879,191 @@
+@@ -18879,5 +18879,249 @@
      "rendered": "查看文件",
      "wrap": "自動換行",
      "lineNumbers": "行號"
@@ -3490,6 +4134,64 @@ index 7075672e..08e24c9d 100644
 +    "back": "返回 Hub 工作区",
 +    "charged": "计费 Token",
 +    "inputBytes": "输入字节"
++  },
++  "vibelinkAutomation": {
++    "title": "主动运行 · 仅观察",
++    "denied": "请使用有效 Hub 账号查看自己的规则。",
++    "unavailable": "暂时无法读取或保存，请检查连接后刷新。",
++    "description": "只记录建议，零自动执行；不会代你提交任务或发送通知。规则跟随当前账号，只观察本账号拥有的工作，不影响同群其他账号。",
++    "group": "本组规则所属群",
++    "selectGroup": "请选择群",
++    "refresh": "刷新",
++    "mode": "运行模式",
++    "unloaded": "读取服务端设置后显示",
++    "observe": "观察 · 仅记录建议",
++    "off": "关闭",
++    "saveMode": "保存运行模式",
++    "policyVersion": "策略版本",
++    "snapshotNote": "按工作状态快照记录建议，不构成完整事件流水。新规则和首次启用只建立当前状态基线，不补发历史建议。",
++    "baseline": "观察基线 · UTC+8",
++    "lastScan": "最近处理时间 · UTC+8",
++    "capacityPaused": "观察记录暂停：审计容量已满，需处理容量后再记录建议。",
++    "persistencePaused": "观察记录暂停：审计无法持久化，需处理存储后再记录建议。",
++    "rules": "规则与版本",
++    "newRule": "新建规则",
++    "emptyRules": "尚未创建规则，系统不会自动预置。",
++    "active": "当前有效",
++    "revoked": "已撤销",
++    "superseded": "已被新版本替代",
++    "editRule": "编辑为新版本",
++    "revoke": "撤销规则",
++    "ruleForm": "规则设置",
++    "newVersionNote": "保存后生成新版本，不改动已记录的判断，也不会补发历史建议。",
++    "ruleLabel": "规则名称",
++    "statuses": "观察的工作状态",
++    "saveRule": "保存规则版本",
++    "cancel": "取消",
++    "decisions": "最近判断",
++    "decisionsNote": "仅展示最近 200 条判断；建议与抑制记录都不是任务执行或通知投递回执。",
++    "at": "记录时间 · UTC+8",
++    "work": "工作 / 观察修订号",
++    "ruleVersion": "规则 / 版本",
++    "status": "工作状态",
++    "outcome": "判断结果",
++    "reason": "原因",
++    "emptyDecisions": "暂无判断记录。",
++    "loading": "正在读取服务端视图…",
++    "saved": "已保存。",
++    "invalidRule": "请填写规则名称，并至少选择一种工作状态。",
++    "conflict": "规则已被其他操作修改，请刷新后重新打开表单保存。",
++    "unknown": "保存结果未确认，请刷新后再更改；不会自动重试。",
++    "completed": "已完成",
++    "failed": "失败",
++    "needs_input": "待补充",
++    "suggested": "已记录建议",
++    "suppressed": "已抑制",
++    "matched": "命中规则",
++    "emptyGroups": "请先在工作区创建群，再刷新。",
++    "reason_off": "运行已关闭",
++    "reason_revoked": "规则已撤销",
++    "reason_matched": "命中规则"
    }
  }
 diff --git a/apps/desktop/src/renderer/lib/authService.ts b/apps/desktop/src/renderer/lib/authService.ts

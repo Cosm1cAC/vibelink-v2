@@ -14,3 +14,5 @@
 后端接口：`GET /api/beta/tenants`、`GET /api/usage/users?day=YYYY-MM-DD`、`GET /api/usage/requests`、`POST /api/usage/limits`。普通用户只能读取自己的 `/api/usage` 或 `/api/beta/quota`。本批不提供新建、轮换或撤销邀请码，也不自动向别人发送消息。
 
 验证：78 项 Hub 测试、12 项 Main 权限/服务测试、30 项 Renderer 定向测试、16 个浏览器界面变体及全量 TypeScript 检查通过。固定上游重放的 47 个修改文件和 86 个 overlay 文件逐字节一致。生产只读验收记录在部署证据中；没有用真实用户额度做测试写入。
+
+2026-11-09 运行验收：桌面 Main 已从运行中的内测 Hub 读取 10 个席位、2 条用户用量行和 4 条既有调用记录。旧审计缺少 `workId` 时按无关联 Work 展示，不阻断整个记录列表。邀请码默认隐藏，未向别人发送消息，也没有修改真实用户额度。开发与公网内测 Hub 最终均更新到 0.5.0；桌面沿用原 userData 和登录身份。

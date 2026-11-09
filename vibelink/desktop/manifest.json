@@ -9,7 +9,7 @@
     },
     {
       "path": "cindy-fusion.patch",
-      "sha256": "117ba71d30b0ce94d335b0924d6990f1b935a36e42a0a40fc1fb46fddb0b58a9"
+      "sha256": "7f7592153ef4030bb8ddf7c5dd96c31eb4762e0d897ae5e3c947c4320dc5513a"
     },
     {
       "path": "CINDY-LICENSE.txt",
@@ -46,6 +46,14 @@
     {
       "path": "overlay/apps/desktop/scripts/fixtures/vibelink-admin/ui-page.mjs",
       "sha256": "63ce034330178d2f5f61fb679d484566efa8af22354bc1bd6d21712f8b619dd9"
+    },
+    {
+      "path": "overlay/apps/desktop/scripts/fixtures/vibelink-automation/automation-fixture.tsx",
+      "sha256": "135dd4f067ebaed8aac1b3046054fa6647f1b69c8fe516071edc9e4eddcebb68"
+    },
+    {
+      "path": "overlay/apps/desktop/scripts/fixtures/vibelink-automation/ui-page.mjs",
+      "sha256": "d4d8626327a6ee8961088593926175cb6b0a7e7e7880819826a2bba958c49e23"
     },
     {
       "path": "overlay/apps/desktop/scripts/fixtures/vibelink-desktop/desktop-fixture.tsx",
@@ -102,6 +110,14 @@
     {
       "path": "overlay/apps/desktop/src/main/vibelink/__tests__/authVault.test.ts",
       "sha256": "a245a68fcead1929633e14c119a7e68589f0ae40439dcd4ee57019eb68e88a58"
+    },
+    {
+      "path": "overlay/apps/desktop/src/main/vibelink/__tests__/automationRuntime.test.ts",
+      "sha256": "f96c146a283a82a94e9912eff4a70bcbaff2a437c9c144127bfa60139b35c915"
+    },
+    {
+      "path": "overlay/apps/desktop/src/main/vibelink/__tests__/automationService.test.ts",
+      "sha256": "b7d4f3b9bf8df67c6f98c68a2be174db666e358eae3ed2639e599e9dc0a2de00"
     },
     {
       "path": "overlay/apps/desktop/src/main/vibelink/__tests__/embeddedAuth.test.ts",
@@ -162,6 +178,14 @@
     {
       "path": "overlay/apps/desktop/src/main/vibelink/authVault.ts",
       "sha256": "72780f1ffdd3ea426d2f07561030fdf297c4a85c34db997cd543a692f5e78e8f"
+    },
+    {
+      "path": "overlay/apps/desktop/src/main/vibelink/automationRuntime.ts",
+      "sha256": "49a44a2b80652466936ecc323648c1a84c76adae7629e366384eac2c5a714fa1"
+    },
+    {
+      "path": "overlay/apps/desktop/src/main/vibelink/automationService.ts",
+      "sha256": "7de446ada9dba83642c6f5735fed9466794a4c8f0f3d53aab55c78ed5c958470"
     },
     {
       "path": "overlay/apps/desktop/src/main/vibelink/embeddedServer.cjs",
@@ -284,6 +308,14 @@
       "sha256": "d0d4eac4d79e804114242f6fae527be43b22163c80cfc0d717449099e183b38f"
     },
     {
+      "path": "overlay/apps/desktop/src/renderer/features/vibelink/HubAutomationPanel.test.tsx",
+      "sha256": "351f469c69aa9fa6d9c048cd1f089e5c64708540916ad241e974e01b652a60f6"
+    },
+    {
+      "path": "overlay/apps/desktop/src/renderer/features/vibelink/HubAutomationPanel.tsx",
+      "sha256": "bd168ce4f7f2500b58ef980fc0554db3e2c9492a521f0fe74bdad1b2fcd18ad2"
+    },
+    {
       "path": "overlay/apps/desktop/src/renderer/features/vibelink/HubNotificationNavigation.tsx",
       "sha256": "653bf915743c77a310347f1b999affaf3a7a9e1ff9cd568b596be1b4c08243b0"
     },
@@ -301,11 +333,11 @@
     },
     {
       "path": "overlay/apps/desktop/src/renderer/features/vibelink/HubWorkspace.tsx",
-      "sha256": "d0762ec9cff94b80e59e0ac8b983f49f6840d7e21e37082702673eac5e004e94"
+      "sha256": "a23feb5ebefd1b2b319f4fea68e78c494f8f1915a14b3d10a5af458f8e557524"
     },
     {
       "path": "overlay/apps/desktop/src/renderer/features/vibelink/LoginPage.test.tsx",
-      "sha256": "921c9d94f516279361e09b22f511c67e65ad25a98c56dbe86434fd71e54e6dc2"
+      "sha256": "744018774b02dfafadf6c51ec9566580e5c30ef49036dcb42026d63e270dacd7"
     },
     {
       "path": "overlay/apps/desktop/src/renderer/features/vibelink/LoginPage.tsx",
@@ -356,8 +388,12 @@
       "sha256": "0da09a84c3617c335cba5c86bb4788148adcfe2d39e92afc0cda8391fd2e3d42"
     },
     {
+      "path": "overlay/apps/desktop/src/shared/vibelinkAutomation.ts",
+      "sha256": "699d6a3555df2b192a112551b71adc4515de44e2a50d6a9a5d3592410c930826"
+    },
+    {
       "path": "overlay/apps/desktop/src/shared/vibelinkDesktop.ts",
-      "sha256": "178631bd89662cb7a3edd77af4b02745aefc4a51811d303c8c4d0a7ae4bcdff8"
+      "sha256": "aa5855c4c1071fa71c0238fd888666b090f247f933a091d7df67470690ebe06e"
     },
     {
       "path": "overlay/apps/desktop/src/shared/vibelinkNotifications.ts",
@@ -373,7 +409,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "cf627bc58686e5df8d245614063029d0213f4f532563709a8d031966e0c56410"
+      "sha256": "abdb7626a80fc1991e35b2fefaca382e2155c7597cc6163a067ee58a7a3de0f5"
     },
     {
       "path": "Start-VibeLinkDesktop.ps1",
