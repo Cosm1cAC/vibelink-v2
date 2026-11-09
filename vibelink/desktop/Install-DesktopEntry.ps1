@@ -4,6 +4,57 @@ param(
   [string]$RuntimeRoot = (Join-Path $env:LOCALAPPDATA 'vibelink-mesh')
 )
 $ErrorActionPreference = 'Stop'
+$notificationAppId = 'cloud.vibelink.desktop'
+$notificationActivator = [Guid]'A38202ED-758B-552E-8722-E5CFC5918AFF'
+# Keep the existing safe wrapper target and arguments. Windows notifications
+# identify the Start Menu link by these two Shell properties, not its target.
+if (-not ('VibeLinkShellIdentity' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.ComTypes;
+
+public static class VibeLinkShellIdentity {
+    [StructLayout(LayoutKind.Sequential, Pack = 4)]
+    public struct Key { public Guid Format; public uint Id; public Key(uint id) { Format = new Guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3"); Id = id; } }
+    [StructLayout(LayoutKind.Explicit, Size = 24)]
+    public struct Value { [FieldOffset(0)] public ushort Type; [FieldOffset(8)] public IntPtr Pointer; }
+    [ComImport, Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface Store {
+        [PreserveSig] int GetCount(out uint count);
+        [PreserveSig] int GetAt(uint index, out Key key);
+        [PreserveSig] int GetValue(ref Key key, out Value value);
+        [PreserveSig] int SetValue(ref Key key, ref Value value);
+        [PreserveSig] int Commit();
+    }
+    [DllImport("ole32.dll")] static extern int PropVariantClear(ref Value value);
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    static extern void SHChangeNotify(uint change, uint flags, string item, IntPtr unused);
+
+    public static void Set(string path, string appId, Guid activator) {
+        object link = Activator.CreateInstance(Type.GetTypeFromCLSID(new Guid("00021401-0000-0000-C000-000000000046"), true));
+        Value name = new Value { Type = 31, Pointer = Marshal.StringToCoTaskMemUni(appId) };
+        Value clsid = new Value { Type = 72, Pointer = Marshal.AllocCoTaskMem(16) };
+        try {
+            Marshal.StructureToPtr(activator, clsid.Pointer, false);
+            IPersistFile file = (IPersistFile)link;
+            file.Load(path, 2);
+            Store properties = (Store)link;
+            Key app = new Key(5), toast = new Key(26);
+            Marshal.ThrowExceptionForHR(properties.SetValue(ref app, ref name));
+            Marshal.ThrowExceptionForHR(properties.SetValue(ref toast, ref clsid));
+            Marshal.ThrowExceptionForHR(properties.Commit());
+            file.Save(path, true);
+            SHChangeNotify(0x00002000, 0x0005, path, IntPtr.Zero);
+        } finally {
+            PropVariantClear(ref name);
+            PropVariantClear(ref clsid);
+            if (link != null) Marshal.FinalReleaseComObject(link);
+        }
+    }
+}
+'@
+}
 $SourceRoot = [IO.Path]::GetFullPath($SourceRoot)
 if (!(Test-Path -LiteralPath (Join-Path $SourceRoot 'apps/desktop/src/main/vibelink/embeddedServer.cjs'))) { throw 'Prepare the fused source first.' }
 & (Join-Path $PSScriptRoot 'Test-DesktopPackage.ps1')
@@ -46,6 +97,31 @@ $openScript = Join-Path $desktopRoot 'Open-VibeLinkDesktop.ps1'
 $vbs = Join-Path $desktopRoot 'Open-VibeLinkDesktop.vbs'
 $vbsBody = 'CreateObject("Wscript.Shell").Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ""' + $openScript.Replace('"','""') + '""", 0, False'
 [IO.File]::WriteAllText($vbs, $vbsBody, [Text.Encoding]::Unicode)
+# Electron validates the notification shortcut's exe/cwd but preserves its args.
+# This tiny app keeps those native requirements while forwarding every ordinary
+# Start Menu launch to the same safe wrapper, profile and source checkout.
+$notificationLauncher = Join-Path $desktopRoot 'notification-launcher'
+New-Item -ItemType Directory -Path $notificationLauncher -Force | Out-Null
+[IO.File]::WriteAllText((Join-Path $notificationLauncher 'package.json'), '{"name":"vibelink-notification-launcher","version":"1.0.0","main":"main.cjs"}', [Text.UTF8Encoding]::new($false))
+$notificationBootstrap = @'
+const { app } = require('electron');
+const { spawn } = require('node:child_process');
+const path = require('node:path');
+spawn(path.join(process.env.WINDIR || 'C:\\Windows', 'System32', 'wscript.exe'),
+  [path.join(__dirname, '..', 'Open-VibeLinkDesktop.vbs')],
+  { detached: true, windowsHide: true, stdio: 'ignore' }).unref();
+app.exit(0);
+'@
+[IO.File]::WriteAllText((Join-Path $notificationLauncher 'main.cjs'), $notificationBootstrap, [Text.UTF8Encoding]::new($false))
+$notificationExecutable = Join-Path $SourceRoot 'node_modules\electron\dist\electron.exe'
+if (!(Test-Path -LiteralPath $notificationExecutable)) { throw 'Install the prepared desktop dependencies before creating its notification entry.' }
+$notificationRegistry = 'HKCU:\Software\Classes\AppUserModelId\' + $notificationAppId
+if (Test-Path -LiteralPath $notificationRegistry) {
+    Get-ItemProperty -LiteralPath $notificationRegistry | Export-Clixml -LiteralPath (Join-Path $backup 'notification-identity.xml')
+}
+New-Item -Path $notificationRegistry -Force | Out-Null
+New-ItemProperty -LiteralPath $notificationRegistry -Name DisplayName -Value 'VibeLink' -PropertyType String -Force | Out-Null
+New-ItemProperty -LiteralPath $notificationRegistry -Name CustomActivator -Value ('{' + $notificationActivator.ToString() + '}') -PropertyType String -Force | Out-Null
 $cmd = Join-Path $runtime 'run-cindy-desktop.cmd'
 if (Test-Path -LiteralPath $cmd) { Copy-Item -LiteralPath $cmd -Destination $backup }
 [IO.File]::WriteAllText($cmd, ('@echo off' + "`r`n" + 'wscript.exe "%~dp0desktop\Open-VibeLinkDesktop.vbs"' + "`r`n"), [Text.Encoding]::ASCII)
@@ -58,10 +134,16 @@ foreach ($folder in $folders) {
     $link.TargetPath = Join-Path $env:WINDIR 'System32\wscript.exe'
     $link.Arguments = '"' + $vbs + '"'
     $link.WorkingDirectory = $desktopRoot
+    if ($folder -eq [Environment]::GetFolderPath('Programs')) {
+        $link.TargetPath = $notificationExecutable
+        $link.Arguments = '"' + $notificationLauncher + '"'
+        $link.WorkingDirectory = Split-Path $notificationExecutable -Parent
+    }
     $link.Description = 'VibeLink: conversations, workspace, devices and connections'
     $icon = Join-Path $runtime 'bin\vibelink-gui.exe'
     if (Test-Path -LiteralPath $icon) { $link.IconLocation = $icon + ',0' }
     $link.Save()
+    [VibeLinkShellIdentity]::Set($target, $notificationAppId, $notificationActivator)
 }
 $startupEntry = Join-Path ([Environment]::GetFolderPath('Startup')) 'vibelink.lnk'
 if (Test-Path -LiteralPath $startupEntry) {
