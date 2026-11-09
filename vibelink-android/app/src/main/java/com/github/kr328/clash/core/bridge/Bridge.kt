@@ -30,7 +30,7 @@ object Bridge {
 
     /** 必须在调用其它 native 方法之前执行一次，返回内核版本号。 */
     fun init(context: Context): String {
-        val home = File(context.filesDir, "clash").apply { mkdirs() }
+        val home = com.wangzan101.vibelink.clash.ClashIdentityStorage.prepareHome(context.filesDir)
         nativeInit(home.absolutePath, BuildConfig.VERSION_NAME, Build.VERSION.SDK_INT)
         version = nativeCoreVersion()
         Log.i(TAG, "clash core ready: $version (home=${home.absolutePath}, sdk=${Build.VERSION.SDK_INT})")

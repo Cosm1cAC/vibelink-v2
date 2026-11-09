@@ -6,7 +6,8 @@ import com.wangzan101.vibelink.BuildConfig
 object BotModelPolicy {
     const val DEEPSEEK_MODEL = "auto/deepseek-v4.1-flash"
     val engines: List<String> get() = listOf("codex")
-    val models: List<String> get() = if (BuildConfig.IS_BETA_EDITION) listOf(DEEPSEEK_MODEL) else listOf("", DEEPSEEK_MODEL)
+    val models: List<String> get() = availableModels(BuildConfig.IS_BETA_EDITION)
+    fun availableModels(beta: Boolean): List<String> = if (beta) listOf(DEEPSEEK_MODEL) else listOf("", DEEPSEEK_MODEL)
     fun defaultEngine(templateId: String, beta: Boolean = BuildConfig.IS_BETA_EDITION): String = "codex"
     fun defaultModel(templateId: String, beta: Boolean = BuildConfig.IS_BETA_EDITION): String =
         if (!beta && templateId == "tpl_grok_cos") "" else DEEPSEEK_MODEL

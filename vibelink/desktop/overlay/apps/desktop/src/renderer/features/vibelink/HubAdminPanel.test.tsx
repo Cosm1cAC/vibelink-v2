@@ -5,6 +5,36 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { HubAdminPanel } from './HubAdminPanel';
 import type { HubSession } from '../../../shared/vibelinkAuth';
 import type { AdminResult } from '../../../shared/vibelinkAdmin';
+it('reveals the limit editor on click and focuses its first field without scrolling again while typing', async () => {
+  const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollIntoView');
+  const scroll = vi.fn();
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+    configurable: true,
+    value: scroll,
+  });
+  try {
+    const admin = vi.fn(async (input: { action: string }): Promise<AdminResult> =>
+      input.action === 'capability'
+        ? { success: true, data: { kind: 'capability', allowed: true, reason: '' } }
+        : input.action === 'snapshot'
+          ? { success: true, data: snapshot }
+          : { success: true, data: { kind: 'requests', requests: [] } },
+    );
+    render(<HubAdminPanel session={owner} bridge={{ admin }} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'vibelinkAdmin.edit beta_01' }));
+    const first = screen.getByLabelText('vibelinkAdmin.dailyRequests');
+    expect(scroll).toHaveBeenCalledExactlyOnceWith({ block: 'center', behavior: 'auto' });
+    expect(document.activeElement).toBe(first);
+    fireEvent.change(first, { target: { value: '250' } });
+    expect(scroll).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole('button', { name: 'vibelinkAdmin.cancel' }));
+    expect(screen.queryByLabelText('vibelinkAdmin.dailyRequests')).toBeNull();
+    expect(admin.mock.calls.some((call) => call[0].action === 'setLimits')).toBe(false);
+  } finally {
+    if (original) Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', original);
+    else Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView');
+  }
+});
 const limits = {
   dailyRequests: 300,
   dailyTokens: 1500000,

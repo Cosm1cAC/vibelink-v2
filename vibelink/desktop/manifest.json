@@ -45,7 +45,7 @@
     },
     {
       "path": "overlay/apps/desktop/scripts/fixtures/vibelink-admin/ui-page.mjs",
-      "sha256": "63ce034330178d2f5f61fb679d484566efa8af22354bc1bd6d21712f8b619dd9"
+      "sha256": "16c93572aaa2faa3cfe2f539b2c3501379dd8d7ba118a9a94e759eebd8318fea"
     },
     {
       "path": "overlay/apps/desktop/scripts/fixtures/vibelink-automation/automation-fixture.tsx",
@@ -297,11 +297,11 @@
     },
     {
       "path": "overlay/apps/desktop/src/renderer/features/vibelink/HubAdminPanel.test.tsx",
-      "sha256": "8350a495a033a5c09ed1c61da192e29f95f53ff724e84ebeef5c876a43f91244"
+      "sha256": "0e2693af34d049fc93e0a2592bcff516b4bbd64bfac33d10494df042ad456253"
     },
     {
       "path": "overlay/apps/desktop/src/renderer/features/vibelink/HubAdminPanel.tsx",
-      "sha256": "c6908ae586b9bfd4f6c609059a9ac67c57bd4615f24e095a923d0e244625dba9"
+      "sha256": "ee1de2d117c1fcfc8971e0d4ea8ef480728869bffe18e561914d813dbb5673be"
     },
     {
       "path": "overlay/apps/desktop/src/renderer/features/vibelink/HubAdminWorkspace.tsx",

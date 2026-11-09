@@ -24,7 +24,7 @@ object ClashConfig {
 
     fun write(context: Context): File {
         check(!com.wangzan101.vibelink.BuildConfig.IS_BETA_EDITION) { "内测版不生成开发者代理配置" }
-        val file = File(context.filesDir, "clash/config.yaml")
+        val file = File(com.wangzan101.vibelink.clash.ClashIdentityStorage.prepareHome(context.filesDir), "config.yaml")
         file.parentFile?.mkdirs()
         if (com.wangzan101.vibelink.BuildConfig.HAS_DEV_CLASH_SEED) {
             // Seed geo databases before core validation, without needing a first

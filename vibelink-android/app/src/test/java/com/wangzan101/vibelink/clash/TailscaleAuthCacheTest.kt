@@ -51,6 +51,15 @@ class TailscaleAuthCacheTest {
         assertFalse(TailscaleAuthCache.redact(text).contains(good))
         assertEquals("normal", TailscaleAuthCache.redact("normal"))
     }
+    @Test fun enrollmentCredentialsAndAuthorizationLinksAreBothRedacted() {
+        // Synthetic fragments, never a usable auth key.
+        val sample="tskey-"+"auth-test-only-not-a-real-credential"
+        val text="registration failed: $sample; Visit $good"
+        val safe=TailscaleAuthCache.redact(text)
+        assertFalse(safe.contains(sample))
+        assertFalse(safe.contains(good))
+        assertTrue(safe.contains("credential hidden"))
+    }
     @Test fun browserForegroundAndServiceRebindingRetainShortLivedAuthorization() {
         val cache = TailscaleAuthCache({ 0 })
         val before = TailscaleLogRelay<String>(cache)

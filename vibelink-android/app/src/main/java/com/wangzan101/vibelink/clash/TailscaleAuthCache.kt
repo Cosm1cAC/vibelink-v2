@@ -79,8 +79,12 @@ class TailscaleAuthCache(private val now: () -> Long, private val ttlMillis: Lon
     }
     @Synchronized fun clear() { url = null; owner = null; expires = 0 }
     companion object {
-        fun redact(message: String): String = Regex("https://login\\.tailscale\\.com/a/[^\\s<>\"]+", RegexOption.IGNORE_CASE)
-            .replace(message, "[Tailscale authorization link hidden]")
+        fun redact(message: String): String {
+            val withoutKeys = Regex("tskey-[A-Za-z0-9_-]+", RegexOption.IGNORE_CASE)
+                .replace(message, "[Tailscale credential hidden]")
+            return Regex("https://login\\.tailscale\\.com/a/[^\\s<>\"]+", RegexOption.IGNORE_CASE)
+                .replace(withoutKeys, "[Tailscale authorization link hidden]")
+        }
 
         fun allowedUrl(value: String): String? = runCatching {
             val uri = URI(value)

@@ -62,6 +62,17 @@ export function HubAdminPanel({
   viewRef.current = view;
   const version = useRef(0);
   const [dataView, setDataView] = useState('');
+  const editorForm = useRef<HTMLFormElement | null>(null);
+  const editTarget = editor?.view === view ? `${editor.view}/${editor.userId}` : '';
+  useEffect(() => {
+    if (!editTarget || !editorForm.current) return;
+    // Ten seat rows place this form below the viewport. Reveal it on open or
+    // seat changes; field edits keep the same keys and must not move the page.
+    editorForm.current.scrollIntoView?.({ block: 'center', behavior: 'auto' });
+    editorForm.current
+      .querySelector<HTMLInputElement>('input:not(:disabled)')
+      ?.focus({ preventScroll: true });
+  }, [editTarget]);
   const clear = () => {
     setReloadRequired(false);
     setSnapshot(null);
@@ -334,6 +345,7 @@ export function HubAdminPanel({
       </section>
       {editor?.view === view && (
         <form
+          ref={editorForm}
           className={panel}
           onSubmit={(event) => {
             event.preventDefault();

@@ -41,6 +41,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wangzan101.vibelink.chat.ConversationStore
+import com.wangzan101.vibelink.remote.RemoteStore
+import com.wangzan101.vibelink.BuildConfig
 import com.wangzan101.vibelink.ui.components.BarIconButton
 import com.wangzan101.vibelink.ui.theme.VibeLinkIcons
 import com.wangzan101.vibelink.ui.theme.VibeLinkShapes
@@ -109,6 +111,27 @@ fun AgentProfileScreen(
     var showVoiceCall by remember { mutableStateOf(false) }
     var showCapabilitySheet by remember { mutableStateOf(false) }
     var showSessionsSheet by remember { mutableStateOf(false) }
+    var showAgentSettings by remember(agentId) { mutableStateOf(false) }
+    var showModelSettings by remember(agentId) { mutableStateOf(false) }
+    var runtimeConnection by remember(agentId) { mutableStateOf<RemoteStore.Connection?>(null) }
+    var runtimeError by remember(agentId) { mutableStateOf<String?>(null) }
+
+    fun saveRuntime(agent: String? = null, model: String? = null) {
+        val captured = runtimeConnection ?: return
+        if (!RemoteStore.matches(ctx, captured)) {
+            runtimeError = "登录连接已改变，请关闭后重新打开设置。"
+            return
+        }
+        val latestBot = BotTeamStore.getBot(ctx, agentId)
+        if (latestBot == null) { runtimeError = "此 Bot 已不存在，请返回后刷新。"; return }
+        val changed = if (agent != null) BotRuntimeSettings.selectAgent(latestBot, agent)
+            else BotRuntimeSettings.selectModel(latestBot, model ?: return, BuildConfig.IS_BETA_EDITION)
+        if (changed != latestBot) BotTeamStore.upsertBot(ctx, changed)
+        botFriend = BotTeamStore.getBot(ctx, agentId)
+        showAgentSettings = false
+        showModelSettings = false
+        refreshTick++
+    }
 
     LaunchedEffect(agentId, refreshTick) {
         BotTeamStore.ensureSeeded(ctx)
@@ -250,7 +273,13 @@ fun AgentProfileScreen(
                         Spacer(Modifier.height(6.dp))
                         // 模型由当前 Bot 绑定决定，Agent 单独展示。
                         Text(
-                            "运行模型：  $underlyingModelName",
+                            "运行模型：  $underlyingModelName${if (currentBot != null) "  ›" else ""}",
+                            modifier = Modifier.fillMaxWidth().clickable(enabled = currentBot != null,
+                                role = androidx.compose.ui.semantics.Role.Button) {
+                                runtimeConnection = RemoteStore.connection(ctx)
+                                runtimeError = null
+                                showModelSettings = true
+                            }.padding(vertical = 5.dp),
                             fontSize = 13.5.sp,
                             color = c.ink3,
                             maxLines = 1,
@@ -258,7 +287,12 @@ fun AgentProfileScreen(
                         )
                         Spacer(Modifier.height(3.dp))
                         Text(
-                            "Agent：  ${agentDisplayName(targetEngine)}${if (targetEngine == "codex") " · 官方 CLI" else ""}",
+                            "Agent：  ${agentDisplayName(targetEngine)}${if (targetEngine == "codex") " · 官方 CLI" else ""}  ›",
+                            modifier = Modifier.fillMaxWidth().clickable(role = androidx.compose.ui.semantics.Role.Button) {
+                                runtimeConnection = RemoteStore.connection(ctx)
+                                runtimeError = null
+                                showAgentSettings = true
+                            }.padding(vertical = 5.dp),
                             fontSize = 13.5.sp,
                             color = c.ink3,
                         )
@@ -845,6 +879,47 @@ fun AgentProfileScreen(
         )
     }
 
+    if (showAgentSettings) {
+        AlertDialog(
+            onDismissRequest = { showAgentSettings = false },
+            title = { Text("Agent 设置") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Agent 是运行器，负责工具执行与会话；运行模型负责生成回答。DeepSeek 可以通过 Codex 官方 CLI 运行，两者是独立设置。")
+                    Text("当前：${agentDisplayName(targetEngine)}")
+                    Text("目前可用的电脑运行器只有 Codex 官方 CLI。会话保存在 Agent 上；更换模型后将解除原会话绑定，原会话不会被删除。")
+                    BotModelPolicy.engines.forEach { engine ->
+                        TextButton(onClick = { saveRuntime(agent = engine) }, enabled = currentBot != null) {
+                            Text((if (targetEngine == engine) "✓ " else "") + BotModelPolicy.label(engine))
+                        }
+                    }
+                    if (currentBot == null) Text("此页不是 Bot 工位，无法在这里更换运行器。")
+                    runtimeError?.let { Text(it, color = c.bad) }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showAgentSettings = false }) { Text("关闭") } },
+        )
+    }
+    if (showModelSettings && currentBot != null) {
+        AlertDialog(
+            onDismissRequest = { showModelSettings = false },
+            title = { Text("运行模型") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("当前：${BotModelPolicy.modelLabel(currentBot.model)}")
+                    Text("选择后立即保存。更换模型会解除当前 Bot 的旧会话绑定；角色、技能、权限和工作区保持原设置，原会话不会被删除。")
+                    if (BuildConfig.IS_BETA_EDITION) Text("内测版仅支持 DeepSeek · Magpie 路由组。")
+                    BotModelPolicy.models.forEach { model ->
+                        TextButton(onClick = { saveRuntime(model = model) }) {
+                            Text((if (currentBot.model == model) "✓ " else "") + BotModelPolicy.modelLabel(model))
+                        }
+                    }
+                    runtimeError?.let { Text(it, color = c.bad) }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showModelSettings = false }) { Text("取消") } },
+        )
+    }
     if (showManager) ConversationManagerDialog(onDismiss = { showManager = false })
     if (showEditBot && currentBot != null) {
         CreateOrEditBotDialog(

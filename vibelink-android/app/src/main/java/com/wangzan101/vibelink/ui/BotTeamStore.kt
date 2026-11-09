@@ -1993,13 +1993,11 @@ object BotTeamStore {
     @Synchronized
     fun upsertBot(context: Context, bot: BotFriend) {
         val previous = getBot(context, bot.id)
-        val normalized = bot.copy(
+        val normalized = BotRuntimeSettings.detachIncompatibleSessions(previous, bot.copy(
             name = bot.name.trim().ifBlank { bot.jobTitle },
             avatar = bot.avatar.trim(),
             engine = BotModelPolicy.requireEngine(bot.engine),
-            activeSessionId = if (previous != null && (previous.engine != bot.engine || previous.model != bot.model)) "" else bot.activeSessionId,
-            sessionIds = if (previous != null && (previous.engine != bot.engine || previous.model != bot.model)) emptyList() else bot.sessionIds,
-        )
+        ))
         AgentPrefs.setAvatar(context, normalized.id, normalized.avatar)
         val all = listBots(context, includeArchived = true).toMutableList()
         val idx = all.indexOfFirst { it.id == normalized.id }
@@ -2511,8 +2509,9 @@ object BotTeamStore {
     ): String = withContext(Dispatchers.IO) {
         profileSyncMutex.withLock {
             val latestBot = getBot(context, bot.id) ?: bot
-            val hub = RemoteStore.hub(context)
-            val token = RemoteStore.token(context)
+            val connection = RemoteStore.connection(context)
+            val hub = connection.hub
+            val token = connection.token
             val engine = BotModelPolicy.requireEngine(latestBot.engine)
             check(hub.isNotBlank() && token.isNotBlank()) { "请先在远程连接中配置 Hub 并完成配对" }
             BotSessionBootstrap.create(
@@ -2542,7 +2541,12 @@ object BotTeamStore {
                         isolationMode = latestBot.isolationMode,
                     )
                     check(created.id.isNotBlank()) { "Codex 未返回可用会话 ID" }
-                    bindSessionToBot(context, latestBot.id, created.id, taskTitle.take(40))
+                    synchronized(this@BotTeamStore) {
+                        check(RemoteStore.matches(context, connection) && getBot(context, latestBot.id)?.let {
+                            BotRuntimeSettings.sameSessionRuntime(latestBot, it)
+                        } == true) { "模型或登录配置已变化，请重新发送" }
+                        bindSessionToBot(context, latestBot.id, created.id, taskTitle.take(40))
+                    }
                     val cachedList = RemoteSessionCache.getCachedSessions(context, engine)
                     RemoteSessionCache.putCachedSessions(context, engine, listOf(created) + cachedList.filterNot { it.id == created.id })
                     created.id

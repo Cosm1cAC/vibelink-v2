@@ -20,6 +20,8 @@ export default {
    await ui.capture('admin-recent');
   }
   await page.getByRole('button',{name:(await ui.t('vibelinkAdmin.edit'))+' beta_01',exact:true}).click();
+  const editorVisible=await page.locator('form').evaluate(form=>{const r=form.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight&&form.contains(document.activeElement);});
+  assert.equal(editorVisible,true,'Clicking Edit must reveal and focus the form before any input action can auto-scroll it');
   await page.getByLabel(await ui.t('vibelinkAdmin.dailyTokens'),{exact:true}).fill('1200000');
   await ui.capture('admin-limits');
   await page.getByRole('button',{name:await ui.t('vibelinkAdmin.save'),exact:true}).click();
