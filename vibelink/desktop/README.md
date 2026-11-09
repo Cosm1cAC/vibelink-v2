@@ -58,9 +58,9 @@ Main 保存由 Hub 验证的 client session，token 和 QR pollSecret 不进入 
 
 系统 show、click、close、failed 各自保存回执。“已提交系统提醒”表示收到系统 show 回执，不代表用户已看到，也不修改 Work 完成或已读。点击仅在当前同一账号及有效 owner 下进入对应 Hub 群和任务；预览默认仅通用正文，须另行选择才能包含标题或结果。IM、邮件仅保留未来通道类型声明，没有目标凭据或外发实现。
 
-Windows 源码启动版固定 AUMID `cloud.vibelink.desktop` 与 Toast Activator CLSID。桌面、登录任务仍使用原安全包装；开始菜单使用受控 Electron 启动桩，避免 Electron 原生注册覆盖入口参数。Main 在固定原 userData 后设置 VibeLink 名称，核对开始菜单 target/cwd/args 与两个身份字段。注册 warmup 仅构造并关闭未显示对象，从不调用 show。能力登记与实际提醒显示独立，系统免打扰或通知权限仍可能影响显示；源码进程完全退出后的行动中心重新激活不在本次承诺范围。平台前置条件见 [Electron 通知说明](https://www.electronjs.org/docs/latest/tutorial/notifications)。
+Windows 源码启动版固定 AUMID `cloud.vibelink.desktop` 与 Toast Activator CLSID。桌面、登录任务仍使用原安全包装；开始菜单使用受控 Electron 启动桩。Electron 42 按 exe 产品元数据寻找 `Electron.lnk`，因此安装器另建本应用专属的隐藏兼容入口，同样指向安全启动桩；第三方 Electron 入口冲突时保留原文件。Main 在固定原 userData 后设置 VibeLink 名称，并核对主入口与兼容入口的 target/cwd/args 和两个身份字段；缺失或冲突时跳过原生初始化，绝不代为覆盖入口。注册 warmup 仅构造并关闭未显示对象，从不调用 show。能力登记与实际提醒显示独立，系统免打扰或通知权限仍可能影响显示；源码进程完全退出后的行动中心重新激活不在本次承诺范围。平台前置条件见 [Electron 通知说明](https://www.electronjs.org/docs/latest/tutorial/notifications)。
 
-本批原生验收确认 63 文件包可重放、默认两个开关关闭、0 提醒记录、原 `local-v1` 及绝对 userData 不变。Windows 的开始菜单身份、AUMID/Activator 两属性和 Electron 创建的 CLSID 注册已核实；外部 WinRT `Get_Setting` 仍返回 `0x80070490`，因此系统通知权限状态未确认。Main 的 `supported/registered` 仅表示 API 支持与身份匹配，不代表系统已接受或显示提醒。本批未实际调用 show、开启预览、运行模型或发送外部消息；投递回执由 mock 验证，实际弹窗投递尚未验收。
+本批原生验收确认 65 文件包可重放、默认两个开关关闭、0 提醒记录、原 `local-v1` 及绝对 userData 不变。Windows 的开始菜单身份、AUMID/Activator 两属性和 Electron 创建的 CLSID 注册已核实；外部 WinRT `Get_Setting` 仍返回 `0x80070490`，因此系统通知权限状态未确认。Main 的 `supported/registered` 仅表示 API 支持与身份匹配，不代表系统已接受或显示提醒。本批未实际调用 show、开启预览、运行模型或发送外部消息；投递回执由 mock 验证，实际弹窗投递尚未验收。
 
 2026-11-09 登录包重放已从固定 commit 的全新 Prepare 目录安装独立依赖并返回真实 `DESKTOP_DEV_VERDICT=ready`。Main 登录 IPC 验证 owner 映射到原 `local-v1`；绝对 userData 仍为 `C:\Users\22771\AppData\Roaming\Cindy-dev2-vibelink`，原 `LOGIN_OWNER_OK` 历史可见。桌面、开始菜单和既有 `CindyVibelinkDesktop` 登录任务已转向该可复现源码，旧入口已备份；未复制原 dirty Cindy 源码或数据。该次检查未新增模型推理。
 
@@ -82,7 +82,7 @@ pnpm ui:check --page vibelink-desktop --theme all
 
 HTTP 测试用临时 Hub 验证 Main 注入的当前身份、凭据不回传，以及无 Main proof/第三方 Origin 不能到达 Hub。新增登录测试覆盖 fresh signed_out、发行与恢复、迟到 vault/owner 写入、退出和 B 登录交错、运行中到期、ACK denied、丢 ACK、加密存储和本机执行能力边界。
 
-2026-11-09 本轮 69 项登录、任务工作区及系统提醒定向 Vitest、1 项真实 HTTP 凭据隔离测试通过。登录页此前验证 48 项 UI 变体，任务面板和系统提醒面板分别验证 12 种语言 × 深浅色 × 4 种状态，共各 96 项变体并检查截图，无 warnings。全新 Prepare 目录独立安装锁定依赖后，全量 TypeScript 以 12GB 堆执行通过；该结果取代早期原型环境中的 Undici/net-policy 类型限制。
+2026-11-09 本轮 72 项登录、任务工作区及系统提醒定向 Vitest、1 项真实 HTTP 凭据隔离测试通过。登录页此前验证 48 项 UI 变体，任务面板和系统提醒面板分别验证 12 种语言 × 深浅色 × 4 种状态，共各 96 项变体并检查截图，无 warnings。全新 Prepare 目录独立安装锁定依赖后，全量 TypeScript 以 12GB 堆执行通过；该结果取代早期原型环境中的 Undici/net-policy 类型限制。
 
 打包说明：父仓 `.gitattributes` 对 `vibelink/desktop/**` 设置 `-text`，保持文件原始字节，避免跨平台 checkout 改写换行导致 SHA256 不匹配。原型中全局替换端点、伪造账号、明文保存Token、旧中继自动启动和禁用沙箱均未纳入交付。完整原生客户端已由发布流程返回 `DESKTOP_DEV_VERDICT=ready`（真实模式、region cn、隔离profile vibelink），最终运行验收由部署方记录。
 

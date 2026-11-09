@@ -21,7 +21,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "c170c95d4128bd8813f0fd230f643231e2540e81377d22a0305d6d4a7e2468d8"
+      "sha256": "529d3745458540a749e651046bd8f4f7bc1a5147dd523bb92d959bf2e54ee98f"
     },
     {
       "path": "Start-VibeLinkDesktop.ps1",
@@ -92,6 +92,10 @@
       "sha256": "07a986e6a74cce895745ab31aa22d992449c39a764f4ae0b69a84f294dc81a75"
     },
     {
+      "path": "overlay/apps/desktop/src/main/vibelink/__tests__/notificationIdentity.test.ts",
+      "sha256": "9c48de33613acdb73d2491c6d447eb59d3d81fba57c3ee93fb824979a95e02d8"
+    },
+    {
       "path": "overlay/apps/desktop/src/main/vibelink/__tests__/notificationOS.test.ts",
       "sha256": "6f357f816e13711dfcd8fb083789baf3a2d5d60b0bffcabab0b2d4f20ef27744"
     },
@@ -132,6 +136,10 @@
       "sha256": "cf12f3369eebc2d6f2d72de1a9abb64108f5c7e206dfaeb398666a130f48372e"
     },
     {
+      "path": "overlay/apps/desktop/src/main/vibelink/notificationIdentity.ts",
+      "sha256": "285efdf9764ab0f6cfc42b25f2ec2e953b17cf41db27acccfdc7075b9dd3e369"
+    },
+    {
       "path": "overlay/apps/desktop/src/main/vibelink/notificationOS.ts",
       "sha256": "6131c143c6078816ae3d26c4abd000c8abd04024fd8171a1e319bc85d61f2dec"
     },
@@ -149,7 +157,7 @@
     },
     {
       "path": "overlay/apps/desktop/src/main/vibelink/notificationWindows.ts",
-      "sha256": "7be99f583e49387d293aaaa0585d01ca05b7b762c8b938ebf95110ae80981680"
+      "sha256": "2e48d22ed136e43d861b6759334a2af689d4ea4becffd8ae6a4ca8b3be88f36b"
     },
     {
       "path": "overlay/apps/desktop/src/main/vibelink/verifiedIdentity.ts",
