@@ -150,7 +150,7 @@ export function HubPairQr({ light = false }: { light?: boolean } = {}) {
         {qr && state.status !== 'error' ? (
           <img
             src={qr}
-            alt="vibelink 配对二维码"
+            alt="VibeLink 手机连接码"
             width={248}
             height={248}
             style={{
@@ -227,11 +227,12 @@ export function HubPairQr({ light = false }: { light?: boolean } = {}) {
         ) : (
           <>
             <div style={{ fontSize: 16, fontWeight: 700 }}>
-              用 VibeLink 扫码连接{state.host ? ` ${state.host}` : '这台电脑'}
+              手机连接码 · 登录这台手机
             </div>
+            <p style={{ margin: 0, fontSize: 12, color: fg2 }}>连接{state.host ? ` ${state.host}` : '这台电脑'}后，手机会保存独立的登录凭据。</p>
             <ol style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: fg2, lineHeight: 1.8 }}>
               <li>打开手机 VibeLink</li>
-              <li>进入「远程会话」，点「扫码连接」</li>
+              <li>在登录界面点「扫一扫」</li>
               <li>对准左边的二维码，在手机上确认连接</li>
             </ol>
             <div style={{ fontSize: 12, color: '#788296' }}>

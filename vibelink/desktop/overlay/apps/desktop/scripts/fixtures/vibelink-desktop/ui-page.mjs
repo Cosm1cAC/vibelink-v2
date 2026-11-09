@@ -13,8 +13,8 @@ export default {
     await page.getByText('操作失败: Agent unavailable', { exact: true }).waitFor();
     await ui.capture('device-workspace');
     await page.getByRole('button', { name: /连接手机/ }).click();
-    await page.getByAltText('vibelink 配对二维码').waitFor();
-    assert.equal(await page.getByAltText('vibelink 配对二维码').isVisible(), true);
+    await page.getByAltText('VibeLink 手机连接码').waitFor();
+    assert.equal(await page.getByAltText('VibeLink 手机连接码').isVisible(), true);
     await ui.capture('pair-phone');
   },
 };

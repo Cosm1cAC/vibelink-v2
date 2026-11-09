@@ -1,6 +1,8 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { HubPairQr } from './HubPairQr';
 import { requestVibeLink } from './desktopBridge';
+import {useHubAuth} from './useHubAuth';
+import {getFirstPhonePairing,subscribeFirstPhonePairing,takeFirstPhonePairing} from './firstPhonePairing';
 
 interface ProbeSample {
   target?: string;
@@ -112,6 +114,20 @@ export function VibeLinkControlCenter({ embedded = false, fullHeight = false }: 
 
   // Sub-modals: 'none' | 'configs' | 'policy' | 'settings' | 'mobile'
   const [activeModal, setActiveModal] = useState<'none' | 'configs' | 'policy' | 'settings' | 'mobile'>('none');
+  const {snapshot:hubAuth}=useHubAuth();
+  const firstPhone=useSyncExternalStore(subscribeFirstPhonePairing,getFirstPhonePairing,()=>null);
+  const pairingSession=hubAuth.session;
+  const pairingScope=pairingSession?`${pairingSession.issuer}/${pairingSession.edition}/${pairingSession.userId}/${pairingSession.sessionId}`:'';
+  useEffect(()=>setActiveModal('none'),[pairingScope]);
+  useEffect(()=>{
+    if(!firstPhone||!pairingSession)return;
+    const [route,query]=window.location.hash.split('?');
+    const params=new URLSearchParams(query);
+    if(route!=='#/vibelink'||params.get('firstPhone')!==firstPhone.token||!takeFirstPhonePairing(firstPhone.token,pairingSession))return;
+    setOpen(true);setActiveModal('mobile');params.delete('firstPhone');
+    const remaining=params.toString();
+    window.history.replaceState(window.history.state,'',`${window.location.pathname}${window.location.search}${route}${remaining?'?'+remaining:''}`);
+  },[firstPhone,pairingSession]);
   const [cfgName, setCfgName] = useState<string>('cmfa-lan-gateway.yaml');
   const [cfgBody, setCfgBody] = useState<string>('');
   const [policyText, setPolicyText] = useState<string>('');

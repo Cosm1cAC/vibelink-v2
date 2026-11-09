@@ -25,7 +25,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "fa4f8a276a1ce4df12d394ebc843865464c0da49f70629c5d7200bbbb1a5e84d"
+      "sha256": "a26dc0f21a4acdf12c2f75dc2aaf49343cc629c74aa86eb0818ac1d6896cc14e"
     },
     {
       "path": "Start-VibeLinkDesktop.ps1",
@@ -37,7 +37,7 @@
     },
     {
       "path": "cindy-fusion.patch",
-      "sha256": "9e60c9df557119b8a4f9dd8737f971f47f2acf68f9abe976ad2d4c4b35eb8242"
+      "sha256": "d99f846b7763a69084130a1e5656e8ce324a15cf09e7b708338865af1532ba80"
     },
     {
       "path": "overlay/apps/desktop/resources/vibelink-icon-source.json",
@@ -61,15 +61,15 @@
     },
     {
       "path": "overlay/apps/desktop/scripts/fixtures/vibelink-desktop/ui-page.mjs",
-      "sha256": "01493b3135872cc33ed4d526ae1c43efd2ec405616646f0b6d3cb0e01c1116a4"
+      "sha256": "eabd28188f7780a36c7f710d537d5a6c8a99b420c34ed5aa8a9c82dfa4a3829e"
     },
     {
       "path": "overlay/apps/desktop/scripts/fixtures/vibelink-login/login-fixture.tsx",
-      "sha256": "866dbd85d39131ebf155ef3d8c428332af69fdcba23ba841764ff84ccd9be271"
+      "sha256": "ba414a8b76650868ee243214414321abff2c1c2f43ebf74002a0bce3dd5bfa23"
     },
     {
       "path": "overlay/apps/desktop/scripts/fixtures/vibelink-login/ui-page.mjs",
-      "sha256": "eee04953db3a1e84b82faabc3a761bd4e6a57ed117263352770f5c3b105ed485"
+      "sha256": "110a5300cbad249422954118bcf9464a235dbb58567c59776b33801891b46902"
     },
     {
       "path": "overlay/apps/desktop/scripts/fixtures/vibelink-notifications/notifications-fixture.tsx",
@@ -208,12 +208,24 @@
       "sha256": "698cf0c0bfa60cd86f55932b1abea28804cf663765c8d9a52b757d1f012b2c9a"
     },
     {
+      "path": "overlay/apps/desktop/src/renderer/features/vibelink/FirstPhoneControlCenter.test.tsx",
+      "sha256": "14fbcd34cf23ca149b065b2d0fdce30406e535ed7860153fd45c92a4123fbb09"
+    },
+    {
+      "path": "overlay/apps/desktop/src/renderer/features/vibelink/FirstPhonePairingNavigation.test.tsx",
+      "sha256": "fcd94ca7c8d0967181f9f1fec370af9f1e9151ae503733e945390fd623a7c13e"
+    },
+    {
+      "path": "overlay/apps/desktop/src/renderer/features/vibelink/FirstPhonePairingNavigation.tsx",
+      "sha256": "c42cf0a692be611ca7fd85bf1a5a36822aef2fc6e63e178a868520ceb2ee1a0c"
+    },
+    {
       "path": "overlay/apps/desktop/src/renderer/features/vibelink/HubNotificationNavigation.tsx",
       "sha256": "653bf915743c77a310347f1b999affaf3a7a9e1ff9cd568b596be1b4c08243b0"
     },
     {
       "path": "overlay/apps/desktop/src/renderer/features/vibelink/HubPairQr.tsx",
-      "sha256": "5c411f6ef0d5c602197e93d4c1bf4b2e42d5e6904bf2e7cf415cc0209fa41c61"
+      "sha256": "52a9345c0699ecf4b9fd9afd6ee8973c6731952dc1d3ca5a834a947d08ed2368"
     },
     {
       "path": "overlay/apps/desktop/src/renderer/features/vibelink/HubWorkPanel.test.tsx",
@@ -229,11 +241,11 @@
     },
     {
       "path": "overlay/apps/desktop/src/renderer/features/vibelink/LoginPage.test.tsx",
-      "sha256": "3bce4185e7f4455def63ab8fe981b5ee2fd0d34c0e755351c778780dc668d4c2"
+      "sha256": "b7af16a571c73b7202f9db2a54e883286be5fed0fae71552b97673564970b676"
     },
     {
       "path": "overlay/apps/desktop/src/renderer/features/vibelink/LoginPage.tsx",
-      "sha256": "560252a85922ae23a23e59528e240caff53aacd5c20e6205aca3d443da41cb7c"
+      "sha256": "2eb0876bf64fa125d61acbf54977e1438e9b6f8441e224cdfaf29ba727fd9543"
     },
     {
       "path": "overlay/apps/desktop/src/renderer/features/vibelink/NotificationPanel.test.tsx",
@@ -245,7 +257,7 @@
     },
     {
       "path": "overlay/apps/desktop/src/renderer/features/vibelink/VibeLinkControlCenter.tsx",
-      "sha256": "c415eec7406ee4c9cb13659bc39aeac05e954fdd0b79aed62c3772ccb637228d"
+      "sha256": "697b742b50512d2e935e8587fd9c90b53acc312d4c2a3be25146ae8a9a0c8192"
     },
     {
       "path": "overlay/apps/desktop/src/renderer/features/vibelink/desktopBridge.test.ts",
@@ -254,6 +266,14 @@
     {
       "path": "overlay/apps/desktop/src/renderer/features/vibelink/desktopBridge.ts",
       "sha256": "2a3075379ef7fbc49229e4f278dd803d4ebfab3b544c7fe04b1278080190115c"
+    },
+    {
+      "path": "overlay/apps/desktop/src/renderer/features/vibelink/firstPhonePairing.test.ts",
+      "sha256": "b8aa0d04e3c5028b33cf4cf250311db34200082483ecf6ea3c094690065ceb41"
+    },
+    {
+      "path": "overlay/apps/desktop/src/renderer/features/vibelink/firstPhonePairing.ts",
+      "sha256": "e888c355caee0fbdb3b9ecf77d9eae7a637383a53d29cc89206ddf9c4f7394f6"
     },
     {
       "path": "overlay/apps/desktop/src/renderer/features/vibelink/notificationNavigation.test.ts",
