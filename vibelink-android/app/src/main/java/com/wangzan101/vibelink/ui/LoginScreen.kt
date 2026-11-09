@@ -16,7 +16,11 @@ import com.wangzan101.vibelink.remote.*
 import com.wangzan101.vibelink.ui.components.*
 import com.wangzan101.vibelink.ui.theme.VibeLinkTheme
 import com.wangzan101.vibelink.ui.theme.VibeLinkType
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -36,27 +40,41 @@ fun LoginScreen(onContinue: () -> Unit, onBack: (() -> Unit)? = null) {
     var error by remember { mutableStateOf<String?>(null) }
     var desktopLink by remember { mutableStateOf<LoginQrLink?>(null) }
     var scan by remember { mutableStateOf<DesktopScan?>(null) }
+    var scanJob by remember { mutableStateOf<Job?>(null) }
+    var scanLoading by remember { mutableStateOf(false) }
+    var scanError by remember { mutableStateOf<String?>(null) }
     var desktopNotice by remember { mutableStateOf<String?>(null) }
-    val incoming by LoginQrInbox.pending.collectAsState()
     val incomingPair by PairInbox.pending.collectAsState()
     val app = context.applicationContext as com.wangzan101.vibelink.VibeLinkApp
     val update by app.updates.state.collectAsState()
     LaunchedEffect(Unit) { app.updates.autoCheckInBackground() }
     LaunchedEffect(incomingPair) { if (incomingPair != null) switching = true }
 
-    LaunchedEffect(incoming) {
-        val link = LoginQrInbox.take() ?: return@LaunchedEffect
-        desktopLink = link
-        scan = null
-        desktopNotice = null
-        busy = true
-        runCatching { withContext(Dispatchers.IO) {
-            val allowed = LoginPolicy.allowedUrls(link.urls, BuildConfig.IS_BETA_EDITION)
-            check(allowed.isNotEmpty()) { "请使用此二维码对应的开发版或内测版" }
-            AuthApi.scan(link.copy(urls = allowed))
-        } }
-            .onSuccess { scan = it }.onFailure { error = it.message ?: "无法读取桌面登录请求" }
-        busy = false
+    LaunchedEffect(Unit) {
+        LoginQrInbox.consume { link ->
+            desktopLink = link
+            scan = null
+            scanError = null
+            error = null
+            desktopNotice = null
+            scanJob = currentCoroutineContext().job
+            scanLoading = true
+            try {
+                scan = withContext(Dispatchers.IO) {
+                    val allowed = LoginPolicy.scanUrls(link.urls, BuildConfig.IS_BETA_EDITION,
+                        RemoteApi.candidates(RemoteStore.hub(context)))
+                    check(allowed.isNotEmpty()) { "请使用此二维码对应的开发版或内测版" }
+                    AuthApi.scan(link.copy(urls = allowed))
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                scanError = e.message ?: "无法读取桌面登录请求"
+            } finally {
+                scanLoading = false
+                scanJob = null
+            }
+        }
     }
 
     fun finishLogin() { code = ""; token = ""; switching = false; error = null; if (desktopLink == null) onContinue() }
@@ -123,8 +141,16 @@ fun LoginScreen(onContinue: () -> Unit, onBack: (() -> Unit)? = null) {
                     GroupCard {
                         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Text("确认桌面登录", style = VibeLinkType.BodyStrong, color = c.ink)
-                            if (request == null) Text("正在读取请求…", color = c.ink2)
-                            else {
+                            if (request == null) {
+                                if (scanLoading) {
+                                    Text("正在连接电脑并读取请求…", color = c.ink2)
+                                    TextButton(onClick = { scanJob?.cancel(); desktopLink = null; scanError = null }) { Text("取消读取") }
+                                } else {
+                                    Text(scanError ?: "请求读取已停止，请重试。", color = c.bad)
+                                    TextButton(onClick = { LoginQrInbox.pending.value = link }, enabled = !busy) { Text("重新读取") }
+                                    TextButton(onClick = { desktopLink = null; scanError = null }, enabled = !busy) { Text("取消") }
+                                }
+                            } else {
                                 Text(request.deviceName.ifBlank { "桌面设备" }, style = VibeLinkType.Body, color = c.ink)
                                 Text("请核对电脑上的确认码", style = VibeLinkType.Caption, color = c.ink2)
                                 Text(request.verificationCode, style = VibeLinkType.LargeTitle, fontWeight = FontWeight.Bold, color = c.accent)
@@ -138,8 +164,10 @@ fun LoginScreen(onContinue: () -> Unit, onBack: (() -> Unit)? = null) {
                                     busy = true; error = null
                                     scope.launch {
                                         runCatching { AuthStore.confirmDesktop(context, link, request, "approve") }
-                                            .onSuccess { desktopLink = null; scan = null; desktopNotice = "已确认，请回电脑继续登录" }
-                                            .onFailure { error = it.message ?: "确认失败" }
+                                            .onSuccess {
+                                                if (desktopLink == link) { desktopLink = null; scan = null; desktopNotice = "已确认，请回电脑继续登录" }
+                                            }
+                                            .onFailure { if (desktopLink == link) error = it.message ?: "确认失败" }
                                         busy = false
                                     }
                                 }, modifier = Modifier.fillMaxWidth(), enabled = sameHub && usable && !busy)

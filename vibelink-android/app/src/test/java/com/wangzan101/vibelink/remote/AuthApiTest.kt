@@ -1,5 +1,7 @@
 package com.wangzan101.vibelink.remote
 
+import kotlinx.coroutines.*
+import okhttp3.mockwebserver.SocketPolicy
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.json.JSONObject
@@ -35,7 +37,7 @@ class AuthApiTest {
         MockWebServer().use { server ->
             server.enqueue(MockResponse().setBody("""{"status":"scanned","deviceName":"Fixture PC","edition":"dev","issuer":"hub_fixture","hubId":"hub_fixture","verificationCode":"123456","expiresAt":9999999999999}"""))
             val link = LoginQrLink("request", "fixture-scan-secret-that-is-not-a-session", listOf(server.url("/").toString().trimEnd('/')))
-            val scan = AuthApi.scan(link)
+            val scan = runBlocking { AuthApi.scan(link) }
             assertEquals("123456", scan.verificationCode)
             assertEquals("hub_fixture", scan.issuer)
             val request = server.takeRequest()
@@ -106,6 +108,50 @@ class AuthApiTest {
             assertEquals(reachable, located.origin)
             assertEquals("fixture-owner", located.session.userId)
             assertEquals(1, alias.requestCount)
+        } }
+    }
+
+    @Test fun desktopScanSkipsClosedAdapterAndHttpFailureWithoutSendingCredential() {
+        val closed = MockWebServer().apply { start() }
+        val dead = closed.url("/").toString()
+        closed.shutdown()
+        MockWebServer().use { old -> MockWebServer().use { lan ->
+            old.enqueue(MockResponse().setResponseCode(503).setBody("{}"))
+            lan.enqueue(MockResponse().setBody("""{"status":"scanned","deviceName":"LAN PC","edition":"dev","issuer":"hub_fixture","hubId":"hub_fixture","verificationCode":"654321","expiresAt":9999999999999}"""))
+            val reachable = lan.url("/").toString()
+            val scan = runBlocking { AuthApi.scan(LoginQrLink("fixture-request", "fixture-secret", listOf(dead, old.url("/").toString(), reachable))) }
+            assertEquals(reachable, scan.hub)
+            assertEquals("654321", scan.verificationCode)
+            assertNull(old.takeRequest().getHeader("Authorization"))
+            assertNull(lan.takeRequest().getHeader("Authorization"))
+        } }
+    }
+
+    @Test fun failedScanExplainsRecoveryInsteadOfExposingLastVirtualAdapterException() {
+        val closed = MockWebServer().apply { start() }
+        val dead = closed.url("/").toString()
+        closed.shutdown()
+        val error = assertThrows(java.io.IOException::class.java) {
+            runBlocking { AuthApi.scan(LoginQrLink("fixture-request", "fixture-secret", listOf(dead))) }
+        }
+        assertTrue(error.message!!.contains("重新读取"))
+        assertFalse(error.message!!.contains("failed to connect"))
+    }
+
+    @Test fun cancellingScanAbortsInFlightCallAndNeverProbesRemainingQrOrigins() = runBlocking {
+        MockWebServer().use { slow -> MockWebServer().use { later ->
+            slow.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
+            later.enqueue(MockResponse().setResponseCode(404))
+            val read = launch {
+                AuthApi.scan(LoginQrLink("fixture", "fixture-secret", listOf(slow.url("/").toString(), later.url("/").toString())))
+            }
+            try {
+                val started = withContext(Dispatchers.IO) { slow.takeRequest(2, java.util.concurrent.TimeUnit.SECONDS) }
+                assertNotNull(started)
+                withTimeout(1000) { read.cancelAndJoin() }
+                assertEquals(0, later.requestCount)
+                assertNull(started!!.getHeader("Authorization"))
+            } finally { read.cancelAndJoin() }
         } }
     }
 }

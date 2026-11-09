@@ -3,6 +3,8 @@ package com.wangzan101.vibelink.remote
 import java.net.URI
 import java.net.URLDecoder
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.collectLatest
 
 data class LoginQrLink(val id: String, val scanSecret: String, val urls: List<String>) {
     companion object {
@@ -31,6 +33,12 @@ object LoginQrInbox {
         val accepted = PairInbox.offer(raw)
         if (accepted) pending.value = null
         return accepted
+    }
+    /** Clearing the inbox must not cancel the request just handed to its reader. */
+    internal suspend fun consume(read: suspend (LoginQrLink) -> Unit) {
+        pending.filterNotNull().collectLatest { link ->
+            if (pending.compareAndSet(link, null)) read(link)
+        }
     }
     fun take(): LoginQrLink? = pending.value.also { pending.value = null }
 }

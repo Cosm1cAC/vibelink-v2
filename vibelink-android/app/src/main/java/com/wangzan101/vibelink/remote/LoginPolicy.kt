@@ -42,6 +42,12 @@ internal object LoginPolicy {
     fun allowedUrls(urls: List<String>, beta: Boolean): List<String> = urls.mapNotNull(::normalizedOrigin).distinct().filter {
         if (beta) it == "https://hub.vibelink.cloud" else privateHost(it)
     }
+    /** Preference can reorder only origins already present in this QR, never add a new recipient. */
+    fun scanUrls(urls: List<String>, beta: Boolean, known: List<String>): List<String> {
+        val allowed = allowedUrls(urls, beta)
+        val preferred = known.mapNotNull(::normalizedOrigin).filter { it in allowed }
+        return (preferred + allowed).distinct()
+    }
     fun editionMatches(session: ClientSession, beta: Boolean): Boolean = session.edition == if (beta) "beta" else "dev"
     fun transientFailure(httpStatus: Int?, networkFailure: Boolean): Boolean =
         networkFailure || httpStatus in setOf(408, 429) || (httpStatus != null && httpStatus >= 500)

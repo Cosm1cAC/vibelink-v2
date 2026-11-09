@@ -77,4 +77,12 @@ class LoginPolicyTest {
         assertTrue(LoginPolicy.allowedUrls(listOf("https://example.com", "https://ai", "http://8.8.8.8", "http://user:secret@127.0.0.1", "http://127.0.0.1?token=x", "http://127.0.0.1/#secret", "http://127.0.0.1/path"), false).isEmpty())
         assertEquals(listOf("https://hub.vibelink.cloud"), LoginPolicy.allowedUrls(listOf("https://hub.vibelink.cloud:443/", "https://hub.vibelink.cloud.evil", "http://hub.vibelink.cloud"), true))
     }
+
+    @Test fun scanPrefersKnownQrOriginWithoutAddingOtherRecipients() {
+        val lan = "http://192.168.5.2:18995"
+        val virtual = "http://172.17.16.1:18995"
+        val unknown = "http://192.168.5.99:18995"
+        assertEquals(listOf(lan, virtual), LoginPolicy.scanUrls(listOf(virtual, lan), false, listOf(lan, unknown)))
+        assertEquals(listOf("https://hub.vibelink.cloud"), LoginPolicy.scanUrls(listOf(lan, "https://hub.vibelink.cloud"), true, listOf(lan)))
+    }
 }

@@ -155,7 +155,7 @@ object AuthStore {
             ready.session.issuer, scan.issuer, ready.session.edition, scan.edition)) { "请先登录二维码所属 Hub 和对应版本，再确认桌面登录" }
         check(scan.expiresAt > System.currentTimeMillis()) { "二维码已过期，请在电脑上刷新" }
         guard(context, current)
-        try { AuthApi.confirm(current.hub, current.token, link, decision); guard(context, current) }
+        try { AuthApi.confirm(scan.hub, current.token, link, decision); guard(context, current) }
         catch (e: AuthHttpFailure) { if (e.code == 401 && RemoteStore.matches(context, current)) clear(context, e.message); throw e }
     }
 }

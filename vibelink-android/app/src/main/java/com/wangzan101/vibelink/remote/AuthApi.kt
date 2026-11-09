@@ -1,6 +1,8 @@
 package com.wangzan101.vibelink.remote
 
 import com.wangzan101.vibelink.net.Net
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.MediaType.Companion.toMediaType
@@ -69,15 +71,44 @@ internal object AuthApi {
         return result(request(hub, "/api/auth/beta", body = JSONObject().put("code", code).put("deviceName", device)), hub)
     }
     fun logout(hub: String, token: String) { request(hub, "/api/auth/logout", token, JSONObject()) }
-    fun scan(link: LoginQrLink): DesktopScan {
+    private suspend fun scanRequest(hub: String, link: LoginQrLink): JSONObject = suspendCancellableCoroutine { continuation ->
+        val body = JSONObject().put("id", link.id).put("scanSecret", link.scanSecret)
+        val request = Request.Builder().url(hub.trimEnd('/') + "/api/auth/qr/scan")
+            .post(body.toString().toRequestBody(jsonType)).build()
+        val call = client.newCall(request)
+        call.timeout().timeout(6, TimeUnit.SECONDS)
+        continuation.invokeOnCancellation { call.cancel() }
+        call.enqueue(object : okhttp3.Callback {
+            override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
+                continuation.resumeWith(Result.failure(e))
+            }
+            override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
+                continuation.resumeWith(runCatching {
+                    response.use {
+                        if (!it.isSuccessful) throw AuthHttpFailure(it.code)
+                        try { JSONObject(it.body?.string().orEmpty()) }
+                        catch (e: org.json.JSONException) { throw java.io.IOException("Hub 登录响应无效", e) }
+                    }
+                })
+            }
+        })
+    }
+    suspend fun scan(link: LoginQrLink): DesktopScan = withTimeoutOrNull(20_000) { scanOrigins(link) }
+        ?: throw java.io.IOException("读取桌面登录请求超时。请检查开发网络后点击重新读取。")
+
+    private suspend fun scanOrigins(link: LoginQrLink): DesktopScan {
         var failure: Throwable? = null
         for (hub in link.urls) {
             try {
-                val root = request(hub, "/api/auth/qr/scan", body = JSONObject().put("id", link.id).put("scanSecret", link.scanSecret))
+                val root = scanRequest(hub, link)
                 return DesktopScan(hub, root.optString("status"), root.optString("deviceName"), root.optString("edition"), root.optString("verificationCode"), root.optLong("expiresAt"), root.optString("issuer"), root.optString("hubId"))
-            } catch (e: java.io.IOException) { failure = e }
+            } catch (e: AuthHttpFailure) {
+                // An adapter may reach an old Hub or another service; scan carries no login token.
+                if (failure !is AuthHttpFailure || e.code in setOf(409, 410)) failure = e
+            } catch (e: java.io.IOException) { if (failure !is AuthHttpFailure) failure = e }
         }
-        throw failure ?: IllegalStateException("无法连接二维码所属 Hub")
+        if (failure is AuthHttpFailure) throw failure
+        throw java.io.IOException("无法连接二维码所属电脑。请确认手机与电脑在同一局域网，或已连接开发网络，然后点击重新读取。", failure)
     }
     fun confirm(hub: String, token: String, link: LoginQrLink, decision: String) {
         require(decision in setOf("approve", "deny"))
