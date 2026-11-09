@@ -70,6 +70,19 @@ fun LoginScreen(onContinue: () -> Unit, onBack: (() -> Unit)? = null) {
                 UpdateBanner(BuildConfig.VERSION_NAME, update, {
                     update.update?.let { com.wangzan101.vibelink.about.ApkUpdater.startWithToasts(context, it.downloadUrl) }
                 })
+                if (!BuildConfig.IS_BETA_EDITION) {
+                    GroupCard {
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("开发网络", style = VibeLinkType.BodyStrong, color = c.ink)
+                            Text("还连不上开发 Hub？可先启动 Clash。首次使用日本出口时，在面板检测连接并授权 Tailscale，然后返回登录。", style = VibeLinkType.Caption, color = c.ink2)
+                            VibeLinkButton("打开 Clash / 连接开发网络", {
+                                runCatching {
+                                    context.startActivity(android.content.Intent(context, com.github.kr328.clash.MainActivity::class.java))
+                                }.onFailure { error = "Clash 面板未能打开，请稍后重试" }
+                            }, Modifier.fillMaxWidth())
+                        }
+                    }
+                }
 
                 if (state is LoginState.Checking) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {

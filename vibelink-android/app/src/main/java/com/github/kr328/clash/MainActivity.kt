@@ -117,6 +117,20 @@ class MainActivity : BaseActivity<MainDesign>() {
                                 } else design.showToast("请先选用开发版内置配置并启动 VPN", ToastDuration.Long)
                             } finally { probeLock.unlock() }
                         }
+                        MainDesign.Request.CopyTailscaleAuth -> launch {
+                            val url = runCatching { if (managedProfileSelected()) withClash { queryTailscaleAuthUrl() } else null }.getOrNull()
+                                ?.let { com.wangzan101.vibelink.clash.TailscaleAuthCache.allowedUrl(it) }
+                            if (url == null) design.showToast("授权链接已失效，请重新检测日本出口", ToastDuration.Long)
+                            else {
+                                val clipboard = getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                                val clip = android.content.ClipData.newPlainText("Tailscale 设备授权", url)
+                                clip.description.extras = android.os.PersistableBundle().apply {
+                                    putBoolean("android.content.extra.IS_SENSITIVE", true)
+                                }
+                                clipboard.setPrimaryClip(clip)
+                                design.showToast("已复制，可在已联网电脑完成授权，然后返回手机检测连接", ToastDuration.Long)
+                            }
+                        }
                         MainDesign.Request.OpenProxy ->
                             startActivity(ProxyActivity::class.intent)
                         MainDesign.Request.OpenProfiles ->

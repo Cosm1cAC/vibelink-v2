@@ -141,6 +141,12 @@
                         android:text="授权 Tailscale"
                         android:visibility="@{tailscaleAuthAvailable ? View.VISIBLE : View.GONE}"
                         android:onClick="@{() -> self.request(Request.AuthorizeTailscale)}" />
+                    <Button
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="复制授权链接，在已联网电脑完成"
+                        android:visibility="@{tailscaleAuthAvailable ? View.VISIBLE : View.GONE}"
+                        android:onClick="@{() -> self.request(Request.CopyTailscaleAuth)}" />
                 </LinearLayout>
 
                 <TextView

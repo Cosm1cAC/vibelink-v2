@@ -25,6 +25,7 @@ class MainDesign(context: Context) : Design<MainDesign.Request>(context) {
         OpenHelp,
         OpenAbout,
         AuthorizeTailscale,
+        CopyTailscaleAuth,
         ProbeTailscale,
     }
 

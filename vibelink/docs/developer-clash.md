@@ -18,6 +18,10 @@
 
 首次开启 VPN 由 Android 请求系统授权；首次进入 Tailnet 通过 Tailscale 官方网页授权，不要求手工填写 key。Tailscale 状态放在应用私有 core home 的稳定目录，配置 UUID 或应用版本变化不会更换该目录。授权链接只保存在服务内存中，界面显式点击才打开官方 HTTPS 地址，不携带 Hub 凭据。
 
+开发版登录页提供“打开 Clash / 连接开发网络”，可以在尚未登录 Hub 时先建立 VPN；避免必须先登录 Hub 才能打开连接 Hub 所需的网络。面板依次启动 VPN、检测日本出口、点击出现的 Tailscale 授权入口，完成后返回登录。内测登录页不显示此私人网络入口。
+
+若手机尚不能打开授权页面，可显式复制一次性授权链接，在已有网络的电脑完成授权，再返回手机检测。只有用户点击时才写入标记为敏感内容的剪贴板，不自动复制、发送或登录。
+
 参考：[mihomo Tailscale 配置](https://wiki.metacubex.one/en/config/proxies/tailscale/)、[Tailscale auth-key 生命周期](https://tailscale.com/docs/features/access-control/auth-keys)。
 
 ## 导入与更新
