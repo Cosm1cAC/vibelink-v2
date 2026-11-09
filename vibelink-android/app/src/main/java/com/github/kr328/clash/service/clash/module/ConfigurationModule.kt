@@ -4,6 +4,7 @@ import android.app.Service
 import com.github.kr328.clash.common.constants.Intents
 import com.github.kr328.clash.common.log.Log
 import com.github.kr328.clash.core.Clash
+import com.github.kr328.clash.service.ClashManager
 import com.github.kr328.clash.service.StatusProvider
 import com.github.kr328.clash.service.data.ImportedDao
 import com.github.kr328.clash.service.data.SelectionDao
@@ -57,7 +58,14 @@ class ConfigurationModule(service: Service) : Module<ConfigurationModule.LoadExc
 
                 Clash.setAgeSecretKey(active.ageSecretKey?.takeIf { it.isNotBlank() })
 
-                Clash.load(service.importedDir.resolve(active.uuid.toString())).await()
+                val capture = ClashManager.beginProfileLoad(active.uuid)
+                try {
+                    Clash.load(service.importedDir.resolve(active.uuid.toString())).await()
+                    ClashManager.commitProfileLoad(capture)
+                } catch (failure: Throwable) {
+                    ClashManager.failProfileLoad(capture)
+                    throw failure
+                }
 
                 val remove = SelectionDao().querySelections(active.uuid)
                     .filterNot { Clash.patchSelector(it.proxy, it.selected) }

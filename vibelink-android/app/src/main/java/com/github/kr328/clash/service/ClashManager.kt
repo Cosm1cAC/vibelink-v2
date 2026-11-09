@@ -1,6 +1,7 @@
 package com.github.kr328.clash.service
 
 import android.content.Context
+import com.github.kr328.clash.common.compat.currentProcessName
 import com.github.kr328.clash.common.log.Log
 import com.github.kr328.clash.core.Clash
 import com.github.kr328.clash.core.model.*
@@ -23,17 +24,17 @@ class ClashManager(private val context: Context) : IClashManager,
         private val logRelay = com.wangzan101.vibelink.clash.TailscaleLogRelay<LogMessage>(tailscaleAuth)
         private var captureJob: Job? = null
         private var receiverRegistered = false
+        private val restartPending = java.util.concurrent.atomic.AtomicBoolean(false)
         @Synchronized fun ensureCapture(context: Context) {
             if (captureJob?.isActive == true) return
             val application = context.applicationContext
-            val store = ServiceStore(application)
             captureJob = captureScope.launch(start = CoroutineStart.UNDISPATCHED) {
                 val receiver = Clash.subscribeLogcat()
                 try {
                     for (item in receiver) {
-                        logRelay.accept(
+                        logRelay.acceptCaptured(
                             item.copy(message = com.wangzan101.vibelink.clash.TailscaleAuthCache.redact(item.message)),
-                            item.message, store.activeProfile?.toString(), StatusProvider.serviceRunning
+                            item.message, StatusProvider.serviceRunning, item.time.time
                         )
                     }
                 } finally { receiver.cancel() }
@@ -42,8 +43,10 @@ class ClashManager(private val context: Context) : IClashManager,
             receiverRegistered = true
             val receiver = object : android.content.BroadcastReceiver() {
                 override fun onReceive(context: Context?, intent: android.content.Intent?) {
-                    if (intent?.action == com.github.kr328.clash.common.constants.Intents.ACTION_CLASH_STOPPED) tailscaleAuth.clear()
-                    else tailscaleAuth.profileLoaded(store.activeProfile?.toString())
+                    if (intent?.action == com.github.kr328.clash.common.constants.Intents.ACTION_CLASH_STOPPED) tailscaleAuth.stopped()
+                    else if (intent?.action == com.github.kr328.clash.common.constants.Intents.ACTION_PROFILE_LOADED) {
+                        tailscaleAuth.profileLoaded(intent.getStringExtra(com.github.kr328.clash.common.constants.Intents.EXTRA_UUID))
+                    }
                 }
             }
             val filter = android.content.IntentFilter().apply {
@@ -52,10 +55,70 @@ class ClashManager(private val context: Context) : IClashManager,
             }
             androidx.core.content.ContextCompat.registerReceiver(application, receiver, filter, androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
         }
+        fun beginProfileLoad(profile: java.util.UUID) = tailscaleAuth.beginLoad(profile.toString())
+        fun commitProfileLoad(load: com.wangzan101.vibelink.clash.TailscaleAuthCache.Load) = tailscaleAuth.commitLoad(load)
+        fun failProfileLoad(load: com.wangzan101.vibelink.clash.TailscaleAuthCache.Load) = tailscaleAuth.failLoad(load)
     }
     init { ensureCapture(context) }
 
     override fun queryTailscaleAuthUrl(): String? = tailscaleAuth.current(store.activeProfile?.toString(), StatusProvider.serviceRunning)
+
+    override fun queryRuntimeProcessId(): Int = android.os.Process.myPid()
+
+    /** UI and login live in another process; only the stopped managed core may self-exit. */
+    override fun restartManagedAuthorization(expectedProfile: String): Boolean {
+        if (android.os.Binder.getCallingUid() != android.os.Process.myUid() || !mayRestartManagedAuthorization(expectedProfile)) return false
+        if (!restartPending.compareAndSet(false, true)) return false
+        captureScope.launch {
+            try {
+                delay(200)
+                // Profile selection or a fresh VPN start can supersede the request.
+                // Service.onCreate runs on this thread too, so a new VPN cannot
+                // interleave between the stopped check and the self-exit.
+                withContext(Dispatchers.Main.immediate) {
+                    if (mayRestartManagedAuthorization(expectedProfile)) android.os.Process.killProcess(android.os.Process.myPid())
+                }
+            } finally { restartPending.set(false) }
+        }
+        return true
+    }
+
+    private fun mayRestartManagedAuthorization(expectedProfile: String): Boolean = runCatching {
+        if (com.wangzan101.vibelink.BuildConfig.IS_BETA_EDITION || !com.wangzan101.vibelink.BuildConfig.HAS_DEV_CLASH_SEED) return@runCatching false
+        val processName = (context.applicationContext as? android.app.Application)?.currentProcessName
+        com.wangzan101.vibelink.clash.ManagedAuthorizationRestartPolicy.allows(
+            com.wangzan101.vibelink.BuildConfig.IS_BETA_EDITION,
+            com.wangzan101.vibelink.BuildConfig.HAS_DEV_CLASH_SEED,
+            expectedProfile, store.activeProfile?.toString(), freshManagedProfile(),
+            StatusProvider.serviceRunning, processName, context.packageName)
+    }.getOrDefault(false)
+
+    /** The seed is written by the UI process. Never trust a cached SharedPreferences view. */
+    private fun freshManagedProfile(): String? = runCatching {
+        val directory = java.io.File(context.applicationInfo.dataDir, "shared_prefs")
+        val file = java.io.File(directory, "clash_seed.xml")
+        // A backup indicates an in-progress or interrupted atomic preferences write.
+        if (java.io.File(directory, "clash_seed.xml.bak").exists() || file.length() !in 1L..1_048_576L) return@runCatching null
+        file.inputStream().use { input ->
+            val parser = android.util.Xml.newPullParser()
+            parser.setFeature(org.xmlpull.v1.XmlPullParser.FEATURE_PROCESS_DOCDECL, false)
+            parser.setInput(input, "UTF-8")
+            var value: String? = null
+            var event = parser.eventType
+            while (event != org.xmlpull.v1.XmlPullParser.END_DOCUMENT) {
+                if (event == org.xmlpull.v1.XmlPullParser.DOCDECL) return@runCatching null
+                if (event == org.xmlpull.v1.XmlPullParser.START_TAG) {
+                    if (parser.depth == 1 && parser.name != "map") return@runCatching null
+                    if (parser.depth == 2 && parser.getAttributeValue(null, "name") == "managed_uuid") {
+                        if (parser.name != "string" || value != null) return@runCatching null
+                        value = parser.nextText()
+                    }
+                }
+                event = parser.nextToken()
+            }
+            value?.takeIf { java.util.UUID.fromString(it).toString() == it }
+        }
+    }.getOrNull()
 
     override fun queryTunnelState(): TunnelState {
         return Clash.queryTunnelState()

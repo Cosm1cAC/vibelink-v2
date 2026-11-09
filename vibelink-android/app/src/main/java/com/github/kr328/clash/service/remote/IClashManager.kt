@@ -24,4 +24,7 @@ interface IClashManager {
 
     fun setLogObserver(observer: ILogObserver?)
     fun queryTailscaleAuthUrl(): String?
+    fun queryRuntimeProcessId(): Int
+    /** Explicit managed-dev recovery only; true means a guarded self-restart was scheduled. */
+    fun restartManagedAuthorization(expectedProfile: String): Boolean
 }
