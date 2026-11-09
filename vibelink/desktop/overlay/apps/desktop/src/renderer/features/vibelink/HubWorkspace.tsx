@@ -1,17 +1,19 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { Link2 } from 'lucide-react';
 import { WindowControls } from '@/components/title-bar/WindowControls';
 import { Button } from '@/components/ui/button';
 import { VibeLinkAccountInfo } from './AccountInfo';
 import { HubWorkPanel } from './HubWorkPanel';
 import { useHubAuth } from './useHubAuth';
+import { NotificationPanel } from './NotificationPanel';
 
 /** All work is mirrored from the authenticated Hub. Native history remains a dev capability. */
 export function HubWorkspace() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const location = useLocation();
   const { snapshot } = useHubAuth();
   const session = snapshot.session;
   return (
@@ -33,10 +35,21 @@ export function HubWorkspace() {
       <div className="min-h-0 flex-1 overflow-auto px-6 py-5">
         <div className="mx-auto flex min-h-full w-full max-w-[1280px] flex-col gap-5">
           <VibeLinkAccountInfo />
+          <NotificationPanel
+            accountKey={
+              session
+                ? `${session.issuer}/${session.edition}/${session.userId}/${session.sessionId}`
+                : ''
+            }
+            bridge={window.electronAPI?.vibelink}
+          />
           <HubWorkPanel
             key={session?.sessionId || 'signed-out'}
             session={session}
             bridge={window.electronAPI?.vibelink}
+            targetGroupId={new URLSearchParams(location.search).get('group') ?? ''}
+            targetWorkId={new URLSearchParams(location.search).get('work') ?? ''}
+            targetRequestKey={location.search}
           />
         </div>
       </div>

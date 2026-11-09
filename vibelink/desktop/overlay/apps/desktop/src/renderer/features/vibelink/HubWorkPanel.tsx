@@ -14,7 +14,19 @@ import { workActions } from './workPresentation';
 type Bridge = { work(input: HubWorkInput): Promise<HubWorkResult> };
 type Group = { id: string; name: string; botIds: string[] };
 type Bot = { id: string; name: string; jobTitle: string; archived: boolean };
-export function HubWorkPanel({ session, bridge }: { session: HubSession | null; bridge?: Bridge }) {
+export function HubWorkPanel({
+  session,
+  bridge,
+  targetGroupId = '',
+  targetWorkId = '',
+  targetRequestKey = '',
+}: {
+  session: HubSession | null;
+  bridge?: Bridge;
+  targetGroupId?: string;
+  targetWorkId?: string;
+  targetRequestKey?: string;
+}) {
   const { t } = useTranslation();
   const text = (key: string) => t(`vibelinkWork.${key}`);
   const [messages, setMessages] = useState<HubMessage[]>([]);
@@ -42,6 +54,8 @@ export function HubWorkPanel({ session, bridge }: { session: HubSession | null; 
     latestRead = useRef(''),
     listVersion = useRef(0);
   const operationRef = useRef(0);
+  const handledTarget = useRef('');
+  const startingTarget = useRef('');
   const refreshFlights = useRef(new Map<string, Promise<void>>());
   const viewRef = useRef(''),
     draftRef = useRef('');
@@ -150,6 +164,50 @@ export function HubWorkPanel({ session, bridge }: { session: HubSession | null; 
       listVersion.current++;
     };
   }, [refresh]);
+  useEffect(() => {
+    const key = `${scope}/${targetGroupId}/${targetWorkId}/${targetRequestKey}`;
+    if (
+      !targetGroupId ||
+      !targetWorkId ||
+      handledTarget.current === key ||
+      !groups.some((group) => group.id === targetGroupId)
+    )
+      return;
+    if (startingTarget.current !== key) {
+      startingTarget.current = key;
+      const needsReset =
+        query !== '' || effectiveQuery !== '' || !archived || gid !== targetGroupId;
+      setQuery('');
+      setEffectiveQuery('');
+      setArchived(true);
+      setGid(targetGroupId);
+      if (needsReset) return;
+    }
+    if (gid !== targetGroupId) {
+      setGid(targetGroupId);
+      return;
+    }
+    if (!archived) {
+      setArchived(true);
+      return;
+    }
+    if (rows.some((row) => row.id === targetWorkId && row.groupId === gid)) {
+      handledTarget.current = key;
+      setSelected(targetWorkId);
+      setFollow(false);
+    }
+  }, [
+    scope,
+    targetGroupId,
+    targetWorkId,
+    targetRequestKey,
+    groups,
+    gid,
+    archived,
+    rows,
+    query,
+    effectiveQuery,
+  ]);
   const current = rows.find((row) => row.id === selected);
   useEffect(() => {
     if (!current || document.visibilityState !== 'visible' || !document.hasFocus()) return;

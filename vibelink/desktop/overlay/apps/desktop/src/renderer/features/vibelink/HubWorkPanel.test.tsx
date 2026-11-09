@@ -39,6 +39,33 @@ const row = (id: string) => ({
   inputs: [],
   steps: [],
 });
+it('selects a notification target only from the authorized Hub group and work projection', async () => {
+  const work = vi.fn(async (input: any) => {
+    if (input.action === 'groups')
+      return {
+        success: true,
+        data: { kind: 'groups', groups: [{ id: 'g', name: 'G', botIds: [] }] },
+      };
+    if (input.action === 'list')
+      return {
+        success: true,
+        data: { kind: 'list', work: [{ ...row('target'), result: 'TARGET_DETAIL' }] },
+      };
+    return { success: true, data: { kind: 'outbox', outbox: [] } };
+  });
+  render(
+    <HubWorkPanel
+      session={session}
+      bridge={{ work: work as never }}
+      targetGroupId="g"
+      targetWorkId="target"
+    />,
+  );
+  await screen.findByText('TARGET_DETAIL');
+  expect(work.mock.calls.some(([input]) => ['submit', 'manage'].includes(input.action))).toBe(
+    false,
+  );
+});
 it('ignores a slow response for an earlier search after the newer search finishes', async () => {
   let late: (result: HubWorkResult) => void = () => {};
   const work = vi.fn(async (input) => {
@@ -91,7 +118,10 @@ it('clears work when accounts switch and discards late results from the previous
   await act(async () => {
     resolveA({
       success: true,
-      data: { kind: 'groups', groups: [{ id: 'old', name: 'PRIVATE A', description: '', botIds: [] }] },
+      data: {
+        kind: 'groups',
+        groups: [{ id: 'old', name: 'PRIVATE A', description: '', botIds: [] }],
+      },
     });
   });
   expect(screen.queryByText('PRIVATE A')).toBeNull();
@@ -192,21 +222,39 @@ it('offers explicit dismissal only for failed local records and never for pendin
   await waitFor(() => expect(screen.queryByText(/failedtask/)).toBeNull());
 });
 it('does not clear another group draft or release its pending send when an old group reply arrives', async () => {
- const releases: Array<(result:HubWorkResult)=>void>=[];
- const work=vi.fn(async input=>{
-  if(input.action==='groups')return {success:true,data:{kind:'groups',groups:[{id:'a',name:'A',botIds:[]},{id:'b',name:'B',botIds:[]}]}};
-  if(input.action==='submit')return new Promise<HubWorkResult>(resolve=>releases.push(resolve));
-  return {success:true,data:{kind:input.action==='list'?'list':'outbox',work:[],outbox:[]}};
- });
- render(<HubWorkPanel session={session} bridge={{work:work as never}}/>);
- await screen.findByRole('combobox');
- fireEvent.change(screen.getByRole('textbox'),{target:{value:'same text'}});
- fireEvent.click(screen.getByRole('button',{name:'vibelinkWork.send'}));
- fireEvent.change(screen.getByRole('combobox'),{target:{value:'b'}});
- fireEvent.change(screen.getByRole('textbox'),{target:{value:'same text'}});
- fireEvent.click(screen.getByRole('button',{name:'vibelinkWork.send'}));
- expect(releases).toHaveLength(2);
- await act(async()=>{releases[0]({success:true,data:{kind:'accepted',requestId:'a'}});});
- expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('same text');
- expect((screen.getByRole('button',{name:'vibelinkWork.send'}) as HTMLButtonElement).disabled).toBe(true);
+  const releases: Array<(result: HubWorkResult) => void> = [];
+  const work = vi.fn(async (input) => {
+    if (input.action === 'groups')
+      return {
+        success: true,
+        data: {
+          kind: 'groups',
+          groups: [
+            { id: 'a', name: 'A', botIds: [] },
+            { id: 'b', name: 'B', botIds: [] },
+          ],
+        },
+      };
+    if (input.action === 'submit')
+      return new Promise<HubWorkResult>((resolve) => releases.push(resolve));
+    return {
+      success: true,
+      data: { kind: input.action === 'list' ? 'list' : 'outbox', work: [], outbox: [] },
+    };
+  });
+  render(<HubWorkPanel session={session} bridge={{ work: work as never }} />);
+  await screen.findByRole('combobox');
+  fireEvent.change(screen.getByRole('textbox'), { target: { value: 'same text' } });
+  fireEvent.click(screen.getByRole('button', { name: 'vibelinkWork.send' }));
+  fireEvent.change(screen.getByRole('combobox'), { target: { value: 'b' } });
+  fireEvent.change(screen.getByRole('textbox'), { target: { value: 'same text' } });
+  fireEvent.click(screen.getByRole('button', { name: 'vibelinkWork.send' }));
+  expect(releases).toHaveLength(2);
+  await act(async () => {
+    releases[0]({ success: true, data: { kind: 'accepted', requestId: 'a' } });
+  });
+  expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('same text');
+  expect(
+    (screen.getByRole('button', { name: 'vibelinkWork.send' }) as HTMLButtonElement).disabled,
+  ).toBe(true);
 });

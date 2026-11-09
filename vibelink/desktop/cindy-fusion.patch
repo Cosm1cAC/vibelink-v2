@@ -152,18 +152,20 @@ index 8ed676ef..b3b92610 100644
    mode: Extract<AppSessionMode, 'signed-out' | 'local'>,
    reason: string,
 diff --git a/apps/desktop/src/main/bootstrap-electron.ts b/apps/desktop/src/main/bootstrap-electron.ts
-index b842bf8d..cb815180 100644
+index b842bf8d..f8f3018c 100644
 --- a/apps/desktop/src/main/bootstrap-electron.ts
 +++ b/apps/desktop/src/main/bootstrap-electron.ts
-@@ -1,4 +1,7 @@
+@@ -1,4 +1,9 @@
  import { deliverRoutineResult, listRoutineDeliveryTargets } from './routines/delivery.js';
 +import { currentHubCredential, currentHubControlSettings, initializeHubAppAuth, invokeHubAuth, isVibeLinkMode } from './vibelink/authRuntime.js';
 +import { invokeHubWork } from './vibelink/workRuntime.js';
++import { invokeHubNotifications, startHubNotifications } from './vibelink/notificationRuntime.js';
++import { configureHubNotificationIdentity } from './vibelink/notificationWindows.js';
 +import { randomUUID as vibelinkRandomUUID } from 'node:crypto';
  import { flushPluginUsageLifecycle } from './plugin-usage/current.js';
  import { registerAccessibilitySupportIpc } from './accessibility-support-ipc.js';
  import { mcpAppSchemePrivilege, registerMcpAppProtocol } from './mcp-apps/sandboxProtocol.js';
-@@ -97,6 +100,7 @@ import {
+@@ -97,6 +102,7 @@ import {
    WINDOW_BACKDROP_MATERIAL_CHANGED_CHANNEL,
  } from '../shared/windowBackdrop.js';
  import { isAllowedBillingMailtoRequest } from '../shared/billing.js';
@@ -171,7 +173,7 @@ index b842bf8d..cb815180 100644
  import path from 'node:path';
  import fs from 'node:fs';
  import { textFilePreviewResult, TEXT_PREVIEW_LIMIT_MB } from './text-file-preview';
-@@ -631,6 +635,7 @@ import {
+@@ -631,6 +637,7 @@ import {
    handleDeviceLinkSystemResume,
    getControllerName,
    revokeController,
@@ -179,12 +181,17 @@ index b842bf8d..cb815180 100644
  } from './device-link';
  import { closeSharedTasksBeforeLogout } from './device-link/sharedTaskRuntime.js';
  import { closeSharedTasksBeforeAccountHandover } from './device-link/sharedTaskAccountBoundary.js';
-@@ -4564,7 +4569,36 @@ function parseOptionalDeviceLinkDeviceId(value: unknown): string | null | undefi
+@@ -4564,7 +4571,41 @@ function parseOptionalDeviceLinkDeviceId(value: unknown): string | null | undefi
    return trimmed;
  }
  
 +const vibelinkEmbeddedSecret = vibelinkRandomUUID();
  const registerIpcHandlers = () => {
++  startHubNotifications();
++  ipcMain.handle('vibelink:notifications', async (event, input: unknown) => {
++    assertTrustedAppRendererEvent(event);
++    return invokeHubNotifications(input);
++  });
 +  ipcMain.handle('vibelink:work', async (event, input: unknown) => {
 +    assertTrustedAppRendererEvent(event);
 +    return invokeHubWork(input);
@@ -216,7 +223,7 @@ index b842bf8d..cb815180 100644
    ipcMain.handle('database-size-warning:get-settings', (event) => {
      assertTrustedAppRendererEvent(event);
      const state = readDatabaseSizeWarningSettingsState();
-@@ -4868,7 +4902,7 @@ const registerIpcHandlers = () => {
+@@ -4868,7 +4909,7 @@ const registerIpcHandlers = () => {
    });
  
    ipcMain.on('get-app-display-version-info', (event) => {
@@ -225,7 +232,7 @@ index b842bf8d..cb815180 100644
    });
  
    // 开屏卡住诊断:renderer 的 r: 日志不进上传,这条快照由 main 校验后写进 renderer-guard。
-@@ -6186,7 +6220,14 @@ const registerIpcHandlers = () => {
+@@ -6186,7 +6227,14 @@ const registerIpcHandlers = () => {
  
    // ── Auth IPC handlers (delegated to authManager) ──
  
@@ -241,7 +248,7 @@ index b842bf8d..cb815180 100644
      try {
        let pendingCompletion: Promise<authManager.AuthState> | null = null;
        const state = await authManager
-@@ -6236,10 +6277,14 @@ const registerIpcHandlers = () => {
+@@ -6236,10 +6284,14 @@ const registerIpcHandlers = () => {
      }
    });
  
@@ -257,7 +264,7 @@ index b842bf8d..cb815180 100644
      // Login can be the first real credential operation to observe an unavailable
      // backend. Reuse the bounded, idle-only recovery after the action settles.
      return authManager.dispatchLoginAction(action).finally(() => authCredentialRecovery.request());
-@@ -6252,17 +6297,21 @@ const registerIpcHandlers = () => {
+@@ -6252,17 +6304,21 @@ const registerIpcHandlers = () => {
      return authManager.getLoginCaptchaChallengeUrl();
    });
  
@@ -280,7 +287,7 @@ index b842bf8d..cb815180 100644
      try {
        return await authManager.syncSavedAccounts();
      } catch (error) {
-@@ -6272,6 +6321,7 @@ const registerIpcHandlers = () => {
+@@ -6272,6 +6328,7 @@ const registerIpcHandlers = () => {
  
    ipcMain.handle('auth:accounts:switch', async (event, accountKey: unknown) => {
      assertTrustedAppRendererEvent(event);
@@ -288,7 +295,7 @@ index b842bf8d..cb815180 100644
      try {
        await authManager.switchSavedAccount(accountKey);
      } catch (error) {
-@@ -6281,6 +6331,7 @@ const registerIpcHandlers = () => {
+@@ -6281,6 +6338,7 @@ const registerIpcHandlers = () => {
  
    ipcMain.handle('auth:accounts:begin-add', async (event) => {
      assertTrustedAppRendererEvent(event);
@@ -296,7 +303,7 @@ index b842bf8d..cb815180 100644
      try {
        return await authManager.beginAddAccountLogin();
      } catch (error) {
-@@ -6293,7 +6344,9 @@ const registerIpcHandlers = () => {
+@@ -6293,7 +6351,9 @@ const registerIpcHandlers = () => {
      authManager.cancelAddAccountLogin();
    });
  
@@ -307,7 +314,7 @@ index b842bf8d..cb815180 100644
      if (getActiveAppSession().mode === 'local') {
        return authManager.getAuthState();
      }
-@@ -6301,7 +6354,9 @@ const registerIpcHandlers = () => {
+@@ -6301,7 +6361,9 @@ const registerIpcHandlers = () => {
      return authManager.enterLocalMode();
    });
  
@@ -318,7 +325,7 @@ index b842bf8d..cb815180 100644
      if (getActiveAppSession().mode !== 'local') {
        throwIpcError('PRECONDITION_FAILED', 'Local mode is not active.');
      }
-@@ -6309,6 +6364,7 @@ const registerIpcHandlers = () => {
+@@ -6309,6 +6371,7 @@ const registerIpcHandlers = () => {
    });
  
    ipcMain.handle('auth:refresh', async () => {
@@ -326,7 +333,23 @@ index b842bf8d..cb815180 100644
      return authManager.refresh();
    });
  
-@@ -9463,6 +9519,27 @@ app.on('ready', async () => {
+@@ -9449,9 +9512,12 @@ app.on('ready', async () => {
+   //
+   // 必须在创建任何 Notification 之前调用。macOS / Linux 不需要。
+   if (process.platform === 'win32') {
+-    await cleanupLegacyDevShortcut();
+-    app.setAppUserModelId(WINDOWS_APP_USER_MODEL_ID);
+-    console.log('[AUMID] runtime=%s', WINDOWS_APP_USER_MODEL_ID);
++    if (isVibeLinkMode()) configureHubNotificationIdentity();
++    else {
++      await cleanupLegacyDevShortcut();
++      app.setAppUserModelId(WINDOWS_APP_USER_MODEL_ID);
++      console.log('[AUMID] runtime=%s', WINDOWS_APP_USER_MODEL_ID);
++    }
+   }
+ 
+   registerImageProtocolHandler();
+@@ -9463,6 +9529,27 @@ app.on('ready', async () => {
    registerCindyMediaProtocolHandler();
    registerMcpAppProtocol();
  
@@ -354,7 +377,7 @@ index b842bf8d..cb815180 100644
    // Inject a Content-Security-Policy response header onto the app's own
    // top-level document (defaultSession mainFrame) before any window loads.
    // Blocks an XSS from escalating to preload privileges via inline / eval
-@@ -10148,6 +10225,9 @@ app.on('ready', async () => {
+@@ -10148,6 +10235,9 @@ app.on('ready', async () => {
    registerProviderShareIpc();
    // 自建中转服务(docs/self-hosted-relay-plan.md):本机中转与加入别的中转。
    registerSelfHostedRelayIpc();
@@ -587,7 +610,7 @@ index 41f002f0..5ca13c3e 100644
  
    it('accumulates output_text deltas, parses JSON, and reports usage', async () => {
 diff --git a/apps/desktop/src/preload/preload.ts b/apps/desktop/src/preload/preload.ts
-index 3e3b5507..a3f8cbc8 100644
+index 3e3b5507..ef514f0d 100644
 --- a/apps/desktop/src/preload/preload.ts
 +++ b/apps/desktop/src/preload/preload.ts
 @@ -1093,6 +1093,7 @@ interface ComputerDriverUpdateCheck {
@@ -598,7 +621,7 @@ index 3e3b5507..a3f8cbc8 100644
  };
  
  // 运行期端点清单(main 在 createWindow 前解析完成;首帧同步可用)。
-@@ -1114,6 +1115,18 @@ const readMicrophonePermissionSnapshot = createMicrophonePermissionSnapshot();
+@@ -1114,6 +1115,24 @@ const readMicrophonePermissionSnapshot = createMicrophonePermissionSnapshot();
  const voiceInputDataSnapshot = createVoiceInputDataSnapshot();
  
  contextBridge.exposeInMainWorld('electronAPI', {
@@ -606,6 +629,12 @@ index 3e3b5507..a3f8cbc8 100644
 +    enabled: appDisplayVersionInfo.vibelinkEnabled === true,
 +    auth: (input: import('../shared/vibelinkAuth').HubAuthInput) => ipcRenderer.invoke('vibelink:auth', input),
 +    work: (input: import('../shared/vibelinkWork').HubWorkInput) => ipcRenderer.invoke('vibelink:work', input),
++    notifications: (input: import('../shared/vibelinkNotifications').NotificationInput) => ipcRenderer.invoke('vibelink:notifications', input),
++    onNotificationOpen: (listener: (target: import('../shared/vibelinkNotifications').NotificationTarget) => void) => {
++      const receive = (_event: Electron.IpcRendererEvent, target: import('../shared/vibelinkNotifications').NotificationTarget) => listener(target);
++      ipcRenderer.on('vibelink:notification-open', receive);
++      return () => ipcRenderer.removeListener('vibelink:notification-open', receive);
++    },
 +    onAuthState: (listener: (result: import('../shared/vibelinkAuth').HubAuthResult) => void) => {
 +      const receive = (_event: Electron.IpcRendererEvent, result: import('../shared/vibelinkAuth').HubAuthResult) => listener(result);
 +      ipcRenderer.on('vibelink:auth-state', receive);
@@ -617,7 +646,7 @@ index 3e3b5507..a3f8cbc8 100644
    localAgent: {
      onConfirmation: (listener: (request: import('../shared/localAgent').LocalAgentConfirmation) => void): (() => void) => {
        const receive = (_event: Electron.IpcRendererEvent, request: import('../shared/localAgent').LocalAgentConfirmation) => listener(request);
-@@ -2326,7 +2339,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
+@@ -2326,7 +2345,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
      ipcRenderer.sendSync('auth:has-persisted-session-hint-sync') === true,
    authInitialize: (): Promise<{
      user: unknown;
@@ -627,10 +656,18 @@ index 3e3b5507..a3f8cbc8 100644
      canEnterApp: boolean;
      isAuthenticated: boolean;
 diff --git a/apps/desktop/src/renderer/App.tsx b/apps/desktop/src/renderer/App.tsx
-index c1e8dfb1..7ad9b75a 100644
+index c1e8dfb1..00544059 100644
 --- a/apps/desktop/src/renderer/App.tsx
 +++ b/apps/desktop/src/renderer/App.tsx
-@@ -16,7 +16,7 @@ import { LocaleProvider } from '@/hooks/useLocale';
+@@ -5,6 +5,7 @@ import { RouterProvider } from 'react-router-dom';
+ 
+ import { useEffect } from 'react';
+ import { RemoteDesktopHost } from '@/features/remote-desktop/RemoteDesktopHost';
++import { HubNotificationNavigation } from '@/features/vibelink/HubNotificationNavigation';
+ 
+ import { useCloseWindowFallbackShortcut } from '@/hooks/useCloseWindowShortcut';
+ import { useNewMakerPrefsOwnerResync } from '@/hooks/useNewMakerPrefsOwnerResync';
+@@ -16,7 +17,7 @@ import { LocaleProvider } from '@/hooks/useLocale';
  import { AuthProvider, useAuth } from '@/contexts/AuthContext';
  import { PluginReviewUpdatesProvider } from '@/contexts/PluginReviewUpdatesContext';
  import { AppShellCoverProvider, useAppShellCover } from '@/contexts/AppShellCoverContext';
@@ -639,7 +676,7 @@ index c1e8dfb1..7ad9b75a 100644
  import { EnvCheckProvider, EnvCheckGuard } from '@/contexts/EnvCheckContext';
  import { WorktreeProvider } from '@/contexts/WorktreeContext';
  import { PrRefsProvider } from '@/contexts/PrRefsContext';
-@@ -106,11 +106,18 @@ function LoginHandoffHost({ children }: { children: React.ReactNode }) {
+@@ -106,11 +107,18 @@ function LoginHandoffHost({ children }: { children: React.ReactNode }) {
            避免 renderer localStorage 被清空但主进程仍持有会话时整个已登录会话
            被永久锁亮色;未登录场景仍由 LoginPage 卸载结束门(见组件头注释)。 */}
        <LoginFirstLaunchLightGateBridge authResolved={!isInitializing} canEnterApp={canEnterApp} />
@@ -658,7 +695,7 @@ index c1e8dfb1..7ad9b75a 100644
  function syncWorkerPrefs() {
    const owner = getDataOwnerGeneration();
    window.electronAPI.syncWorkerCreationPrefs({
-@@ -459,7 +466,7 @@ export function App() {
+@@ -459,10 +467,11 @@ export function App() {
                              {/* 副窗口(「在新窗口打开」)/ 右侧栏子窗口跳过 splash:env/热更检查
                              由主窗启动时完成,附属窗 EnvCheckProvider 初始即 'passed',
                              不需要也不应再走 splash 流程。 */}
@@ -667,6 +704,10 @@ index c1e8dfb1..7ad9b75a 100644
                              {!isSecondaryWindow() && !isSidebarWindow() && <SplashScreen />}
                              <EnvCheckGuard>
                                <MakerBootstrap />
++                              {window.electronAPI?.vibelink?.enabled && !isSecondaryWindow() && !isSidebarWindow() && <HubNotificationNavigation />}
+                               {!isSecondaryWindow() && !isSidebarWindow() && <RemoteDesktopHost />}
+                               <ProjectAutomationNotifyBridge />
+                               {/* confirm 槽:插件请主机弹确认框。必须在 ConfirmDialogProvider
 diff --git a/apps/desktop/src/renderer/components/auth/GuestRoute.tsx b/apps/desktop/src/renderer/components/auth/GuestRoute.tsx
 index 8cc38ee6..912012fa 100644
 --- a/apps/desktop/src/renderer/components/auth/GuestRoute.tsx
@@ -1017,10 +1058,10 @@ index 8f777768..c3e32412 100644
        try {
          await exitLocalMode();
 diff --git a/apps/desktop/src/renderer/i18n/locales/de/common.json b/apps/desktop/src/renderer/i18n/locales/de/common.json
-index c258b6d1..5a928fe9 100644
+index c258b6d1..496c119d 100644
 --- a/apps/desktop/src/renderer/i18n/locales/de/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/de/common.json
-@@ -18951,5 +18951,97 @@
+@@ -18951,5 +18951,125 @@
      "rendered": "Dokument anzeigen",
      "wrap": "Zeilenumbruch",
      "lineNumbers": "Zeilennummern"
@@ -1116,13 +1157,41 @@ index c258b6d1..5a928fe9 100644
 +    "localRecords": "Lokale Sendeprotokolle",
 +    "dismissFailed": "Eintrag entfernen",
 +    "localHistory": "Lokale Gespräche"
++  },
++  "vibelinkNotifications": {
++    "title": "Desktop-Erinnerungen",
++    "description": "Nur auf diesem Computer. Frühere Ergebnisse werden beim Aktivieren nicht nachgesendet.",
++    "enabled": "Systemerinnerungen aktivieren",
++    "preview": "Aufgabenvorschau anzeigen",
++    "privacy": "Vorschauen sind standardmäßig aus. Zustellung bedeutet weder gelesen noch abgeschlossen.",
++    "receipts": "Zustellbelege",
++    "refresh": "Aktualisieren",
++    "empty": "Keine Erinnerungen erfasst.",
++    "work": "Aufgabe",
++    "resend": "Erinnerung erneut senden",
++    "resendHelp": "Sendet nur die Erinnerung, ohne die Aufgabe erneut auszuführen.",
++    "unknownHelp": "Die vorige Zustellung ist unbestätigt. Kein automatischer Neuversand.",
++    "suppressedHelp": "Kein Systempopup gesendet; beachten Sie die Ungelesen-Anzeige.",
++    "state_pending": "Ausstehend",
++    "state_dispatching": "Wird ans System gesendet",
++    "state_delivered": "Ans System übergeben",
++    "state_failed": "Zustellung fehlgeschlagen",
++    "state_unknown": "Zustellung unbestätigt",
++    "state_suppressed": "Erinnerung unterdrückt",
++    "receipt_show": "Vom System angenommen",
++    "receipt_click": "Geöffnet",
++    "receipt_close": "Geschlossen",
++    "receipt_error": "Systemfehler",
++    "unavailable": "Einstellungen nicht verfügbar.",
++    "genericBody": "Aufgabenstatus aktualisiert. Öffnen Sie den Hub-Arbeitsbereich.",
++    "capabilityUnavailable": "Systemerinnerungen sind auf diesem Computer nicht verfügbar oder noch nicht registriert."
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/en/common.json b/apps/desktop/src/renderer/i18n/locales/en/common.json
-index bc45dcdd..eb77ddd2 100644
+index bc45dcdd..f0e70aa2 100644
 --- a/apps/desktop/src/renderer/i18n/locales/en/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/en/common.json
-@@ -18951,5 +18951,97 @@
+@@ -18951,5 +18951,125 @@
      "rendered": "View document",
      "wrap": "Wrap lines",
      "lineNumbers": "Line numbers"
@@ -1218,13 +1287,41 @@ index bc45dcdd..eb77ddd2 100644
 +    "localRecords": "Local delivery records",
 +    "dismissFailed": "Remove record",
 +    "localHistory": "Local conversations"
++  },
++  "vibelinkNotifications": {
++    "title": "Desktop reminders",
++    "description": "Reminders use this computer only. Enabling starts from current task states; older results are not replayed.",
++    "enabled": "Enable system reminders",
++    "preview": "Show task previews",
++    "privacy": "Previews are off by default. Notification delivery does not mark a task as read or complete.",
++    "receipts": "Delivery receipts",
++    "refresh": "Refresh",
++    "empty": "No reminders recorded.",
++    "work": "Task",
++    "resend": "Resend reminder",
++    "resendHelp": "Resending only sends a reminder. It does not retry the task.",
++    "unknownHelp": "The previous delivery could not be confirmed. It will not be sent again automatically.",
++    "suppressedHelp": "No system popup was sent; use the in-app unread indicator.",
++    "state_pending": "Pending delivery",
++    "state_dispatching": "Submitting to system",
++    "state_delivered": "Submitted to system reminders",
++    "state_failed": "Delivery failed",
++    "state_unknown": "Delivery unconfirmed",
++    "state_suppressed": "Reminder suppressed",
++    "receipt_show": "System accepted",
++    "receipt_click": "Opened",
++    "receipt_close": "Closed",
++    "receipt_error": "System error",
++    "unavailable": "Unable to read reminder settings.",
++    "genericBody": "Task status updated. Open the Hub workspace to view it.",
++    "capabilityUnavailable": "System reminders are not available or registration is incomplete on this computer."
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/es/common.json b/apps/desktop/src/renderer/i18n/locales/es/common.json
-index d4d5c25a..92e4be9a 100644
+index d4d5c25a..60239d07 100644
 --- a/apps/desktop/src/renderer/i18n/locales/es/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/es/common.json
-@@ -19122,5 +19122,97 @@
+@@ -19122,5 +19122,125 @@
      "rendered": "Ver documento",
      "wrap": "Ajustar líneas",
      "lineNumbers": "Números de línea"
@@ -1320,13 +1417,41 @@ index d4d5c25a..92e4be9a 100644
 +    "localRecords": "Envíos locales",
 +    "dismissFailed": "Quitar registro",
 +    "localHistory": "Conversaciones locales"
++  },
++  "vibelinkNotifications": {
++    "title": "Recordatorios de escritorio",
++    "description": "Solo en este equipo. Al activar no se reenvían resultados anteriores.",
++    "enabled": "Activar avisos del sistema",
++    "preview": "Mostrar vista previa de tareas",
++    "privacy": "Las vistas previas están desactivadas. La entrega no significa lectura ni finalización.",
++    "receipts": "Confirmaciones de entrega",
++    "refresh": "Actualizar",
++    "empty": "No hay recordatorios registrados.",
++    "work": "Tarea",
++    "resend": "Reenviar recordatorio",
++    "resendHelp": "Solo reenvía el aviso; no vuelve a ejecutar la tarea.",
++    "unknownHelp": "La entrega anterior no está confirmada. No se reenvía automáticamente.",
++    "suppressedHelp": "No se envió un aviso del sistema; revise el indicador de no leídos.",
++    "state_pending": "Pendiente",
++    "state_dispatching": "Enviando al sistema",
++    "state_delivered": "Enviado al sistema",
++    "state_failed": "Error de entrega",
++    "state_unknown": "Entrega sin confirmar",
++    "state_suppressed": "Aviso omitido",
++    "receipt_show": "Aceptado por el sistema",
++    "receipt_click": "Abierto",
++    "receipt_close": "Cerrado",
++    "receipt_error": "Error del sistema",
++    "unavailable": "No se pueden leer los ajustes.",
++    "genericBody": "El estado de la tarea cambió. Abra el espacio Hub para verlo.",
++    "capabilityUnavailable": "Los avisos del sistema no están disponibles o el registro está incompleto."
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/fr/common.json b/apps/desktop/src/renderer/i18n/locales/fr/common.json
-index 67f0538c..4e4cd2be 100644
+index 67f0538c..4762be59 100644
 --- a/apps/desktop/src/renderer/i18n/locales/fr/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/fr/common.json
-@@ -19122,5 +19122,97 @@
+@@ -19122,5 +19122,125 @@
      "rendered": "Afficher le document",
      "wrap": "Retour à la ligne",
      "lineNumbers": "Numéros de ligne"
@@ -1422,13 +1547,41 @@ index 67f0538c..4e4cd2be 100644
 +    "localRecords": "Envois locaux",
 +    "dismissFailed": "Retirer l’entrée",
 +    "localHistory": "Conversations locales"
++  },
++  "vibelinkNotifications": {
++    "title": "Rappels sur cet ordinateur",
++    "description": "Uniquement sur cet ordinateur. Les anciens résultats ne sont pas renvoyés à l’activation.",
++    "enabled": "Activer les rappels système",
++    "preview": "Afficher un aperçu des tâches",
++    "privacy": "Aperçus désactivés par défaut. La livraison ne signifie ni lecture ni fin de tâche.",
++    "receipts": "Accusés de livraison",
++    "refresh": "Actualiser",
++    "empty": "Aucun rappel enregistré.",
++    "work": "Tâche",
++    "resend": "Renvoyer le rappel",
++    "resendHelp": "Renvoie uniquement le rappel, sans relancer la tâche.",
++    "unknownHelp": "Livraison précédente non confirmée. Aucun renvoi automatique.",
++    "suppressedHelp": "Aucune fenêtre système envoyée ; consultez les éléments non lus.",
++    "state_pending": "En attente",
++    "state_dispatching": "Envoi au système",
++    "state_delivered": "Transmis au système",
++    "state_failed": "Échec de livraison",
++    "state_unknown": "Livraison non confirmée",
++    "state_suppressed": "Rappel masqué",
++    "receipt_show": "Accepté par le système",
++    "receipt_click": "Ouvert",
++    "receipt_close": "Fermé",
++    "receipt_error": "Erreur système",
++    "unavailable": "Paramètres indisponibles.",
++    "genericBody": "État de la tâche mis à jour. Ouvrez l’espace Hub pour le consulter.",
++    "capabilityUnavailable": "Les rappels système sont indisponibles ou leur enregistrement est incomplet."
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/ja/common.json b/apps/desktop/src/renderer/i18n/locales/ja/common.json
-index e3383953..df7a8fbe 100644
+index e3383953..a0a1a1de 100644
 --- a/apps/desktop/src/renderer/i18n/locales/ja/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/ja/common.json
-@@ -18879,5 +18879,97 @@
+@@ -18879,5 +18879,125 @@
      "rendered": "文書を表示",
      "wrap": "行の折り返し",
      "lineNumbers": "行番号"
@@ -1524,13 +1677,41 @@ index e3383953..df7a8fbe 100644
 +    "localRecords": "この端末の送信記録",
 +    "dismissFailed": "記録を削除",
 +    "localHistory": "この端末の会話"
++  },
++  "vibelinkNotifications": {
++    "title": "デスクトップ通知",
++    "description": "このコンピューターのみで通知します。有効化前の結果は再通知しません。",
++    "enabled": "システム通知を有効化",
++    "preview": "タスクのプレビューを表示",
++    "privacy": "プレビューは初期設定でオフです。通知は既読や完了を意味しません。",
++    "receipts": "配信履歴",
++    "refresh": "更新",
++    "empty": "通知履歴はありません。",
++    "work": "タスク",
++    "resend": "通知を再送",
++    "resendHelp": "通知のみを再送し、タスクは再実行しません。",
++    "unknownHelp": "前回の配信結果が不明です。自動再送はしません。",
++    "suppressedHelp": "システム通知は送信していません。アプリの未読表示をご確認ください。",
++    "state_pending": "送信待ち",
++    "state_dispatching": "システムへ送信中",
++    "state_delivered": "システムへ送信済み",
++    "state_failed": "配信失敗",
++    "state_unknown": "配信未確認",
++    "state_suppressed": "通知を抑制",
++    "receipt_show": "システムが受付",
++    "receipt_click": "開封",
++    "receipt_close": "終了",
++    "receipt_error": "システムエラー",
++    "unavailable": "通知設定を取得できません。",
++    "genericBody": "タスクの状態が更新されました。Hub ワークスペースでご確認ください。",
++    "capabilityUnavailable": "このコンピューターではシステム通知が利用できないか、登録が未完了です。"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/ko/common.json b/apps/desktop/src/renderer/i18n/locales/ko/common.json
-index 30577f6d..dd335438 100644
+index 30577f6d..cfa48ecc 100644
 --- a/apps/desktop/src/renderer/i18n/locales/ko/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/ko/common.json
-@@ -18879,5 +18879,97 @@
+@@ -18879,5 +18879,125 @@
      "rendered": "문서 보기",
      "wrap": "자동 줄 바꿈",
      "lineNumbers": "줄 번호"
@@ -1626,13 +1807,41 @@ index 30577f6d..dd335438 100644
 +    "localRecords": "로컬 전송 기록",
 +    "dismissFailed": "기록 제거",
 +    "localHistory": "로컬 대화"
++  },
++  "vibelinkNotifications": {
++    "title": "데스크톱 알림",
++    "description": "이 컴퓨터에서만 알립니다. 활성화 이전 결과는 다시 알리지 않습니다.",
++    "enabled": "시스템 알림 사용",
++    "preview": "작업 미리보기 표시",
++    "privacy": "미리보기는 기본적으로 꺼져 있습니다. 알림은 읽음이나 완료를 뜻하지 않습니다.",
++    "receipts": "전달 기록",
++    "refresh": "새로고침",
++    "empty": "알림 기록이 없습니다.",
++    "work": "작업",
++    "resend": "알림 다시 보내기",
++    "resendHelp": "알림만 다시 보내며 작업을 재실행하지 않습니다.",
++    "unknownHelp": "이전 전달 결과를 확인할 수 없습니다. 자동 재전송하지 않습니다.",
++    "suppressedHelp": "시스템 팝업을 보내지 않았습니다. 앱의 읽지 않음 표시를 확인하세요.",
++    "state_pending": "전달 대기",
++    "state_dispatching": "시스템에 제출 중",
++    "state_delivered": "시스템에 제출됨",
++    "state_failed": "전달 실패",
++    "state_unknown": "전달 미확인",
++    "state_suppressed": "알림 억제됨",
++    "receipt_show": "시스템 접수",
++    "receipt_click": "열림",
++    "receipt_close": "닫힘",
++    "receipt_error": "시스템 오류",
++    "unavailable": "알림 설정을 읽을 수 없습니다.",
++    "genericBody": "작업 상태가 업데이트되었습니다. Hub 작업 공간에서 확인하세요.",
++    "capabilityUnavailable": "이 컴퓨터에서 시스템 알림을 사용할 수 없거나 등록이 완료되지 않았습니다."
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/pt-BR/common.json b/apps/desktop/src/renderer/i18n/locales/pt-BR/common.json
-index 7b546ee2..ed3a331b 100644
+index 7b546ee2..2ae6e9cf 100644
 --- a/apps/desktop/src/renderer/i18n/locales/pt-BR/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/pt-BR/common.json
-@@ -19122,5 +19122,97 @@
+@@ -19122,5 +19122,125 @@
      "rendered": "Ver documento",
      "wrap": "Quebra de linha",
      "lineNumbers": "Números de linha"
@@ -1728,13 +1937,41 @@ index 7b546ee2..ed3a331b 100644
 +    "localRecords": "Registros locais de envio",
 +    "dismissFailed": "Remover registro",
 +    "localHistory": "Conversas locais"
++  },
++  "vibelinkNotifications": {
++    "title": "Lembretes do computador",
++    "description": "Somente neste computador. Resultados anteriores não são reenviados ao ativar.",
++    "enabled": "Ativar lembretes do sistema",
++    "preview": "Mostrar prévias das tarefas",
++    "privacy": "Prévias desativadas por padrão. Entrega não significa leitura ou conclusão.",
++    "receipts": "Comprovantes de entrega",
++    "refresh": "Atualizar",
++    "empty": "Nenhum lembrete registrado.",
++    "work": "Tarefa",
++    "resend": "Reenviar lembrete",
++    "resendHelp": "Reenvia apenas o lembrete, sem executar a tarefa novamente.",
++    "unknownHelp": "Entrega anterior não confirmada. Não haverá reenvio automático.",
++    "suppressedHelp": "Nenhum aviso do sistema enviado; consulte os itens não lidos.",
++    "state_pending": "Pendente",
++    "state_dispatching": "Enviando ao sistema",
++    "state_delivered": "Enviado ao sistema",
++    "state_failed": "Falha na entrega",
++    "state_unknown": "Entrega não confirmada",
++    "state_suppressed": "Lembrete suprimido",
++    "receipt_show": "Aceito pelo sistema",
++    "receipt_click": "Aberto",
++    "receipt_close": "Fechado",
++    "receipt_error": "Erro do sistema",
++    "unavailable": "Não foi possível ler as configurações.",
++    "genericBody": "O status da tarefa mudou. Abra o espaço Hub para conferir.",
++    "capabilityUnavailable": "Os lembretes do sistema estão indisponíveis ou o registro está incompleto."
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/pt-PT/common.json b/apps/desktop/src/renderer/i18n/locales/pt-PT/common.json
-index bae75933..39eb6dee 100644
+index bae75933..f33a1738 100644
 --- a/apps/desktop/src/renderer/i18n/locales/pt-PT/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/pt-PT/common.json
-@@ -19122,5 +19122,97 @@
+@@ -19122,5 +19122,125 @@
      "rendered": "Ver documento",
      "wrap": "Moldar linhas",
      "lineNumbers": "Números de linha"
@@ -1830,13 +2067,41 @@ index bae75933..39eb6dee 100644
 +    "localRecords": "Registos locais de envio",
 +    "dismissFailed": "Remover registo",
 +    "localHistory": "Conversas locais"
++  },
++  "vibelinkNotifications": {
++    "title": "Lembretes do computador",
++    "description": "Apenas neste computador. Os resultados anteriores não são reenviados ao ativar.",
++    "enabled": "Ativar lembretes do sistema",
++    "preview": "Mostrar pré-visualizações",
++    "privacy": "Pré-visualizações desativadas. A entrega não significa leitura ou conclusão.",
++    "receipts": "Comprovativos de entrega",
++    "refresh": "Atualizar",
++    "empty": "Sem lembretes registados.",
++    "work": "Tarefa",
++    "resend": "Reenviar lembrete",
++    "resendHelp": "Reenvia apenas o lembrete, sem repetir a tarefa.",
++    "unknownHelp": "Entrega anterior não confirmada. Não haverá reenvio automático.",
++    "suppressedHelp": "Sem aviso do sistema; consulte os elementos não lidos.",
++    "state_pending": "Pendente",
++    "state_dispatching": "A enviar ao sistema",
++    "state_delivered": "Enviado ao sistema",
++    "state_failed": "Falha na entrega",
++    "state_unknown": "Entrega não confirmada",
++    "state_suppressed": "Lembrete suprimido",
++    "receipt_show": "Aceite pelo sistema",
++    "receipt_click": "Aberto",
++    "receipt_close": "Fechado",
++    "receipt_error": "Erro do sistema",
++    "unavailable": "Não foi possível ler as definições.",
++    "genericBody": "O estado da tarefa mudou. Abra o espaço Hub para consultar.",
++    "capabilityUnavailable": "Os lembretes do sistema estão indisponíveis ou o registo está incompleto."
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/zh-CN/common.json b/apps/desktop/src/renderer/i18n/locales/zh-CN/common.json
-index dcd22815..35daa6d2 100644
+index dcd22815..73b4b084 100644
 --- a/apps/desktop/src/renderer/i18n/locales/zh-CN/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/zh-CN/common.json
-@@ -18879,5 +18879,97 @@
+@@ -18879,5 +18879,125 @@
      "rendered": "查看文稿",
      "wrap": "自动换行",
      "lineNumbers": "行号"
@@ -1932,13 +2197,41 @@ index dcd22815..35daa6d2 100644
 +    "localRecords": "本机发送记录",
 +    "dismissFailed": "移除记录",
 +    "localHistory": "本机对话"
++  },
++  "vibelinkNotifications": {
++    "title": "桌面提醒",
++    "description": "仅在这台电脑提醒。启用时从当前任务状态开始，不补发历史结果。",
++    "enabled": "启用系统提醒",
++    "preview": "显示任务内容预览",
++    "privacy": "默认不显示预览。提醒投递不等于任务已读或完成。",
++    "receipts": "投递回执",
++    "refresh": "刷新",
++    "empty": "暂无提醒记录。",
++    "work": "任务",
++    "resend": "重发提醒",
++    "resendHelp": "仅重发提醒，不会重试任务。",
++    "unknownHelp": "上次投递结果无法确认，不会自动重发。",
++    "suppressedHelp": "未发送系统弹窗，请查看应用内未读标记。",
++    "state_pending": "待发送",
++    "state_dispatching": "正在提交系统",
++    "state_delivered": "已提交系统提醒",
++    "state_failed": "投递失败",
++    "state_unknown": "投递结果未确认",
++    "state_suppressed": "提醒已抑制",
++    "receipt_show": "系统已接受",
++    "receipt_click": "已打开",
++    "receipt_close": "已关闭",
++    "receipt_error": "系统错误",
++    "unavailable": "无法读取提醒设置。",
++    "genericBody": "任务状态已更新，请打开 Hub 工作区查看。",
++    "capabilityUnavailable": "这台电脑的系统提醒不可用或尚未完成注册。"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/zh-Hans-x-lzh/common.json b/apps/desktop/src/renderer/i18n/locales/zh-Hans-x-lzh/common.json
-index 56395a07..0fda4479 100644
+index 56395a07..c676411e 100644
 --- a/apps/desktop/src/renderer/i18n/locales/zh-Hans-x-lzh/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/zh-Hans-x-lzh/common.json
-@@ -18879,5 +18879,97 @@
+@@ -18879,5 +18879,125 @@
      "rendered": "观文",
      "wrap": "折行",
      "lineNumbers": "行数"
@@ -2034,13 +2327,41 @@ index 56395a07..0fda4479 100644
 +    "localRecords": "本机发送记录",
 +    "dismissFailed": "移除记录",
 +    "localHistory": "本机对话"
++  },
++  "vibelinkNotifications": {
++    "title": "桌面提醒",
++    "description": "仅在这台电脑提醒。启用时从当前任务状态开始，不补发历史结果。",
++    "enabled": "启用系统提醒",
++    "preview": "显示任务内容预览",
++    "privacy": "默认不显示预览。提醒投递不等于任务已读或完成。",
++    "receipts": "投递回执",
++    "refresh": "刷新",
++    "empty": "暂无提醒记录。",
++    "work": "任务",
++    "resend": "重发提醒",
++    "resendHelp": "仅重发提醒，不会重试任务。",
++    "unknownHelp": "上次投递结果无法确认，不会自动重发。",
++    "suppressedHelp": "未发送系统弹窗，请查看应用内未读标记。",
++    "state_pending": "待发送",
++    "state_dispatching": "正在提交系统",
++    "state_delivered": "已提交系统提醒",
++    "state_failed": "投递失败",
++    "state_unknown": "投递结果未确认",
++    "state_suppressed": "提醒已抑制",
++    "receipt_show": "系统已接受",
++    "receipt_click": "已打开",
++    "receipt_close": "已关闭",
++    "receipt_error": "系统错误",
++    "unavailable": "无法读取提醒设置。",
++    "genericBody": "任务状态已更新，请打开 Hub 工作区查看。",
++    "capabilityUnavailable": "这台电脑的系统提醒不可用或尚未完成注册。"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/zh-Hant-x-lzh/common.json b/apps/desktop/src/renderer/i18n/locales/zh-Hant-x-lzh/common.json
-index f35e1826..db8909fa 100644
+index f35e1826..b83f8aa5 100644
 --- a/apps/desktop/src/renderer/i18n/locales/zh-Hant-x-lzh/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/zh-Hant-x-lzh/common.json
-@@ -18879,5 +18879,97 @@
+@@ -18879,5 +18879,125 @@
      "rendered": "觀文",
      "wrap": "折行",
      "lineNumbers": "行數"
@@ -2136,13 +2457,41 @@ index f35e1826..db8909fa 100644
 +    "localRecords": "本機傳送記錄",
 +    "dismissFailed": "移除記錄",
 +    "localHistory": "本機對話"
++  },
++  "vibelinkNotifications": {
++    "title": "桌面提醒",
++    "description": "只在這台電腦提醒。啟用後從目前任務狀態開始，不補發歷史結果。",
++    "enabled": "啟用系統提醒",
++    "preview": "顯示任務內容預覽",
++    "privacy": "預設不顯示預覽。提醒投遞不代表任務已讀或完成。",
++    "receipts": "投遞回條",
++    "refresh": "重新整理",
++    "empty": "暫無提醒記錄。",
++    "work": "任務",
++    "resend": "重發提醒",
++    "resendHelp": "僅重發提醒，不會重試任務。",
++    "unknownHelp": "上次投遞結果無法確認，不會自動重發。",
++    "suppressedHelp": "未發送系統彈窗，請查看應用程式內未讀標記。",
++    "state_pending": "待發送",
++    "state_dispatching": "正在提交系統",
++    "state_delivered": "已提交系統提醒",
++    "state_failed": "投遞失敗",
++    "state_unknown": "投遞結果未確認",
++    "state_suppressed": "提醒已抑制",
++    "receipt_show": "系統已接受",
++    "receipt_click": "已開啟",
++    "receipt_close": "已關閉",
++    "receipt_error": "系統錯誤",
++    "unavailable": "無法讀取提醒設定。",
++    "genericBody": "任務狀態已更新，請開啟 Hub 工作區查看。",
++    "capabilityUnavailable": "這台電腦的系統提醒無法使用或尚未完成註冊。"
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/zh-TW/common.json b/apps/desktop/src/renderer/i18n/locales/zh-TW/common.json
-index 7075672e..a01237d4 100644
+index 7075672e..b26304b6 100644
 --- a/apps/desktop/src/renderer/i18n/locales/zh-TW/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/zh-TW/common.json
-@@ -18879,5 +18879,97 @@
+@@ -18879,5 +18879,125 @@
      "rendered": "查看文件",
      "wrap": "自動換行",
      "lineNumbers": "行號"
@@ -2238,6 +2587,34 @@ index 7075672e..a01237d4 100644
 +    "localRecords": "本機傳送記錄",
 +    "dismissFailed": "移除記錄",
 +    "localHistory": "本機對話"
++  },
++  "vibelinkNotifications": {
++    "title": "桌面提醒",
++    "description": "只在這台電腦提醒。啟用後從目前任務狀態開始，不補發歷史結果。",
++    "enabled": "啟用系統提醒",
++    "preview": "顯示任務內容預覽",
++    "privacy": "預設不顯示預覽。提醒投遞不代表任務已讀或完成。",
++    "receipts": "投遞回條",
++    "refresh": "重新整理",
++    "empty": "暫無提醒記錄。",
++    "work": "任務",
++    "resend": "重發提醒",
++    "resendHelp": "僅重發提醒，不會重試任務。",
++    "unknownHelp": "上次投遞結果無法確認，不會自動重發。",
++    "suppressedHelp": "未發送系統彈窗，請查看應用程式內未讀標記。",
++    "state_pending": "待發送",
++    "state_dispatching": "正在提交系統",
++    "state_delivered": "已提交系統提醒",
++    "state_failed": "投遞失敗",
++    "state_unknown": "投遞結果未確認",
++    "state_suppressed": "提醒已抑制",
++    "receipt_show": "系統已接受",
++    "receipt_click": "已開啟",
++    "receipt_close": "已關閉",
++    "receipt_error": "系統錯誤",
++    "unavailable": "無法讀取提醒設定。",
++    "genericBody": "任務狀態已更新，請開啟 Hub 工作區查看。",
++    "capabilityUnavailable": "這台電腦的系統提醒無法使用或尚未完成註冊。"
    }
  }
 diff --git a/apps/desktop/src/renderer/lib/authService.ts b/apps/desktop/src/renderer/lib/authService.ts

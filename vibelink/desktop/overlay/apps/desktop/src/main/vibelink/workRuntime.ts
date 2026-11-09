@@ -21,7 +21,7 @@ import { HubWorkStore } from './workStore.js';
 let service: HubWorkService | null = null;
 const inflight = new Map<AbortController, WorkCredential>();
 
-function credential(): WorkCredential | null {
+export function currentHubWorkCredential(): WorkCredential | null {
   const current = currentHubCredential();
   const active = getActiveAppSession();
   if (
@@ -49,7 +49,7 @@ function instance(): HubWorkService {
     safeStorage,
   );
   onHubAuthChanged(() => {
-    const current = credential();
+    const current = currentHubWorkCredential();
     for (const [controller, previous] of inflight) {
       if (!current || current.scope !== previous.scope || current.epoch !== previous.epoch)
         controller.abort();
@@ -59,7 +59,7 @@ function instance(): HubWorkService {
     for (const controller of inflight.keys()) controller.abort();
   });
   service = new HubWorkService({
-    credential,
+    credential: currentHubWorkCredential,
     load: (scope) => store.load(scope),
     save: (scope, disk) => store.save(scope, disk),
     requestId: randomUUID,

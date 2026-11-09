@@ -13,7 +13,7 @@ vi.mock('react-i18next', async () => {
 
 it('offers local history explicitly and clears a submitted beta code', async () => {
   const auth = vi.fn(async () => ({ success: true as const, data: { status: 'signed_out' as const, session: null, qr: null } }));
-  const bridge = { enabled: true, auth, work: vi.fn(), onAuthState: () => () => undefined, request: vi.fn() };
+  const bridge = { enabled: true, auth, work: vi.fn(), notifications:vi.fn(), onNotificationOpen:()=>()=>{}, onAuthState: () => () => undefined, request: vi.fn() };
   render(<VibeLinkLoginPage bridge={bridge} />);
   expect(screen.getByRole('button', { name: '使用本机工作区' })).toBeTruthy();
   fireEvent.change(screen.getByLabelText('内测码'), { target: { value: 'fake-invite' } });
