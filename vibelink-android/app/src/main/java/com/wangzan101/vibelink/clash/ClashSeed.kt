@@ -1,124 +1,81 @@
 package com.wangzan101.vibelink.clash
 
-import android.content.ComponentName
 import android.content.Context
-import android.content.Intent
-import android.content.ServiceConnection
-import android.os.IBinder
 import android.util.Log
-import com.github.kr328.clash.service.RemoteService
 import com.github.kr328.clash.service.model.Profile
-import com.github.kr328.clash.service.remote.IRemoteService
-import com.github.kr328.clash.service.remote.unwrap
 import com.github.kr328.clash.service.store.ServiceStore
+import com.github.kr328.clash.util.withProfile
+import com.wangzan101.vibelink.BuildConfig
 import com.wangzan101.vibelink.net.ClashConfig
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import java.security.MessageDigest
 
-/**
- * 首次启动时把 vibelink 的出口配置种成 CMA 的一个 profile。
- *
- * 只留 Clash 这套 VPN 之后，面板里默认没有配置（Profile: Not selected）。
- * 这里在后台把 `ClashConfig` 生成的 YAML 导入并设为当前配置，用户打开面板
- * 点一下就能启动，不需要手动新建。
- *
- * 只做一次；之后用户在面板里增删配置不受影响。
- */
+/** Managed built-in profile; imports finish before the UI can start VPN. */
 object ClashSeed {
-    private const val TAG = "vibelink-seed"
     private const val PREFS = "clash_seed"
-    private const val KEY = "done_v3"
-    private const val PROFILE_NAME = "vibelink"
-
-    /** 配对 / 换 token 之后重写一次 Clash 配置（网关头里的 X-Mesh-Token 要跟着换）。 */
-    fun reseed(context: Context) {
-        if (com.wangzan101.vibelink.BuildConfig.IS_BETA_EDITION) return
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(KEY).apply()
-        ensure(context)
-    }
+    private val lock = Mutex()
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private fun hash(bytes: ByteArray) = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
 
     fun ensure(context: Context) {
-        if (com.wangzan101.vibelink.BuildConfig.IS_BETA_EDITION) return
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        if (prefs.getBoolean(KEY, false)) return
-
-        CoroutineScope(Dispatchers.IO).launch {
-            runCatching {
-                ServiceStore(context).apply {
-                    allowBypass = false
-                    tunStackMode = "mixed"
-                }
-                withRemote(context) { remote ->
-                    val profileManager = remote.profile()
-                    val all = profileManager.queryAll()
-                    val existing = all.firstOrNull { it.name == PROFILE_NAME }
-                    if (existing == null && all.isEmpty()) {
-                        val uuid = profileManager.create(Profile.Type.File, PROFILE_NAME)
-                        val pending = context.filesDir.resolve("pending").resolve(uuid.toString())
-                        pending.mkdirs()
-                        pending.resolve("config.yaml").writeText(ClashConfig.write(context).readText())
-                        profileManager.commit(uuid)
-                        profileManager.queryByUUID(uuid)?.let { profileManager.setActive(it) }
-                        prefs.edit().putBoolean(KEY, true).apply()
-                        Log.i(TAG, "seeded profile $uuid")
-                    } else if (existing != null) {
-                        val uuid = existing.uuid
-                        profileManager.patch(uuid, PROFILE_NAME, existing.source, existing.interval, existing.ageSecretKey)
-                        val pending = context.filesDir.resolve("pending").resolve(uuid.toString())
-                        pending.mkdirs()
-                        pending.resolve("config.yaml").writeText(ClashConfig.write(context).readText())
-                        profileManager.commit(uuid)
-                        if (profileManager.queryActive() == null || profileManager.queryActive()?.uuid == uuid) {
-                            profileManager.queryByUUID(uuid)?.let { profileManager.setActive(it) }
-                        }
-                        prefs.edit().putBoolean(KEY, true).apply()
-                        Log.i(TAG, "upgraded existing profile $uuid to $KEY")
-                    } else {
-                        if (profileManager.queryActive() == null) {
-                            profileManager.setActive(all.first())
-                            Log.i(TAG, "activated existing profile ${all.first().uuid}")
-                        }
-                        prefs.edit().putBoolean(KEY, true).apply()
-                    }
-                }
-            }.onFailure {
-                Log.w(TAG, "seed failed: ${it.message}", it)
-            }
+        if (BuildConfig.IS_BETA_EDITION) return
+        scope.launch {
+            try { prepare(context.applicationContext) }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { Log.w("vibelink-seed", "内置配置未就绪，可在网络设置重试") }
         }
     }
 
-    private suspend fun <T> withRemote(context: Context, block: suspend (IRemoteService) -> T): T =
-        suspendCancellableCoroutine { continuation ->
-            var connection: ServiceConnection? = null
+    /** Gateway fallback content changes with login; private seed stays unchanged. */
+    fun reseed(context: Context) = ensure(context)
 
-            connection = object : ServiceConnection {
-                override fun onServiceConnected(name: ComponentName?, binder: IBinder) {
-                    val remote = binder.unwrap(IRemoteService::class)
-                    CoroutineScope(Dispatchers.IO).launch {
-                        try {
-                            continuation.resume(block(remote))
-                        } catch (t: Throwable) {
-                            continuation.resumeWithException(t)
-                        } finally {
-                            runCatching { context.unbindService(connection!!) }
-                        }
+    suspend fun prepare(context: Context, restore: Boolean = false): String = withContext(Dispatchers.IO) {
+        check(!BuildConfig.IS_BETA_EDITION) { "内测版不提供私人内置配置" }
+        lock.withLock {
+            val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            val content = ClashConfig.write(context).readBytes()
+            val digest = hash(content)
+            withTimeout(30_000) {
+                withProfile {
+                    val all = queryAll()
+                    val ownedId = prefs.getString("managed_uuid", null)
+                    val owned = all.firstOrNull { it.uuid.toString() == ownedId }
+                    val active = queryActive()
+                    if (!ClashSeedPolicy.needsImport(prefs.getString("content_hash", "") != digest, owned?.imported == true, restore)) {
+                        if (active == null && owned != null) setActive(owned)
+                        return@withProfile "开发版内置配置已就绪"
                     }
+                    val oldFile = ownedId?.let { context.filesDir.resolve("imported/$it/config.yaml") }
+                    val oldUnmodified = oldFile?.isFile == true &&
+                        prefs.getString("installed_hash", null) == hash(oldFile.readBytes())
+                    val legacyManaged = prefs.getBoolean("done_v3", false) && active?.name == "vibelink" && ownedId == null
+                    val activate = ClashSeedPolicy.activate(restore, active?.uuid?.toString(), ownedId, oldUnmodified, legacyManaged)
+                    // A failed import retains its pending UUID, so retry does not
+                    // create duplicate profiles. Existing profiles are never overwritten.
+                    val pendingId = prefs.getString("pending_uuid", null)
+                    val pending = all.firstOrNull { it.uuid.toString() == pendingId && prefs.getString("pending_hash", "") == digest }
+                    val uuid = pending?.uuid ?: create(Profile.Type.File, "VibeLink 开发内置 · ${BuildConfig.VERSION_NAME}")
+                    check(prefs.edit().putString("pending_uuid", uuid.toString()).putString("pending_hash", digest).commit())
+                    if (pending != null) patch(uuid, pending.name, pending.source, pending.interval, pending.ageSecretKey)
+                    val directory = context.filesDir.resolve("pending/$uuid")
+                    check(directory.mkdirs() || directory.isDirectory)
+                    directory.resolve("config.yaml").writeBytes(content)
+                    // CMA validates the configuration with the actual bundled core.
+                    commit(uuid)
+                    val imported = queryByUUID(uuid)?.takeIf { it.imported } ?: error("内核未确认配置导入")
+                    val installed = context.filesDir.resolve("imported/$uuid/config.yaml")
+                    if (activate) {
+                        ServiceStore(context).apply { allowBypass = false; tunStackMode = "mixed" }
+                        setActive(imported)
+                    }
+                    check(prefs.edit().putString("managed_uuid", uuid.toString()).putString("content_hash", digest)
+                        .putString("installed_hash", hash(installed.readBytes()))
+                        .remove("pending_uuid").remove("pending_hash").commit())
+                    if (activate) "开发版内置配置已导入并选中" else "内置配置已更新，保留你当前选择的配置"
                 }
-
-                override fun onServiceDisconnected(name: ComponentName?) {
-                    // 服务被杀：本次种子放弃，下次启动再试
-                }
-            }
-
-            val intent = Intent(context, RemoteService::class.java)
-            runCatching {
-                context.bindService(intent, connection, Context.BIND_AUTO_CREATE)
-            }.onFailure {
-                continuation.resumeWithException(it)
             }
         }
+    }
 }

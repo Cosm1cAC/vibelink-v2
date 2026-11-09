@@ -11,12 +11,43 @@ import com.github.kr328.clash.service.remote.ILogObserver
 import com.github.kr328.clash.service.store.ServiceStore
 import com.github.kr328.clash.service.util.sendOverrideChanged
 import kotlinx.coroutines.*
-import kotlinx.coroutines.channels.ReceiveChannel
 
 class ClashManager(private val context: Context) : IClashManager,
     CoroutineScope by CoroutineScope(Dispatchers.IO) {
     private val store = ServiceStore(context)
-    private var logReceiver: ReceiveChannel<LogMessage>? = null
+    companion object {
+        // The bound UI service can disappear while the browser is foreground.
+        // Keep the short-lived capability in core-process memory across rebinding.
+        private val tailscaleAuth = com.wangzan101.vibelink.clash.TailscaleAuthCache(android.os.SystemClock::elapsedRealtime)
+    }
+    private val logRelay = com.wangzan101.vibelink.clash.TailscaleLogRelay<LogMessage>(tailscaleAuth)
+
+    init {
+        launch {
+            val receiver = Clash.subscribeLogcat()
+            try {
+                for (item in receiver) {
+                    logRelay.accept(
+                        item.copy(message = com.wangzan101.vibelink.clash.TailscaleAuthCache.redact(item.message)),
+                        item.message, store.activeProfile?.toString(), StatusProvider.serviceRunning
+                    )
+                }
+            } finally { receiver.cancel() }
+        }
+        launch {
+            val receiver = object : android.content.BroadcastReceiver() {
+                override fun onReceive(context: Context?, intent: android.content.Intent?) { tailscaleAuth.clear() }
+            }
+            val filter = android.content.IntentFilter().apply {
+                addAction(com.github.kr328.clash.common.constants.Intents.ACTION_CLASH_STOPPED)
+                addAction(com.github.kr328.clash.common.constants.Intents.ACTION_PROFILE_LOADED)
+            }
+            androidx.core.content.ContextCompat.registerReceiver(context, receiver, filter, androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
+            try { awaitCancellation() } finally { context.unregisterReceiver(receiver) }
+        }
+    }
+
+    override fun queryTailscaleAuthUrl(): String? = tailscaleAuth.current(store.activeProfile?.toString(), StatusProvider.serviceRunning)
 
     override fun queryTunnelState(): TunnelState {
         return Clash.queryTunnelState()
@@ -77,35 +108,6 @@ class ClashManager(private val context: Context) : IClashManager,
     }
 
     override fun setLogObserver(observer: ILogObserver?) {
-        synchronized(this) {
-            logReceiver?.apply {
-                cancel()
-
-                Clash.forceGc()
-            }
-
-            if (observer != null) {
-                logReceiver = Clash.subscribeLogcat().also { c ->
-                    launch {
-                        try {
-                            while (isActive) {
-                                observer.newItem(c.receive())
-                            }
-                        } catch (e: CancellationException) {
-                            // intended behavior
-                            // ignore
-                        } catch (e: Exception) {
-                            Log.w("UI crashed", e)
-                        } finally {
-                            withContext(NonCancellable) {
-                                c.cancel()
-
-                                Clash.forceGc()
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        logRelay.setObserver(observer?.let { value -> { item: LogMessage -> value.newItem(item) } })
     }
 }

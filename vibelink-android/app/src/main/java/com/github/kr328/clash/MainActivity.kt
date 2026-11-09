@@ -37,6 +37,8 @@ import com.wangzan101.vibelink.R as DesignR
 class MainActivity : BaseActivity<MainDesign>() {
     @Volatile
     private var pendingTargetState: Pair<Boolean, Long>? = null
+    private val authRefreshLock = kotlinx.coroutines.sync.Mutex()
+    private val probeLock = kotlinx.coroutines.sync.Mutex()
 
     override suspend fun main() {
         val design = MainDesign(this)
@@ -45,6 +47,9 @@ class MainActivity : BaseActivity<MainDesign>() {
 
         // 服务未就绪时 withClash/withProfile 会一直等；放到后台，别挡住下面的请求循环
         launch {
+            if (!com.wangzan101.vibelink.BuildConfig.IS_BETA_EDITION) {
+                runCatching { com.wangzan101.vibelink.clash.ClashSeed.prepare(this@MainActivity) }
+            }
             runCatching { design.fetch() }
                 .onFailure { android.util.Log.w("clash-ui", "fetch failed: " + it.message) }
         }
@@ -85,6 +90,33 @@ class MainActivity : BaseActivity<MainDesign>() {
                                 stopClashService()
                             }
                         }
+                        MainDesign.Request.AuthorizeTailscale -> launch {
+                            val url = runCatching { if (managedProfileSelected()) withClash { queryTailscaleAuthUrl() } else null }.getOrNull()
+                                ?.let { com.wangzan101.vibelink.clash.TailscaleAuthCache.allowedUrl(it) }
+                            if (url == null) {
+                                design.showToast("授权链接已失效，请重新检测日本出口", ToastDuration.Long)
+                            } else {
+                                runCatching { startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url))) }
+                                    .onFailure { design.showToast("无法打开授权页面", ToastDuration.Long) }
+                            }
+                            design.refreshTailscale()
+                        }
+                        MainDesign.Request.ProbeTailscale -> launch {
+                            if (!probeLock.tryLock()) return@launch
+                            try {
+                                if (managedProfileSelected() && Remote.broadcasts.refreshStatus()) {
+                                    runCatching {
+                                        kotlinx.coroutines.withTimeout(15_000) {
+                                            withClash {
+                                                if (queryProxyGroupNames(false).contains("PROXY")) healthCheck("PROXY")
+                                            }
+                                        }
+                                    }
+                                    design.refreshTailscale()
+                                    design.showToast("检测已结束；如需登录，请点授权 Tailscale。可在代理组查看实际延迟。", ToastDuration.Long)
+                                } else design.showToast("请先选用开发版内置配置并启动 VPN", ToastDuration.Long)
+                            } finally { probeLock.unlock() }
+                        }
                         MainDesign.Request.OpenProxy ->
                             startActivity(ProxyActivity::class.intent)
                         MainDesign.Request.OpenProfiles ->
@@ -108,7 +140,7 @@ class MainActivity : BaseActivity<MainDesign>() {
                 }
                 if (clashRunning) {
                     ticker.onReceive {
-                        launch { runCatching { design.fetchTraffic() } }
+                        launch { runCatching { design.fetchTraffic(); design.refreshTailscale() } }
                     }
                 }
             }
@@ -139,10 +171,27 @@ class MainActivity : BaseActivity<MainDesign>() {
 
         setMode(state.mode)
         setHasProviders(providers.isNotEmpty())
+        refreshTailscale()
 
         withProfile {
             setProfileName(queryActive()?.name)
         }
+    }
+
+    private suspend fun managedProfileSelected(): Boolean {
+        if (com.wangzan101.vibelink.BuildConfig.IS_BETA_EDITION || !com.wangzan101.vibelink.BuildConfig.HAS_DEV_CLASH_SEED) return false
+        val managed = getSharedPreferences("clash_seed", MODE_PRIVATE).getString("managed_uuid", null) ?: return false
+        return withProfile { queryActive()?.uuid?.toString() == managed }
+    }
+
+    private suspend fun MainDesign.refreshTailscale() {
+        if (!authRefreshLock.tryLock()) return
+        try {
+            val running = Remote.broadcasts.refreshStatus()
+            val url = withClash { queryTailscaleAuthUrl() }
+            val managed = managedProfileSelected()
+            setTailscaleState(url != null && managed, running && managed)
+        } finally { authRefreshLock.unlock() }
     }
 
     private suspend fun MainDesign.fetchTraffic() {
@@ -152,6 +201,9 @@ class MainActivity : BaseActivity<MainDesign>() {
     }
 
     private suspend fun MainDesign.startClash() {
+        if (!com.wangzan101.vibelink.BuildConfig.IS_BETA_EDITION) {
+            runCatching { com.wangzan101.vibelink.clash.ClashSeed.prepare(this@MainActivity) }
+        }
         val active = withProfile { queryActive() }
 
         if (active == null || !active.imported) {

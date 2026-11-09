@@ -48,6 +48,7 @@ fun ProxyScreen(onBack: () -> Unit) {
     // 整机代理：借已经配对的手机助手给系统设 HTTP 代理（不建 VPN，风险低）
     var systemProxy by remember { mutableStateOf<String?>(null) }
     var systemNote by remember { mutableStateOf("") }
+    var seedBusy by remember { mutableStateOf(false) }
 
     fun readSystemProxy() {
         scope.launch {
@@ -107,7 +108,7 @@ fun ProxyScreen(onBack: () -> Unit) {
     PageScaffold("网络代理", onBack) {
         GroupLabel("模式")
         GroupCard {
-            ListRow(VibeLinkIcons.Close, "关闭", "全部直连", first = true, onClick = { choose(ProxyStore.Mode.Off) }) {
+            ListRow(VibeLinkIcons.Close, "跟随系统 / Clash VPN", "不额外指定 HTTP 代理", first = true, onClick = { choose(ProxyStore.Mode.Off) }) {
                 if (mode == ProxyStore.Mode.Off) RowValue("当前")
             }
             ListRow(VibeLinkIcons.Globe, "自动", "问 hub 谁在做出口，用它的局域网地址", onClick = { choose(ProxyStore.Mode.Auto) }) {
@@ -180,6 +181,21 @@ fun ProxyScreen(onBack: () -> Unit) {
         }
 
         GroupLabel("Clash 完整界面（CMFA）")
+        if (!com.wangzan101.vibelink.BuildConfig.IS_BETA_EDITION) {
+            VibeLinkButton(
+                if (seedBusy) "正在准备内置配置…" else "恢复并选用开发版内置配置",
+                {
+                    if (!seedBusy) scope.launch {
+                        seedBusy = true
+                        systemNote = try {
+                            com.wangzan101.vibelink.clash.ClashSeed.prepare(ctx, restore = true)
+                        } catch (_: Exception) { "内置配置未能导入，请检查配置或内核状态后重试" }
+                        finally { seedBusy = false }
+                    }
+                },
+                Modifier.fillMaxWidth().padding(bottom = 8.dp),
+            )
+        }
         GroupCard {
             ListRow(
                 VibeLinkIcons.Shield,

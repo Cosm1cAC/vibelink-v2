@@ -46,6 +46,7 @@ object RemoteStore {
             .putString("host", session.label).remove("token").remove("beta_code").remove("beta_label").commit()) { "登录身份保存失败" }
         revision++
         this.hub(c)
+        com.wangzan101.vibelink.clash.ClashSeed.reseed(c)
     }
     @Synchronized fun clearSession(c: Context) {
         try {

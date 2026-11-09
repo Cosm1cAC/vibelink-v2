@@ -27,6 +27,9 @@
             name="hasProviders"
             type="boolean" />
 
+        <variable name="tailscaleAuthAvailable" type="boolean" />
+        <variable name="tailscaleCanProbe" type="boolean" />
+
         <import type="android.view.View" />
         <import type="com.github.kr328.clash.design.MainDesign.Request" />
     </data>
@@ -114,6 +117,31 @@
                     app:text="@{clashRunning ? @string/running : @string/stopped}">
                     <requestFocus />
                 </com.github.kr328.clash.design.view.LargeActionCard>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:visibility="@{tailscaleCanProbe || tailscaleAuthAvailable ? View.VISIBLE : View.GONE}">
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:padding="8dp"
+                        android:text="首次连接日本出口需授权 Tailscale。VPN 已启动不代表外网已连通。"
+                        android:textSize="13sp" />
+                    <Button
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="检测日本出口 / 获取授权"
+                        android:visibility="@{tailscaleCanProbe ? View.VISIBLE : View.GONE}"
+                        android:onClick="@{() -> self.request(Request.ProbeTailscale)}" />
+                    <Button
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="授权 Tailscale"
+                        android:visibility="@{tailscaleAuthAvailable ? View.VISIBLE : View.GONE}"
+                        android:onClick="@{() -> self.request(Request.AuthorizeTailscale)}" />
+                </LinearLayout>
 
                 <TextView
                     android:layout_width="match_parent"

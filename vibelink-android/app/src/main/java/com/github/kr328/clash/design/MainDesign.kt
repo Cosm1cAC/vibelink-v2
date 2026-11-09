@@ -24,6 +24,8 @@ class MainDesign(context: Context) : Design<MainDesign.Request>(context) {
         OpenSettings,
         OpenHelp,
         OpenAbout,
+        AuthorizeTailscale,
+        ProbeTailscale,
     }
 
     private val binding = DesignMainBinding
@@ -31,6 +33,13 @@ class MainDesign(context: Context) : Design<MainDesign.Request>(context) {
 
     override val root: View
         get() = binding.root
+
+    suspend fun setTailscaleState(available: Boolean, canProbe: Boolean) {
+        withContext(Dispatchers.Main) {
+            binding.tailscaleAuthAvailable = available
+            binding.tailscaleCanProbe = canProbe
+        }
+    }
 
     suspend fun setProfileName(name: String?) {
         withContext(Dispatchers.Main) {

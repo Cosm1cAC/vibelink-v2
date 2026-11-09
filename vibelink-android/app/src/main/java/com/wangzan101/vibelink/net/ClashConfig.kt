@@ -23,16 +23,32 @@ object ClashConfig {
     }
 
     fun write(context: Context): File {
+        check(!com.wangzan101.vibelink.BuildConfig.IS_BETA_EDITION) { "内测版不生成开发者代理配置" }
         val file = File(context.filesDir, "clash/config.yaml")
         file.parentFile?.mkdirs()
-        if (com.wangzan101.vibelink.BuildConfig.IS_BETA_EDITION) {
-            // 公网内测版：绝不生成任何开发者个人网关或代理配置
-            file.writeText("mixed-port: 7890\nallow-lan: false\nmode: direct\nrules:\n  - MATCH,DIRECT\n")
+        if (com.wangzan101.vibelink.BuildConfig.HAS_DEV_CLASH_SEED) {
+            // Seed geo databases before core validation, without needing a first
+            // GitHub download and without replacing user-updated databases.
+            for (name in listOf("Country.mmdb", "geoip.dat", "geosite.dat")) {
+                val target = file.parentFile!!.resolve(name)
+                if (!target.exists() && context.assets.list("private-clash/data")?.contains(name) == true) {
+                    val atomic = android.util.AtomicFile(target)
+                    val output = atomic.startWrite()
+                    try {
+                        context.assets.open("private-clash/data/$name").use { it.copyTo(output) }
+                        atomic.finishWrite(output)
+                    } catch (failure: Throwable) { atomic.failWrite(output); throw failure }
+                }
+            }
+            context.assets.open("private-clash/dev-seed.yaml").use { input ->
+                file.outputStream().use { output -> input.copyTo(output) }
+            }
             return file
         }
         val host = hubHost(context)
         // 没配对就没有 token：网关会拒绝，出口不可用，配对后 [ClashSeed.reseed] 重写配置
         val token = RemoteStore.token(context)
+        check(token.isNotBlank()) { "先登录开发版 Hub，或使用带内置配置的开发安装包" }
         file.writeText(
             """
             mixed-port: 7890
@@ -96,7 +112,7 @@ object ClashConfig {
                 server: $host
                 port: 18996
                 headers:
-                  X-Mesh-Token: $token
+                  X-Mesh-Token: ${org.json.JSONObject.quote(token)}
 
               # 出口：PC 再链到笔记本/本机 mihomo(7897) → 外网
               - name: pcexit
@@ -104,7 +120,7 @@ object ClashConfig {
                 server: $host
                 port: 18997
                 headers:
-                  X-Mesh-Token: $token
+                  X-Mesh-Token: ${org.json.JSONObject.quote(token)}
 
             proxy-groups:
               - name: PROXY

@@ -23,4 +23,5 @@ interface IClashManager {
     fun clearOverride(slot: Clash.OverrideSlot)
 
     fun setLogObserver(observer: ILogObserver?)
+    fun queryTailscaleAuthUrl(): String?
 }

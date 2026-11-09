@@ -49,3 +49,5 @@ keys/
 /vibelink/data/
 /mesh/data/
 /mesh-rs/data/
+/.private/
+**/private-clash/
