@@ -7,13 +7,24 @@ export default {
   cases: {
     default: { about: 'Fresh signed-out profile, invite form and explicit local history action' },
     setup: { about: 'Explicit first-phone setup and cancellation using a deferred fake local verification' },
+    legacy: { about: 'Old dev desktop_login QR is hidden; only the unified scan entry remains' },
     scanned: { about: 'Real QR rendering and waiting for phone confirmation' },
   },
   async ready(page) { await page.locator('h1').waitFor(); },
   async check(page, ui) {
+    if(ui.case==='scanned')await page.getByRole('combobox').selectOption('beta');
     await ui.capture('login');
-    const setup=page.getByTestId('vibelink-first-phone');
-    assert.equal(await setup.isVisible(),true);
+    const setup=page.getByTestId('vibelink-scan-login');
+    if(ui.case==='scanned'){
+      await page.getByAltText(await ui.t('vibelinkAuth.qrAlt')).waitFor();
+      assert.equal(await setup.count(),0);
+      assert.equal(await page.getByAltText(await ui.t('vibelinkAuth.qrAlt')).count(),1);
+      await ui.capture('beta-single-qr');
+    }else{
+      assert.equal(await setup.isVisible(),true);
+      assert.equal(await page.getByAltText(await ui.t('vibelinkAuth.qrAlt')).count(),0);
+      assert.equal(await page.getByTestId('vibelink-first-phone').count(),0);
+    }
     if(ui.case==='setup'){
       await setup.click();
       await page.getByTestId('vibelink-cancel-first-phone').waitFor();

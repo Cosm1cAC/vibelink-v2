@@ -37,7 +37,10 @@ function bridge(auth: ReturnType<typeof vi.fn>) {
     request: vi.fn(),
   };
 }
-afterEach(() => {cleanup();cancelFirstPhonePairing();});
+afterEach(() => {
+  cleanup();
+  cancelFirstPhonePairing();
+});
 vi.mock('@/components/title-bar/WindowControls', () => ({ WindowControls: () => null }));
 vi.mock('react-i18next', async () => {
   const resources = (await import('../../i18n/locales/zh-CN/common.json')).default;
@@ -58,7 +61,7 @@ it('only verifies the local workspace after the explicit first-phone click', asy
   render(<VibeLinkLoginPage bridge={bridge(auth)} />);
   await waitFor(() => expect(auth).toHaveBeenCalledTimes(1));
   expect(auth).not.toHaveBeenCalledWith({ action: 'useLocalWorkspace' });
-  fireEvent.click(screen.getByRole('button', { name: '首次连接手机' }));
+  fireEvent.click(screen.getByRole('button', { name: '扫码登录' }));
   await waitFor(() => expect(getFirstPhonePairing()?.phase).toBe('ready'));
   expect(auth.mock.calls.map((call) => call[0].action)).toEqual([
     'snapshot',
@@ -84,7 +87,7 @@ it.each(['failure', 'beta', 'switched'] as const)(
       .mockResolvedValue(authenticated({ ...owner, sessionId: 'changed' }));
     render(<VibeLinkLoginPage bridge={bridge(auth)} />);
     await waitFor(() => expect(auth).toHaveBeenCalledTimes(1));
-    fireEvent.click(screen.getByRole('button', { name: '首次连接手机' }));
+    fireEvent.click(screen.getByRole('button', { name: '扫码登录' }));
     await waitFor(() => expect(auth).toHaveBeenCalledWith({ action: 'useLocalWorkspace' }));
     await waitFor(() => expect(getFirstPhonePairing()).toBeNull());
   },
@@ -102,19 +105,21 @@ it('cancels an in-flight owner verification and ignores its late response', asyn
     );
   render(<VibeLinkLoginPage bridge={bridge(auth)} />);
   await waitFor(() => expect(auth).toHaveBeenCalledTimes(1));
-  fireEvent.click(screen.getByRole('button', { name: '首次连接手机' }));
-  fireEvent.click(await screen.findByRole('button', { name: '取消首次连接' }));
+  fireEvent.click(screen.getByRole('button', { name: '扫码登录' }));
+  fireEvent.click(await screen.findByRole('button', { name: '取消扫码登录' }));
   await waitFor(() => expect(auth).toHaveBeenCalledWith({ action: 'logout' }));
-  await act(async()=>finish(authenticated()));
+  await act(async () => finish(authenticated()));
   await waitFor(() => expect(getFirstPhonePairing()).toBeNull());
   expect(auth.mock.calls.filter((call) => call[0].action === 'snapshot')).toHaveLength(1);
 });
 it('hides the first-phone bootstrap in the beta connection mode', async () => {
   const auth = vi.fn().mockResolvedValue(signedOut);
   render(<VibeLinkLoginPage bridge={bridge(auth)} />);
-  await waitFor(()=>expect(auth).toHaveBeenCalledTimes(1));
-  await act(async()=>fireEvent.change(screen.getByRole('combobox'), { target: { value: 'beta' } }));
-  expect(screen.queryByRole('button', { name: '首次连接手机' })).toBeNull();
+  await waitFor(() => expect(auth).toHaveBeenCalledTimes(1));
+  await act(async () =>
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'beta' } }),
+  );
+  expect(screen.queryByRole('button', { name: '扫码登录' })).toBeNull();
   expect(auth).not.toHaveBeenCalledWith({ action: 'useLocalWorkspace' });
 });
 
@@ -133,7 +138,7 @@ it('offers local history explicitly and clears a submitted beta code', async () 
     request: vi.fn(),
   };
   render(<VibeLinkLoginPage bridge={bridge} />);
-  expect(screen.getByRole('button', { name: '使用本机工作区' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: '仅打开电脑工作区' })).toBeTruthy();
   fireEvent.change(screen.getByLabelText('内测码'), { target: { value: 'fake-invite' } });
   fireEvent.click(screen.getByRole('button', { name: '使用内测码登录' }));
   await waitFor(() =>
@@ -141,4 +146,43 @@ it('offers local history explicitly and clears a submitted beta code', async () 
   );
   await waitFor(() => expect((screen.getByLabelText('内测码') as HTMLInputElement).value).toBe(''));
   expect(screen.queryByText('登录 Cindy')).toBeNull();
+});
+
+it('hides old dev desktop-login QR and makes the sole scan action verify the local owner', async () => {
+  const legacy: HubAuthResult = {
+    success: true,
+    data: {
+      status: 'signed_out',
+      session: null,
+      qr: {
+        edition: 'dev',
+        link: 'vibelink://login?purpose=desktop_login&id=legacy',
+        verificationCode: '12 34',
+        expiresAt: Date.now() + 60000,
+        status: 'pending',
+      },
+    },
+  };
+  const auth = vi.fn().mockResolvedValueOnce(legacy).mockResolvedValue(authenticated());
+  render(<VibeLinkLoginPage bridge={bridge(auth)} />);
+  await waitFor(() => expect(auth).toHaveBeenCalledTimes(1));
+  expect(screen.queryAllByRole('img')).toHaveLength(0);
+  expect(screen.queryByText('12 34')).toBeNull();
+  expect(screen.getAllByRole('button', { name: '扫码登录' })).toHaveLength(1);
+  expect(screen.getByText('打开本机工作区，并显示手机登录二维码')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: '扫码登录' }));
+  await waitFor(() => expect(getFirstPhonePairing()?.phase).toBe('ready'));
+  expect(auth.mock.calls.some((call) => call[0].action === 'startQr')).toBe(false);
+});
+it('keeps beta desktop-login QR separate from any local-owner bootstrap', async () => {
+  const auth = vi.fn().mockResolvedValue(signedOut);
+  render(<VibeLinkLoginPage bridge={bridge(auth)} />);
+  await waitFor(() => expect(auth).toHaveBeenCalledTimes(1));
+  await act(async () =>
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'beta' } }),
+  );
+  fireEvent.click(screen.getByRole('button', { name: '生成登录二维码' }));
+  await waitFor(() => expect(auth).toHaveBeenCalledWith({ action: 'startQr', edition: 'beta' }));
+  expect(auth).not.toHaveBeenCalledWith({ action: 'useLocalWorkspace' });
+  expect(getFirstPhonePairing()).toBeNull();
 });

@@ -12,9 +12,9 @@ mountPage({
       enabled: true,
       auth: async (input:HubAuthInput) => {
         if(input.action==='useLocalWorkspace'&&ctx.case==='setup')return new Promise<never>(()=>{});
-        return { success: true, data: { status: 'signed_out', session: null, qr: ctx.case === 'scanned' ? {
+        return { success: true, data: { status: 'signed_out', session: null, qr: (ctx.case === 'scanned'||ctx.case==='legacy') ? {
           link: 'vibelink://login?purpose=desktop_login&id=fixture&s=fixture-only&u=https://fixture.invalid',
-          status: 'scanned', edition: 'beta', verificationCode: '48 92', expiresAt: 9999999999999,
+          status: 'scanned', edition: ctx.case==='legacy'?'dev':'beta', verificationCode: '48 92', expiresAt: 9999999999999,
         } : null } };
       },
       onAuthState: () => () => undefined,

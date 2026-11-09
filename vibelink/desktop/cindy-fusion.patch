@@ -1135,10 +1135,10 @@ index 8f777768..c3e32412 100644
        try {
          await exitLocalMode();
 diff --git a/apps/desktop/src/renderer/i18n/locales/de/common.json b/apps/desktop/src/renderer/i18n/locales/de/common.json
-index c258b6d1..2ab55a89 100644
+index c258b6d1..ca3e2139 100644
 --- a/apps/desktop/src/renderer/i18n/locales/de/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/de/common.json
-@@ -18951,5 +18951,128 @@
+@@ -18951,5 +18951,129 @@
      "rendered": "Dokument anzeigen",
      "wrap": "Zeilenumbruch",
      "lineNumbers": "Zeilennummern"
@@ -1179,9 +1179,10 @@ index c258b6d1..2ab55a89 100644
 +    "errorExpired": "Deine Sitzung ist abgelaufen. Melde dich erneut an.",
 +    "errorVault": "Sicherer Speicher nicht verfügbar. Entsperre dein System und versuche es erneut.",
 +    "errorLogin": "Die Anmeldung ist nicht abgeschlossen. Versuche es erneut.",
-+    "firstPhone": "Telefon erstmals verbinden",
-+    "firstPhoneHint": "Telefon noch nicht angemeldet? Bestätige den lokalen Arbeitsbereich dieses Computers und scanne dann den Kopplungscode.",
-+    "cancelFirstPhone": "Einrichtung abbrechen"
++    "cancelFirstPhone": "QR-Anmeldung abbrechen",
++    "scanLogin": "Mit QR anmelden",
++    "devScanHint": "Lokalen Arbeitsbereich öffnen und den QR-Code zur Telefonanmeldung anzeigen",
++    "localOnly": "Nur Computer-Arbeitsbereich öffnen"
 +  },
 +  "vibelinkWork": {
 +    "title": "Hub-Arbeitsbereich",
@@ -1268,10 +1269,10 @@ index c258b6d1..2ab55a89 100644
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/en/common.json b/apps/desktop/src/renderer/i18n/locales/en/common.json
-index bc45dcdd..90fc5473 100644
+index bc45dcdd..297201f6 100644
 --- a/apps/desktop/src/renderer/i18n/locales/en/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/en/common.json
-@@ -18951,5 +18951,128 @@
+@@ -18951,5 +18951,129 @@
      "rendered": "View document",
      "wrap": "Wrap lines",
      "lineNumbers": "Line numbers"
@@ -1312,9 +1313,10 @@ index bc45dcdd..90fc5473 100644
 +    "errorExpired": "Your session expired. Sign in again.",
 +    "errorVault": "Secure storage is unavailable. Unlock your system and try again.",
 +    "errorLogin": "Sign-in is not complete. Try again.",
-+    "firstPhone": "Connect your first phone",
-+    "firstPhoneHint": "Phone not signed in? Verify this computer’s local workspace, then scan its pairing code on your phone.",
-+    "cancelFirstPhone": "Cancel phone setup"
++    "cancelFirstPhone": "Cancel QR sign-in",
++    "scanLogin": "Sign in with QR",
++    "devScanHint": "Open this computer’s workspace and show the phone sign-in QR code",
++    "localOnly": "Open computer workspace only"
 +  },
 +  "vibelinkWork": {
 +    "title": "Hub workspace",
@@ -1401,10 +1403,10 @@ index bc45dcdd..90fc5473 100644
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/es/common.json b/apps/desktop/src/renderer/i18n/locales/es/common.json
-index d4d5c25a..29d0ec71 100644
+index d4d5c25a..3e0471e2 100644
 --- a/apps/desktop/src/renderer/i18n/locales/es/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/es/common.json
-@@ -19122,5 +19122,128 @@
+@@ -19122,5 +19122,129 @@
      "rendered": "Ver documento",
      "wrap": "Ajustar líneas",
      "lineNumbers": "Números de línea"
@@ -1445,9 +1447,10 @@ index d4d5c25a..29d0ec71 100644
 +    "errorExpired": "Tu sesión ha caducado. Inicia sesión de nuevo.",
 +    "errorVault": "El almacenamiento seguro no está disponible. Desbloquea el sistema y vuelve a intentarlo.",
 +    "errorLogin": "No se ha completado el inicio de sesión. Inténtalo de nuevo.",
-+    "firstPhone": "Conectar el primer teléfono",
-+    "firstPhoneHint": "¿El teléfono no ha iniciado sesión? Verifica el espacio local de este equipo y escanea su código de vinculación.",
-+    "cancelFirstPhone": "Cancelar configuración"
++    "cancelFirstPhone": "Cancelar acceso QR",
++    "scanLogin": "Acceder con QR",
++    "devScanHint": "Abre el espacio local y muestra el QR para iniciar sesión en el móvil",
++    "localOnly": "Abrir solo el espacio del ordenador"
 +  },
 +  "vibelinkWork": {
 +    "title": "Espacio Hub",
@@ -1534,10 +1537,10 @@ index d4d5c25a..29d0ec71 100644
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/fr/common.json b/apps/desktop/src/renderer/i18n/locales/fr/common.json
-index 67f0538c..2798fca3 100644
+index 67f0538c..f0735887 100644
 --- a/apps/desktop/src/renderer/i18n/locales/fr/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/fr/common.json
-@@ -19122,5 +19122,128 @@
+@@ -19122,5 +19122,129 @@
      "rendered": "Afficher le document",
      "wrap": "Retour à la ligne",
      "lineNumbers": "Numéros de ligne"
@@ -1578,9 +1581,10 @@ index 67f0538c..2798fca3 100644
 +    "errorExpired": "Votre session a expiré. Reconnectez-vous.",
 +    "errorVault": "Stockage sécurisé indisponible. Déverrouillez votre système et réessayez.",
 +    "errorLogin": "La connexion n’est pas terminée. Réessayez.",
-+    "firstPhone": "Connecter le premier téléphone",
-+    "firstPhoneHint": "Téléphone non connecté ? Validez cet espace local, puis scannez le code de jumelage avec le téléphone.",
-+    "cancelFirstPhone": "Annuler la connexion"
++    "cancelFirstPhone": "Annuler la connexion QR",
++    "scanLogin": "Connexion par QR",
++    "devScanHint": "Ouvrir l’espace local et afficher le QR de connexion du téléphone",
++    "localOnly": "Ouvrir uniquement l’espace de cet ordinateur"
 +  },
 +  "vibelinkWork": {
 +    "title": "Espace Hub",
@@ -1667,10 +1671,10 @@ index 67f0538c..2798fca3 100644
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/ja/common.json b/apps/desktop/src/renderer/i18n/locales/ja/common.json
-index e3383953..44383409 100644
+index e3383953..db6090e1 100644
 --- a/apps/desktop/src/renderer/i18n/locales/ja/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/ja/common.json
-@@ -18879,5 +18879,128 @@
+@@ -18879,5 +18879,129 @@
      "rendered": "文書を表示",
      "wrap": "行の折り返し",
      "lineNumbers": "行番号"
@@ -1711,9 +1715,10 @@ index e3383953..44383409 100644
 +    "errorExpired": "ログインの有効期限が切れました。再度ログインしてください。",
 +    "errorVault": "安全なストレージを利用できません。システムのロックを解除して再試行してください。",
 +    "errorLogin": "ログインが完了していません。再試行してください。",
-+    "firstPhone": "初めてスマートフォンを接続",
-+    "firstPhoneHint": "スマートフォンが未ログインの場合、このPCのローカルワークスペースを確認してからペアリングコードを読み取ります。",
-+    "cancelFirstPhone": "接続をキャンセル"
++    "cancelFirstPhone": "QRログインをキャンセル",
++    "scanLogin": "QRコードでログイン",
++    "devScanHint": "このPCのワークスペースを開き、スマートフォン用ログインQRコードを表示します",
++    "localOnly": "PCのワークスペースのみ開く"
 +  },
 +  "vibelinkWork": {
 +    "title": "Hub ワークスペース",
@@ -1800,10 +1805,10 @@ index e3383953..44383409 100644
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/ko/common.json b/apps/desktop/src/renderer/i18n/locales/ko/common.json
-index 30577f6d..b53ddaf6 100644
+index 30577f6d..42f205c2 100644
 --- a/apps/desktop/src/renderer/i18n/locales/ko/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/ko/common.json
-@@ -18879,5 +18879,128 @@
+@@ -18879,5 +18879,129 @@
      "rendered": "문서 보기",
      "wrap": "자동 줄 바꿈",
      "lineNumbers": "줄 번호"
@@ -1844,9 +1849,10 @@ index 30577f6d..b53ddaf6 100644
 +    "errorExpired": "로그인이 만료되었습니다. 다시 로그인하세요.",
 +    "errorVault": "보안 저장소를 사용할 수 없습니다. 시스템 잠금을 해제한 후 다시 시도하세요.",
 +    "errorLogin": "로그인이 완료되지 않았습니다. 다시 시도하세요.",
-+    "firstPhone": "첫 휴대폰 연결",
-+    "firstPhoneHint": "휴대폰에 로그인하지 않았나요? 이 PC의 로컬 작업 공간을 확인한 다음 휴대폰으로 페어링 코드를 스캔하세요.",
-+    "cancelFirstPhone": "연결 취소"
++    "cancelFirstPhone": "QR 로그인 취소",
++    "scanLogin": "QR로 로그인",
++    "devScanHint": "이 컴퓨터의 작업 공간을 열고 휴대폰 로그인 QR 코드를 표시합니다",
++    "localOnly": "컴퓨터 작업 공간만 열기"
 +  },
 +  "vibelinkWork": {
 +    "title": "Hub 작업 공간",
@@ -1933,10 +1939,10 @@ index 30577f6d..b53ddaf6 100644
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/pt-BR/common.json b/apps/desktop/src/renderer/i18n/locales/pt-BR/common.json
-index 7b546ee2..24c5af7d 100644
+index 7b546ee2..1984d821 100644
 --- a/apps/desktop/src/renderer/i18n/locales/pt-BR/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/pt-BR/common.json
-@@ -19122,5 +19122,128 @@
+@@ -19122,5 +19122,129 @@
      "rendered": "Ver documento",
      "wrap": "Quebra de linha",
      "lineNumbers": "Números de linha"
@@ -1977,9 +1983,10 @@ index 7b546ee2..24c5af7d 100644
 +    "errorExpired": "Sua sessão expirou. Entre novamente.",
 +    "errorVault": "Armazenamento seguro indisponível. Desbloqueie o sistema e tente novamente.",
 +    "errorLogin": "A entrada não foi concluída. Tente novamente.",
-+    "firstPhone": "Conectar o primeiro celular",
-+    "firstPhoneHint": "O celular não está conectado? Verifique o espaço local deste computador e escaneie o código de pareamento.",
-+    "cancelFirstPhone": "Cancelar configuração"
++    "cancelFirstPhone": "Cancelar login QR",
++    "scanLogin": "Entrar com QR",
++    "devScanHint": "Abra o espaço local e exiba o QR para entrar no celular",
++    "localOnly": "Abrir apenas o espaço do computador"
 +  },
 +  "vibelinkWork": {
 +    "title": "Espaço Hub",
@@ -2066,10 +2073,10 @@ index 7b546ee2..24c5af7d 100644
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/pt-PT/common.json b/apps/desktop/src/renderer/i18n/locales/pt-PT/common.json
-index bae75933..844a380b 100644
+index bae75933..a5685fda 100644
 --- a/apps/desktop/src/renderer/i18n/locales/pt-PT/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/pt-PT/common.json
-@@ -19122,5 +19122,128 @@
+@@ -19122,5 +19122,129 @@
      "rendered": "Ver documento",
      "wrap": "Moldar linhas",
      "lineNumbers": "Números de linha"
@@ -2110,9 +2117,10 @@ index bae75933..844a380b 100644
 +    "errorExpired": "A sessão expirou. Inicie sessão novamente.",
 +    "errorVault": "Armazenamento seguro indisponível. Desbloqueie o sistema e tente novamente.",
 +    "errorLogin": "A entrada não foi concluída. Tente novamente.",
-+    "firstPhone": "Ligar o primeiro telemóvel",
-+    "firstPhoneHint": "O telemóvel ainda não iniciou sessão? Valide o espaço local deste computador e leia o código de emparelhamento.",
-+    "cancelFirstPhone": "Cancelar configuração"
++    "cancelFirstPhone": "Cancelar início de sessão QR",
++    "scanLogin": "Entrar com QR",
++    "devScanHint": "Abrir o espaço local e mostrar o QR para iniciar sessão no telemóvel",
++    "localOnly": "Abrir apenas o espaço do computador"
 +  },
 +  "vibelinkWork": {
 +    "title": "Espaço Hub",
@@ -2199,10 +2207,10 @@ index bae75933..844a380b 100644
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/zh-CN/common.json b/apps/desktop/src/renderer/i18n/locales/zh-CN/common.json
-index dcd22815..301312b7 100644
+index dcd22815..19996e51 100644
 --- a/apps/desktop/src/renderer/i18n/locales/zh-CN/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/zh-CN/common.json
-@@ -18879,5 +18879,128 @@
+@@ -18879,5 +18879,129 @@
      "rendered": "查看文稿",
      "wrap": "自动换行",
      "lineNumbers": "行号"
@@ -2243,9 +2251,10 @@ index dcd22815..301312b7 100644
 +    "errorExpired": "登录已过期，请重新登录。",
 +    "errorVault": "无法使用本机安全存储，请解锁系统后重试。",
 +    "errorLogin": "登录暂时未完成，请重试。",
-+    "firstPhone": "首次连接手机",
-+    "firstPhoneHint": "手机还没登录？先验证这台电脑的本机工作区，再用手机扫描配对码。",
-+    "cancelFirstPhone": "取消首次连接"
++    "cancelFirstPhone": "取消扫码登录",
++    "scanLogin": "扫码登录",
++    "devScanHint": "打开本机工作区，并显示手机登录二维码",
++    "localOnly": "仅打开电脑工作区"
 +  },
 +  "vibelinkWork": {
 +    "title": "Hub 工作区",
@@ -2332,10 +2341,10 @@ index dcd22815..301312b7 100644
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/zh-Hans-x-lzh/common.json b/apps/desktop/src/renderer/i18n/locales/zh-Hans-x-lzh/common.json
-index 56395a07..e228addc 100644
+index 56395a07..4109a2bb 100644
 --- a/apps/desktop/src/renderer/i18n/locales/zh-Hans-x-lzh/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/zh-Hans-x-lzh/common.json
-@@ -18879,5 +18879,128 @@
+@@ -18879,5 +18879,129 @@
      "rendered": "观文",
      "wrap": "折行",
      "lineNumbers": "行数"
@@ -2376,9 +2385,10 @@ index 56395a07..e228addc 100644
 +    "errorExpired": "登录已过期，请重新登录。",
 +    "errorVault": "无法使用本机安全存储，请解锁系统后重试。",
 +    "errorLogin": "登录暂时未完成，请重试。",
-+    "firstPhone": "初连手机",
-+    "firstPhoneHint": "手机未登者，先验本机工作区，再扫配对码。",
-+    "cancelFirstPhone": "取消初连"
++    "cancelFirstPhone": "撤销扫码登录",
++    "scanLogin": "扫码登录",
++    "devScanHint": "启本机工作区，示手机登录码",
++    "localOnly": "仅启电脑工作区"
 +  },
 +  "vibelinkWork": {
 +    "title": "Hub 工作区",
@@ -2465,10 +2475,10 @@ index 56395a07..e228addc 100644
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/zh-Hant-x-lzh/common.json b/apps/desktop/src/renderer/i18n/locales/zh-Hant-x-lzh/common.json
-index f35e1826..324b2148 100644
+index f35e1826..74681c09 100644
 --- a/apps/desktop/src/renderer/i18n/locales/zh-Hant-x-lzh/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/zh-Hant-x-lzh/common.json
-@@ -18879,5 +18879,128 @@
+@@ -18879,5 +18879,129 @@
      "rendered": "觀文",
      "wrap": "折行",
      "lineNumbers": "行數"
@@ -2509,9 +2519,10 @@ index f35e1826..324b2148 100644
 +    "errorExpired": "登入已過期，請重新登入。",
 +    "errorVault": "無法使用本機安全儲存，請解鎖系統後重試。",
 +    "errorLogin": "登入尚未完成，請重試。",
-+    "firstPhone": "初連手機",
-+    "firstPhoneHint": "手機未登者，先驗本機工作區，再掃配對碼。",
-+    "cancelFirstPhone": "取消初連"
++    "cancelFirstPhone": "撤銷掃碼登入",
++    "scanLogin": "掃碼登入",
++    "devScanHint": "啟本機工作區，示手機登入碼",
++    "localOnly": "僅啟電腦工作區"
 +  },
 +  "vibelinkWork": {
 +    "title": "Hub 工作區",
@@ -2598,10 +2609,10 @@ index f35e1826..324b2148 100644
    }
  }
 diff --git a/apps/desktop/src/renderer/i18n/locales/zh-TW/common.json b/apps/desktop/src/renderer/i18n/locales/zh-TW/common.json
-index 7075672e..17faa301 100644
+index 7075672e..dc914eac 100644
 --- a/apps/desktop/src/renderer/i18n/locales/zh-TW/common.json
 +++ b/apps/desktop/src/renderer/i18n/locales/zh-TW/common.json
-@@ -18879,5 +18879,128 @@
+@@ -18879,5 +18879,129 @@
      "rendered": "查看文件",
      "wrap": "自動換行",
      "lineNumbers": "行號"
@@ -2642,9 +2653,10 @@ index 7075672e..17faa301 100644
 +    "errorExpired": "登入已過期，請重新登入。",
 +    "errorVault": "無法使用本機安全儲存，請解鎖系統後重試。",
 +    "errorLogin": "登入尚未完成，請重試。",
-+    "firstPhone": "首次連接手機",
-+    "firstPhoneHint": "手機尚未登入？先驗證這台電腦的本機工作區，再用手機掃描配對碼。",
-+    "cancelFirstPhone": "取消首次連接"
++    "cancelFirstPhone": "取消掃碼登入",
++    "scanLogin": "掃碼登入",
++    "devScanHint": "開啟本機工作區，並顯示手機登入 QR 碼",
++    "localOnly": "僅開啟電腦工作區"
 +  },
 +  "vibelinkWork": {
 +    "title": "Hub 工作區",

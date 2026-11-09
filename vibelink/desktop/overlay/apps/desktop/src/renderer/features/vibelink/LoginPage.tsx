@@ -27,6 +27,7 @@ export function VibeLinkLoginPage({ bridge }: { bridge?: VibeLinkDesktopBridge }
   const [firstPhonePending, setFirstPhonePending] = useState(false);
   const firstPhoneEpoch = useRef(0);
   const currentBridge = bridge ?? window.electronAPI?.vibelink;
+  const qr = edition === 'beta' && snapshot.qr?.edition === 'beta' ? snapshot.qr : null;
   const otherAction = (input: Parameters<typeof execute>[0]) => {
     firstPhoneEpoch.current++;
     cancelFirstPhonePairing();
@@ -77,8 +78,8 @@ export function VibeLinkLoginPage({ bridge }: { bridge?: VibeLinkDesktopBridge }
   useEffect(() => {
     let disposed = false;
     setQrImage(null);
-    if (snapshot.qr?.link) {
-      void QRCode.toDataURL(snapshot.qr.link, { margin: 2, width: 256, errorCorrectionLevel: 'M' })
+    if (qr?.link) {
+      void QRCode.toDataURL(qr.link, { margin: 2, width: 256, errorCorrectionLevel: 'M' })
         .then((image) => {
           if (!disposed) setQrImage(image);
         })
@@ -87,8 +88,7 @@ export function VibeLinkLoginPage({ bridge }: { bridge?: VibeLinkDesktopBridge }
     return () => {
       disposed = true;
     };
-  }, [snapshot.qr?.link]);
-  const qr = snapshot.qr;
+  }, [qr?.link]);
   const statusText =
     qr?.status === 'scanned'
       ? t('vibelinkAuth.scanned')
@@ -131,11 +131,11 @@ export function VibeLinkLoginPage({ bridge }: { bridge?: VibeLinkDesktopBridge }
         </p>
         <div className="mt-9 grid gap-8 md:grid-cols-[1fr_1fr] md:gap-12">
           <section
-            aria-label={t('vibelinkAuth.qrTitle')}
+            aria-label={t('vibelinkAuth.scanLogin')}
             className="rounded-2xl border border-[var(--border-default)] bg-[var(--surface-elevated)] p-6"
           >
             <div className="mb-5 flex items-center justify-between gap-3">
-              <h2 className="text-16 font-medium">{t('vibelinkAuth.qrTitle')}</h2>
+              <h2 className="text-16 font-medium">{t('vibelinkAuth.scanLogin')}</h2>
               <label className="flex items-center gap-2 text-12 text-[var(--text-secondary)]">
                 {t('vibelinkAuth.connection')}
                 <select
@@ -153,48 +153,83 @@ export function VibeLinkLoginPage({ bridge }: { bridge?: VibeLinkDesktopBridge }
                 </select>
               </label>
             </div>
-            <div className="flex min-h-[238px] flex-col items-center justify-center gap-4">
-              {qrImage && qr && qr.status !== 'expired' && qr.status !== 'denied' ? (
-                <img
-                  src={qrImage}
-                  alt={t('vibelinkAuth.qrAlt')}
-                  width={208}
-                  height={208}
-                  className="rounded-lg"
+            {edition === 'dev' ? (
+              <div className="flex min-h-[238px] flex-col items-center justify-center gap-5 px-3 text-center">
+                <Smartphone
+                  size={56}
+                  strokeWidth={1.25}
+                  aria-hidden="true"
+                  className="text-[var(--text-secondary)]"
                 />
-              ) : (
-                <div className="flex h-[188px] w-[188px] items-center justify-center rounded-xl border border-dashed border-[var(--border-default)] text-[var(--text-tertiary)]">
-                  <Smartphone size={48} strokeWidth={1.25} aria-hidden="true" />
+                <p className="text-14 leading-relaxed text-[var(--text-secondary)]">
+                  {t('vibelinkAuth.devScanHint')}
+                </p>
+              </div>
+            ) : (
+              <>
+                <div className="flex min-h-[238px] flex-col items-center justify-center gap-4">
+                  {qrImage && qr && qr.status !== 'expired' && qr.status !== 'denied' ? (
+                    <img
+                      src={qrImage}
+                      alt={t('vibelinkAuth.qrAlt')}
+                      width={208}
+                      height={208}
+                      className="rounded-lg"
+                    />
+                  ) : (
+                    <div className="flex h-[188px] w-[188px] items-center justify-center rounded-xl border border-dashed border-[var(--border-default)] text-[var(--text-tertiary)]">
+                      <Smartphone size={48} strokeWidth={1.25} aria-hidden="true" />
+                    </div>
+                  )}
+                  {qr && (
+                    <div className="text-13 text-[var(--text-secondary)]">
+                      {t('vibelinkAuth.verificationCode')}{' '}
+                      <strong className="ml-2 font-mono text-16 tracking-[0.18em] text-[var(--text-primary)]">
+                        {qr.verificationCode}
+                      </strong>
+                    </div>
+                  )}
                 </div>
-              )}
-              {qr && (
-                <div className="text-13 text-[var(--text-secondary)]">
-                  {t('vibelinkAuth.verificationCode')}{' '}
-                  <strong className="ml-2 font-mono text-16 tracking-[0.18em] text-[var(--text-primary)]">
-                    {qr.verificationCode}
-                  </strong>
-                </div>
-              )}
-            </div>
-            <p
-              role="status"
-              className="mt-4 min-h-5 text-center text-12 text-[var(--text-secondary)]"
-            >
-              {statusText}
-            </p>
+                <p
+                  role="status"
+                  className="mt-4 min-h-5 text-center text-12 text-[var(--text-secondary)]"
+                >
+                  {statusText}
+                </p>
+              </>
+            )}
             <Button
               className="mt-5 w-full gap-2"
               variant="secondary"
-              loading={busy}
-              onClick={() => void otherAction({ action: 'startQr', edition })}
+              data-testid={edition === 'dev' ? 'vibelink-scan-login' : 'vibelink-beta-scan-login'}
+              disabled={busy || firstPhonePending}
+              onClick={() =>
+                edition === 'dev'
+                  ? void connectFirstPhone()
+                  : void otherAction({ action: 'startQr', edition: 'beta' })
+              }
             >
-              {qr ? (
+              {edition === 'beta' && qr ? (
                 <RefreshCw size={14} aria-hidden="true" />
               ) : (
                 <Smartphone size={14} aria-hidden="true" />
               )}
-              {qr ? t('vibelinkAuth.refreshQr') : t('vibelinkAuth.createQr')}
+              {edition === 'dev'
+                ? t('vibelinkAuth.scanLogin')
+                : qr
+                  ? t('vibelinkAuth.refreshQr')
+                  : t('vibelinkAuth.createQr')}
             </Button>
+            {firstPhonePending && (
+              <Button
+                variant="secondary"
+                className="mt-3 w-full"
+                data-testid="vibelink-cancel-first-phone"
+                onClick={() => void otherAction({ action: 'logout' })}
+              >
+                {t('vibelinkAuth.cancelFirstPhone')}
+              </Button>
+            )}
           </section>
           <div className="flex flex-col justify-center">
             <form
@@ -242,38 +277,11 @@ export function VibeLinkLoginPage({ bridge }: { bridge?: VibeLinkDesktopBridge }
                 onClick={() => void otherAction({ action: 'useLocalWorkspace' })}
               >
                 <Laptop size={15} aria-hidden="true" />
-                {t('vibelinkAuth.localLogin')}
+                {t('vibelinkAuth.localOnly')}
               </Button>
               <p className="mt-2.5 text-center text-12 leading-relaxed text-[var(--text-tertiary)]">
                 {t('vibelinkAuth.localHint')}
               </p>
-              {edition === 'dev' && (
-                <div className="mt-5 rounded-xl border border-[var(--border-default)] p-4">
-                  <Button
-                    variant="secondary"
-                    className="w-full gap-2"
-                    data-testid="vibelink-first-phone"
-                    disabled={busy || firstPhonePending}
-                    onClick={() => void connectFirstPhone()}
-                  >
-                    <Smartphone size={15} aria-hidden="true" />
-                    {t('vibelinkAuth.firstPhone')}
-                  </Button>
-                  <p className="mt-2 text-12 leading-relaxed text-[var(--text-secondary)]">
-                    {t('vibelinkAuth.firstPhoneHint')}
-                  </p>
-                  {firstPhonePending && (
-                    <Button
-                      variant="secondary"
-                      className="mt-2"
-                      data-testid="vibelink-cancel-first-phone"
-                      onClick={() => void otherAction({ action: 'logout' })}
-                    >
-                      {t('vibelinkAuth.cancelFirstPhone')}
-                    </Button>
-                  )}
-                </div>
-              )}
             </div>
           </div>
         </div>
