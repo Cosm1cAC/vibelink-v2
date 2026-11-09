@@ -14,7 +14,7 @@
 
 ## 配置与授权
 
-当前私人开发配置沿用现有日本出口：手机内核的 Tailscale 出站连接 Mac SOCKS5。默认保留国内直连；日本 SOCKS5 的 TCP 出口经过只读连接验证。未验证的旧一次性 auth-key 不随新安装复用。
+当前私人开发配置恢复既有日本 HY2 出口：手机内核的 Hysteria2 出站连接 Mac 的既有认证服务，Tailscale 仅作为到私有服务地址的 UDP 传输层，使用同一个内核，不需要另开一个手机 VPN。代理组仅提供 Japan-MacMini-HY2，国内直连规则保留；不再把 SOCKS5 节点作为日本主出口，也不再保留旧 SOCKS5 不支持 UDP 而添加的 UDP/443 拒绝规则。未验证的旧一次性 auth-key 不随新安装复用。
 
 首次开启 VPN 由 Android 请求系统授权；首次进入 Tailnet 通过 Tailscale 官方网页授权，不要求手工填写 key。Tailscale 状态放在应用私有 core home 的稳定目录，配置 UUID 或应用版本变化不会更换该目录。授权链接只保存在服务内存中，界面显式点击才打开官方 HTTPS 地址，不携带 Hub 凭据。
 
@@ -41,3 +41,10 @@
 - 20 项配置策略、授权链接、更新通道及版别聚焦测试通过。内测构建在传入不存在的私人配置路径时仍成功，实际 APK 的私人资产数量为 0。
 - 开发版已只发布到内网开发目录；公网两种 edition 查询此开发 APK 均为 404。公网内测通道保持 1.6.2-beta，本次内测 APK 仅用于隔离验证。
 - 本机 mihomo 配置校验通过，现有日本 SOCKS5 出口 HTTPS 返回 200。没有消费旧 auth-key 或注册测试节点。手机未连接 ADB，真实手机的系统 VPN 授权与首次 Tailscale 登录尚需用户完成，不把服务端连通性测试等同于手机验收。
+
+## 1.6.6 链路修复验证
+
+- 两个 ABI 的现有内核均包含 Tailscale、tsnet 与 Hysteria2。服务启动前建立进程级日志捕获；同一 profile 的加载完成不再清除只打印一次的授权 URL，浏览器往返不会因 UI 解绑而停收授权信息。授权过期或曾经丢失时，可显式重新连接同一配置，保留认证状态目录并重新获取链接。
+- 托管配置启用后自动做有间隔的 HTTPS 检测，只有本应用拥有的 VPN 真正启用才检测和重连；显示的是 YouTube HTTPS 可访问结果，不把 VPN 开关或响应成功当作地理位置证明。
+- 相同 HY2 认证与节点设置已通过临时隔离测试：Mac Mihomo 到既有 HY2 再到 YouTube 返回 200；Windows Mihomo 通过仅本次测试使用的 localhost UDP 转发及现有 Tailnet，YouTube 连续两次 200，Google 204。临时进程已退出，没有修改 PC 系统代理、原服务或监听范围。
+- Windows Mihomo 直接通过宿主 OS 的 Tailnet UDP 接口出现超时；这与手机使用的 tsnet 用户态 PacketConn 路径不同。手机真实授权及 VPN 流量尚需实机验证，不能把宿主测试等同于手机验收。
