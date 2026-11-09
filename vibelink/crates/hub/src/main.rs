@@ -2324,9 +2324,28 @@ async fn usage_users(State(app):State<Shared>, Query(q):Query<HashMap<String,Str
 }
 async fn usage_requests(State(app):State<Shared>) -> Json<Value> {Json(app.usage.recent())}
 async fn usage_limits(State(app):State<Shared>, Json(body):Json<Value>) -> Response {
-    let result=serde_json::from_value::<model_usage::Limits>(body["limits"].clone()).map_err(|e|e.to_string())
-        .and_then(|limits|app.usage.set_limits(body["userId"].as_str().unwrap_or(""),limits));
-    match result {Ok(())=>Json(json!({"ok":true})).into_response(),Err(e)=>(StatusCode::BAD_REQUEST,Json(json!({"error":e}))).into_response()}
+    let expected = match body.get("expectedRevision") {
+        None => None,
+        Some(value) => match value.as_u64() {
+            Some(revision) => Some(revision),
+            None => return (StatusCode::BAD_REQUEST, Json(json!({"error":"expectedRevision must be an unsigned integer"}))).into_response(),
+        },
+    };
+    let limits = match serde_json::from_value::<model_usage::Limits>(body["limits"].clone()) {
+        Ok(limits) => limits,
+        Err(_) => return (StatusCode::BAD_REQUEST, Json(json!({"error":"Invalid limits"}))).into_response(),
+    };
+    match app.usage.set_limits_if_revision(body["userId"].as_str().unwrap_or(""), limits, expected) {
+        Ok(revision) => Json(json!({"ok":true,"limitsRevision":revision})).into_response(),
+        Err(model_usage::LimitsError::Conflict { current }) =>
+            (StatusCode::CONFLICT, Json(json!({"error":"Limits changed; refresh before saving","limitsRevision":current}))).into_response(),
+        Err(model_usage::LimitsError::RevisionExhausted) =>
+            (StatusCode::CONFLICT, Json(json!({"error":"Limits revision exhausted"}))).into_response(),
+        Err(model_usage::LimitsError::Invalid) =>
+            (StatusCode::BAD_REQUEST, Json(json!({"error":"Invalid limits"}))).into_response(),
+        Err(model_usage::LimitsError::Persistence(_)) =>
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error":"Unable to save limits"}))).into_response(),
+    }
 }
 
 #[tokio::main]
@@ -2590,3 +2609,45 @@ async fn cli(admin: &str) -> bool {
 
 #[cfg(test)]
 mod runtime_tests;
+
+#[cfg(test)]
+mod limits_api_tests {
+    use super::*;
+    use axum::http::Method;
+    use crate::runtime_tests::{fixture, request};
+    #[tokio::test]
+    async fn limits_http_cas_is_admin_only_validated_and_visible_in_tenant_summary() {
+        let (dir, app, admin) = fixture();
+        let limits = json!({"dailyRequests":300,"dailyTokens":1000,"dailyInputBytes":12000000,"concurrentRequests":2,"requestsPerMinute":30});
+        let payload = json!({"userId":"beta_01","limits":limits,"expectedRevision":0});
+        let (status, _) = request(app.clone(), "", Method::POST, "/api/usage/limits", payload.clone()).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        let (_, client) = app.auth.issue("ordinary", auth::Scope::Client);
+        let (status, _) = request(app.clone(), &client, Method::POST, "/api/usage/limits", payload.clone()).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        let (status, saved) = request(app.clone(), &admin, Method::POST, "/api/usage/limits", payload.clone()).await;
+        assert_eq!(status, StatusCode::OK); assert_eq!(saved["limitsRevision"], 1);
+        let (status, stale) = request(app.clone(), &admin, Method::POST, "/api/usage/limits", payload).await;
+        assert_eq!(status, StatusCode::CONFLICT); assert_eq!(stale["limitsRevision"], 1);
+        for invalid in [json!(null),json!(-1),json!(0.5),json!("1"),json!(true),json!(1e40)] {
+            let (status, _) = request(app.clone(), &admin, Method::POST, "/api/usage/limits", json!({"userId":"beta_01","limits":limits,"expectedRevision":invalid})).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST);
+        }
+        let (status, summary) = request(app.clone(), &admin, Method::GET, "/api/beta/tenants", Value::Null).await;
+        assert_eq!(status, StatusCode::OK);
+        let row = summary["tenants"].as_array().unwrap().iter().find(|row| row["tenantId"] == "beta_01").unwrap();
+        assert_eq!(row["limitsRevision"], 1); assert_eq!(row["limits"]["dailyTokens"], 1000);
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[tokio::test]
+    async fn limits_http_persistence_failure_is_not_reported_as_success() {
+        let (dir, app, admin) = fixture();
+        fs::create_dir(dir.join("model_usage.json.tmp")).unwrap();
+        let (status, _) = request(app.clone(), &admin, Method::POST, "/api/usage/limits", json!({"userId":"beta_01","limits":{"dailyRequests":1,"dailyTokens":1,"dailyInputBytes":1,"concurrentRequests":1,"requestsPerMinute":1},"expectedRevision":0})).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        let identity = model_usage::Identity {user_id:"beta_01".into(),label:"Beta".into(),beta:true};
+        let view = app.usage.summary(&identity, &model_usage::day_at(now_ms()));
+        assert_eq!(view["limitsRevision"], 0); assert_eq!(view["dailyLimitTokens"], 1_500_000);
+        fs::remove_dir_all(dir).unwrap();
+    }
+}
