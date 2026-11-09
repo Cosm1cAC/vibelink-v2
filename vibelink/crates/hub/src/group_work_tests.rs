@@ -1032,3 +1032,24 @@ async fn failed_executor_turn_is_not_completion_evidence_and_old_turn_errors_are
         task.abort();let _=task.await;std::fs::remove_dir_all(dir).unwrap();
     }
 }
+
+#[test]
+fn observation_revision_is_monotonic_independent_of_review_cycle_and_durable() {
+    let (dir,app,members)=fixture();
+    let w=app.work.submit("g",&json!({"requestId":"obs-1","text":"Observe me"}),owner("one"),members).unwrap();
+    assert_eq!(app.work.get(&w.id).unwrap().observation_revision,1);
+    app.work.update(&w.id,|w|{w.status="completed".into();w.revision=9;Ok(())}).unwrap();
+    assert_eq!(app.work.get(&w.id).unwrap().observation_revision,2);
+    app.work.update(&w.id,|w|{w.result="metadata only".into();Ok(())}).unwrap();
+    assert_eq!(app.work.get(&w.id).unwrap().observation_revision,2);
+    app.work.update(&w.id,|w|{w.status="queued".into();w.revision=0;Ok(())}).unwrap();
+    app.work.update(&w.id,|w|{w.status="completed".into();Ok(())}).unwrap();
+    assert_eq!(app.work.get(&w.id).unwrap().observation_revision,4);
+    let reloaded=WorkStore::load(dir.clone()).unwrap();
+    reloaded.with_observation_snapshot(|observations|{assert_eq!(observations[0].revision,4);assert_eq!(observations[0].status,"completed");});
+    let mut disk:Value=serde_json::from_slice(&fs::read(dir.join("group_work.json")).unwrap()).unwrap();
+    disk["work"][0].as_object_mut().unwrap().remove("observationRevision");
+    fs::write(dir.join("group_work.json"),serde_json::to_vec(&disk).unwrap()).unwrap();
+    assert_eq!(WorkStore::load(dir.clone()).unwrap().get(&w.id).unwrap().observation_revision,0);
+    fs::remove_dir_all(dir).unwrap();
+}

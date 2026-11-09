@@ -12,6 +12,7 @@ pub(super) fn fixture() -> (PathBuf, Shared, String) {
         beta_mode: false,
         bots: bots::BotFleetStore::load(dir.clone()),
         work: group_work::WorkStore::load(dir.clone()).unwrap(),
+        automation: crate::automation::Store::load(dir.clone()).unwrap(),
         leases:Arc::new(work_leases::WorkLeases::load(dir.clone()).unwrap()),
         approvals: approvals::ApprovalGate::load(dir.clone()),
         voice: voice::VoiceService::load(dir.clone()),

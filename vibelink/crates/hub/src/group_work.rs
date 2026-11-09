@@ -97,6 +97,8 @@ pub struct Work {
     pub consumed: usize,
     pub revision: u32,
     #[serde(default)]
+    pub observation_revision: u64,
+    #[serde(default)]
     pub blocked_step: Option<usize>,
     pub messages: Vec<BotGroupMessage>,
     #[serde(default)]
@@ -166,6 +168,13 @@ impl WorkStore {
         let mut disk = self.inner.lock().unwrap();
         let mut next = disk.clone();
         let result = f(&mut next)?;
+        for work in &mut next.work {
+            let previous = disk.work.iter().find(|old| old.id == work.id);
+            if previous.is_none_or(|old| old.status != work.status) {
+                work.observation_revision = previous.map(|old| old.observation_revision).unwrap_or(0)
+                    .checked_add(1).ok_or("Work observation revision exhausted")?;
+            }
+        }
         let bytes = serde_json::to_vec(&next).map_err(|e| e.to_string())?;
         if bytes.len() > 64 * 1024 * 1024 {
             return Err("任务账本达到 64MB 上限，请导出/归档后再提交附件任务".into());
@@ -181,6 +190,15 @@ impl WorkStore {
         fs::rename(&tmp, &self.file).map_err(|e| e.to_string())?;
         *disk = next;
         Ok(result)
+    }
+    /// The closure runs under the Work lock, so rule baselines and audit cursors
+    /// linearize before the next Work state transition. Lock order is Work -> audit.
+    pub fn with_observation_snapshot<T>(&self, read: impl FnOnce(&[crate::automation::Observation]) -> T) -> T {
+        let disk = self.inner.lock().unwrap();
+        let observations: Vec<_> = disk.work.iter().map(|w|crate::automation::Observation {
+            id:w.id.clone(),user:w.owner.user_id.clone(),group:w.group_id.clone(),revision:w.observation_revision,status:w.status.clone()
+        }).collect();
+        read(&observations)
     }
     pub fn list(&self, group: &str) -> Vec<Work> {
         self.inner
@@ -400,6 +418,7 @@ impl WorkStore {
                 cycle: 0,
                 consumed: 0,
                 revision: 0,
+                observation_revision: 0,
                 blocked_step: None,
                 messages: vec![],
                 mandate,

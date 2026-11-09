@@ -17,6 +17,7 @@ mod auth;
 mod login;
 mod bots;
 mod group_work;
+mod automation;
 mod work_mandate;
 mod work_leases;
 mod model_gateway;
@@ -35,7 +36,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-const VERSION: &str = "0.4.2";
+const VERSION: &str = "0.5.0";
 const OFFLINE_AFTER_MS: u64 = 20_000;
 const EVENT_CAP: usize = 500;
 
@@ -54,6 +55,7 @@ struct App {
     pub(crate) beta_mode: bool,
     pub(crate) bots: bots::BotFleetStore,
     work: group_work::WorkStore,
+    automation: automation::Store,
     leases: Arc<work_leases::WorkLeases>,
     pub(crate) approvals: approvals::ApprovalGate,
     pub(crate) voice: voice::VoiceService,
@@ -220,6 +222,7 @@ fn tenant_app(app:&Shared,tid:&str)->Result<Shared,String> {
     let tenant=Arc::new(App {
         auth:app.auth.clone(),logins:app.logins.clone(),tenants:app.tenants.clone(),beta_mode:true,
         work:group_work::WorkStore::load(dir.clone())?,
+        automation:automation::Store::load(dir.clone())?,
         leases:app.leases.clone(),
         bots:bots::BotFleetStore::load_for_edition(dir.clone(),true),
         approvals:approvals::ApprovalGate::load(dir.clone()),voice:voice::VoiceService::load(dir.clone()),
@@ -411,6 +414,7 @@ async fn health(State(app): State<Shared>) -> Json<Value> {
     });
     v["policyTicks"] = json!(policy::ticks());
     v["groupWork"] = json!({"version":2,"durable":true,"agentMinVersion":"0.4.0"});
+    v["automation"] = json!({"version":1,"modes":["off","observe"],"dispatch":false});
     v["betaAdmin"] = json!({"version":1,"limitsRevision":true});
     v["login"] = json!({"version":1,"issuer":app.auth.issuer(),"edition":if app.beta_mode{"beta"}else{"dev"}});
     Json(v)
@@ -1303,6 +1307,26 @@ async fn group_work_list(State(app):State<Shared>,Path(id):Path<String>,Query(q)
         row["canManage"]=json!(app.work.can_manage(&id,&user));
     }
     Json(json!({"work":rows}))
+}
+fn automation_response(result:Result<Value,automation::Error>)->Response {
+    match result {
+        Ok(snapshot)=>Json(snapshot).into_response(),
+        Err(automation::Error::Conflict(revision))=>(StatusCode::CONFLICT,Json(json!({"error":"Automation settings changed; refresh before saving","revision":revision}))).into_response(),
+        Err(automation::Error::Invalid(message))=>(StatusCode::BAD_REQUEST,Json(json!({"error":message}))).into_response(),
+        Err(automation::Error::Capacity)=>(StatusCode::SERVICE_UNAVAILABLE,Json(json!({"error":"Automation audit capacity reached; pending observations retained","code":"capacity_exhausted"}))).into_response(),
+        Err(automation::Error::Persistence(_))=>(StatusCode::SERVICE_UNAVAILABLE,Json(json!({"error":"Automation audit unavailable; no changes committed","code":"persistence_failed"}))).into_response(),
+    }
+}
+async fn automation_get(State(app):State<Shared>,Path(group):Path<String>,axum::Extension(ctx):axum::Extension<auth::AuthCtx>)->Response {
+    if app.bots.get_group(&group).is_none(){return (StatusCode::NOT_FOUND,Json(json!({"error":"Group not found"}))).into_response();}
+    let scope=automation::scope(&app,&ctx,&group);
+    automation_response(app.work.with_observation_snapshot(|observations|app.automation.snapshot(scope,observations)))
+}
+async fn automation_post(State(app):State<Shared>,Path(group):Path<String>,axum::Extension(ctx):axum::Extension<auth::AuthCtx>,Json(body):Json<Value>)->Response {
+    if app.bots.get_group(&group).is_none(){return (StatusCode::NOT_FOUND,Json(json!({"error":"Group not found"}))).into_response();}
+    let command=match serde_json::from_value::<automation::Command>(body){Ok(command)=>command,Err(_)=>return (StatusCode::BAD_REQUEST,Json(json!({"error":"Invalid observation command"}))).into_response()};
+    let scope=automation::scope(&app,&ctx,&group);
+    automation_response(app.work.with_observation_snapshot(|observations|app.automation.command(scope,command,observations)))
 }
 async fn group_work_submit(State(app):State<Shared>,Path(id):Path<String>,axum::Extension(ctx):axum::Extension<auth::AuthCtx>,Json(body):Json<Value>)->Response {
     let Some(group)=app.bots.get_group(&id)else{return (StatusCode::NOT_FOUND,Json(json!({"error":"Group not found; sync the group first"}))).into_response();};
@@ -2377,6 +2401,7 @@ async fn main() {
         beta_mode,
         bots: bots_store,
         work: group_work::WorkStore::load(data.clone()).expect("load durable group work ledger"),
+        automation: automation::Store::load(data.clone()).expect("load observation-only automation ledger"),
         leases:Arc::new(work_leases::WorkLeases::load(data.clone()).expect("load workspace leases")),
         approvals: approvals_gate,
         voice: voice_svc,
@@ -2403,6 +2428,7 @@ async fn main() {
         if let Some(tid)=row["tenantId"].as_str(){tenant_app(&app,tid).expect("load tenant group work");}
     }
     group_work::spawn(app.clone());
+    automation::spawn(app.clone());
 
     let router = api_router(app.clone()).layer(middleware::from_fn_with_state(app.clone(), auth_mw));
 
@@ -2482,6 +2508,7 @@ fn api_router(app: Shared) -> Router {
         .route("/api/bots/{id}/memories/{mem_id}", axum::routing::delete(bot_memories_delete))
         .route("/api/bot-groups", post(bot_groups_post))
         .route("/api/bot-groups/{id}/messages", get(bot_group_messages_get).post(bot_group_messages_post))
+        .route("/api/bot-groups/{id}/automation",get(automation_get).post(automation_post))
         .route("/api/bot-groups/{id}/work",get(group_work_list).post(group_work_submit))
         .route("/api/bot-groups/{id}/work/{wid}/actions",post(group_work_action))
         .route("/api/bot-groups/{id}/work/{wid}/export",get(group_work_export))
