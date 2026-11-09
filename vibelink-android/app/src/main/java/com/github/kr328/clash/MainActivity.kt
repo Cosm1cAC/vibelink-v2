@@ -81,14 +81,16 @@ class MainActivity : BaseActivity<MainDesign>() {
                     if (it == MainDesign.Request.ToggleStatus) connectionGeneration++
                     when (it) {
                         MainDesign.Request.ToggleStatus -> launch {
+                            val toggleGeneration = connectionGeneration
                             val target = !clashRunning
                             pendingTargetState = target to System.currentTimeMillis()
                             Remote.broadcasts.clashRunning = target
                             runCatching { design.setClashRunning(target) }
                             if (target) {
                                 try {
-                                    design.startClash()
+                                    design.startClash { toggleGeneration == connectionGeneration }
                                 } catch (t: Throwable) {
+                                    if (t is kotlinx.coroutines.CancellationException) throw t
                                     pendingTargetState = null
                                     Remote.broadcasts.clashRunning = false
                                     runCatching { design.setClashRunning(false) }
@@ -104,7 +106,7 @@ class MainActivity : BaseActivity<MainDesign>() {
                             val url = runCatching { if (managedProfileSelected()) withClash { queryTailscaleAuthUrl() } else null }.getOrNull()
                                 ?.let { com.wangzan101.vibelink.clash.TailscaleAuthCache.allowedUrl(it) }
                             if (url == null) {
-                                design.showToast("授权链接已失效，请重新检测日本出口", ToastDuration.Long)
+                                design.showToast("授权链接已失效，请点「重新连接出口 / 重新获取授权链接」", ToastDuration.Long)
                             } else {
                                 runCatching { startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url))) }
                                     .onFailure { design.showToast("无法打开授权页面", ToastDuration.Long) }
@@ -131,9 +133,23 @@ class MainActivity : BaseActivity<MainDesign>() {
                                         }
                                     }
                                     if (!stillCurrent()) return@launch
+                                    val oldProcess = withClash { queryRuntimeProcessId() }
+                                    if (!stillCurrent()) return@launch
+                                    check(withClash { restartManagedAuthorization(profile.toString()) }) { "后台授权恢复未获允许" }
+                                    kotlinx.coroutines.withTimeout(20_000) {
+                                        while (true) {
+                                            if (!stillCurrent()) throw kotlinx.coroutines.CancellationException("连接操作已变更")
+                                            val currentProcess = runCatching { withClash { queryRuntimeProcessId() } }.getOrNull()
+                                            if (currentProcess != null && currentProcess != oldProcess) break
+                                            delay(200)
+                                        }
+                                    }
+                                    if (!stillCurrent()) return@launch
                                     exitReachable = null
                                     lastExitProbeAt = 0L
-                                    design.startClash()
+                                    design.startClash { stillCurrent() }
+                                } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
+                                    if (stillCurrent()) design.showToast("出口后台未能完成重启，请重试重新获取授权", ToastDuration.Long)
                                 } catch (cancelled: kotlinx.coroutines.CancellationException) {
                                     throw cancelled
                                 } catch (_: Exception) {
@@ -145,7 +161,7 @@ class MainActivity : BaseActivity<MainDesign>() {
                         MainDesign.Request.CopyTailscaleAuth -> launch {
                             val url = runCatching { if (managedProfileSelected()) withClash { queryTailscaleAuthUrl() } else null }.getOrNull()
                                 ?.let { com.wangzan101.vibelink.clash.TailscaleAuthCache.allowedUrl(it) }
-                            if (url == null) design.showToast("授权链接已失效，请重新检测日本出口", ToastDuration.Long)
+                            if (url == null) design.showToast("授权链接已失效，请点「重新连接出口 / 重新获取授权链接」", ToastDuration.Long)
                             else {
                                 val clipboard = getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
                                 val clip = android.content.ClipData.newPlainText("Tailscale 设备授权", url)
@@ -279,11 +295,13 @@ class MainActivity : BaseActivity<MainDesign>() {
         }
     }
 
-    private suspend fun MainDesign.startClash() {
+    private suspend fun MainDesign.startClash(startGuard: suspend () -> Boolean = { true }) {
         if (!com.wangzan101.vibelink.BuildConfig.IS_BETA_EDITION) {
             runCatching { com.wangzan101.vibelink.clash.ClashSeed.prepare(this@MainActivity) }
         }
+        if (!startGuard()) return
         val active = withProfile { queryActive() }
+        if (!startGuard()) return
 
         if (active == null || !active.imported) {
             pendingTargetState = null
@@ -307,6 +325,7 @@ class MainActivity : BaseActivity<MainDesign>() {
                     vpnRequest
                 )
 
+                if (!startGuard()) return
                 if (result.resultCode == RESULT_OK) {
                     startClashService()
                 } else {
@@ -315,7 +334,10 @@ class MainActivity : BaseActivity<MainDesign>() {
                     setClashRunning(false)
                 }
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
+            if (!startGuard()) return
             pendingTargetState = null
             Remote.broadcasts.clashRunning = false
             setClashRunning(false)
