@@ -333,7 +333,7 @@
     },
     {
       "path": "overlay/apps/desktop/src/renderer/features/vibelink/HubAdminPanel.test.tsx",
-      "sha256": "0e2693af34d049fc93e0a2592bcff516b4bbd64bfac33d10494df042ad456253"
+      "sha256": "597b0e4876a3184dc2e6728492eb1d741b0ae62cf7c12301691b171fd8aa8a19"
     },
     {
       "path": "overlay/apps/desktop/src/renderer/features/vibelink/HubAdminPanel.tsx",

@@ -1,0 +1,17 @@
+// The runtime archive is deliberately not committed. Run every other test and
+// keep the two archive-dependent tests enabled whenever the real asset exists.
+gradle.beforeProject { project ->
+    if (project.path != ':app') return
+    def runtime = project.file('src/main/assets/runtime/rootfs.tar.xz')
+    if (!runtime.isFile()) {
+        // Unit-test compilation in newer app versions depends on this check.
+        // CI does not assemble or publish an APK without the real runtime.
+        project.tasks.matching { it.name == 'verifyBundledRuntime' }.configureEach { enabled = false }
+        project.tasks.withType(org.gradle.api.tasks.testing.Test).configureEach {
+            filter {
+                excludeTestsMatching('com.wangzan101.vibelink.cap.sandbox.BundledRuntimeTest.assetMatchesGeneratedConstants')
+                excludeTestsMatching('com.wangzan101.vibelink.cap.sandbox.BundledRuntimeTest.bundledRuntimeInstalls')
+            }
+        }
+    }
+}

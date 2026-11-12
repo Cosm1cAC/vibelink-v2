@@ -1,0 +1,113 @@
+name: VibeLink CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vibelink-ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: Hub, Agent and protocol / Windows
+    runs-on: windows-latest
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: vibelink
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - name: Test Rust workspace services and CLI
+        run: cargo test --locked --workspace --exclude vibelink-gui
+      - name: Compile release services
+        run: cargo build --locked --release --workspace --exclude vibelink-gui
+
+  android:
+    name: Android tests / ${{ matrix.edition }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - edition: developer
+            beta: 'false'
+          - edition: beta
+            beta: 'true'
+    defaults:
+      run:
+        working-directory: vibelink-android
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+      - name: Install Android SDK platform
+        run: sdkmanager 'platforms;android-36'
+      - name: Report missing bundled runtime
+        shell: bash
+        run: |
+          if [[ ! -f app/src/main/assets/runtime/rootfs.tar.xz ]]; then
+            echo '::warning::Bundled runtime is absent; only the two tests that require the archive are excluded.'
+            echo 'Two archive-dependent Android tests were excluded because rootfs.tar.xz is not in this checkout. No installable APK is published by CI.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Test core and Android app
+        run: ./gradlew --no-daemon --max-workers=2 -I ../.github/ci/android-tests.gradle :core:test :app:testDebugUnitTest -PbetaEdition=${{ matrix.beta }}
+      - name: Upload failed test reports
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: android-${{ matrix.edition }}-test-reports
+          if-no-files-found: ignore
+          path: |
+            vibelink-android/core/build/reports/tests
+            vibelink-android/app/build/reports/tests
+
+  desktop:
+    name: Desktop integration / Windows
+    runs-on: windows-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: makecindy/cindy
+          ref: d53e60e099c1c793ac0c85b5db47aa1622c237a5
+          path: .ci/cindy
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10.33.2
+          run_install: false
+      - name: Verify desktop overlay and prepare pinned upstream
+        shell: pwsh
+        run: |
+          ./vibelink/desktop/Test-DesktopPackage.ps1
+          ./vibelink/desktop/Prepare-CindyFusion.ps1 -CindyRepository "$env:GITHUB_WORKSPACE/.ci/cindy" -Destination "$env:RUNNER_TEMP/vibelink-cindy-ci"
+      - name: Install desktop dependencies
+        working-directory: ${{ runner.temp }}/vibelink-cindy-ci
+        run: pnpm install --frozen-lockfile
+      - name: Test authenticated local bridge
+        working-directory: ${{ runner.temp }}/vibelink-cindy-ci
+        run: node --test apps/desktop/src/main/vibelink/embeddedServer.test.cjs
+      - name: Test desktop integration
+        working-directory: ${{ runner.temp }}/vibelink-cindy-ci
+        run: pnpm --filter desktop exec vitest run src/main/vibelink/__tests__ src/renderer/features/vibelink --maxWorkers=2
