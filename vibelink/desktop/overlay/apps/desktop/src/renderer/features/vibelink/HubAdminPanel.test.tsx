@@ -5,6 +5,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { HubAdminPanel } from './HubAdminPanel';
 import type { HubSession } from '../../../shared/vibelinkAuth';
 import type { AdminResult } from '../../../shared/vibelinkAdmin';
+import { utc8Day } from './adminPresentation';
 it('reveals the limit editor on click and focuses its first field without scrolling again while typing', async () => {
   const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollIntoView');
   const scroll = vi.fn();
@@ -44,7 +45,7 @@ const limits = {
 };
 const snapshot: Extract<AdminResult, { success: true }>['data'] = {
   kind: 'snapshot',
-  day: '2026-11-09',
+  day: utc8Day(),
   seats: [
     {
       tenantId: 'beta_01',
@@ -60,7 +61,7 @@ const snapshot: Extract<AdminResult, { success: true }>['data'] = {
     {
       userId: 'beta_01',
       label: 'Seat One',
-      day: '2026-11-09',
+      day: utc8Day(),
       model: 'auto/deepseek-v4.1-flash',
       usedRequests: 2,
       successfulRequests: 1,
