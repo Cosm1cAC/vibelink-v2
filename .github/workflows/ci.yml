@@ -27,6 +27,8 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - name: Test Rust workspace services and CLI
+        env:
+          VIBELINK_WORKSPACE_ROOTS: ${{ github.workspace }}
         run: cargo test --locked --workspace --exclude vibelink-gui
       - name: Compile release services
         run: cargo build --locked --release --workspace --exclude vibelink-gui
